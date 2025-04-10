@@ -10,6 +10,30 @@ import org.gautelis.raft.model.VoteResponse;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+/**
+ *                                     ┌───────────────────────────┐
+ *                                     │ S T A T E   D I A G R A M │
+ *                                     └───────────────────────────┘
+ *
+ *
+ *                            times out, starts election          receives votes from majority of servers
+ *                           ┌───────────────────────────┐       ┌────────────────────────┐
+ *                           │                           ▼       │                        ▼
+ *                ┌──────────────────────┐        ┌─────────────────────┐       ┌───────────────────┐
+ *  ──  starts up │                      │        │                     │       │                   │
+ * │  │──────────▶│       Follower       │        │      Candidate      │       │      Leader       │
+ *  ──            │                      │        │                     │       │                   │
+ *                └──────────────────────┘        └─────────────────────┘       └───────────────────┘
+ *                       ▲        ▲                      │       │                    ▲       │
+ *                       │        └──────────────────────┘       └────────────────────┘       │
+ *                       │            discovers current                times out,             │
+ *                       │            leader or new term               new election           │
+ *                       │                                                                    │
+ *                       └────────────────────────────────────────────────────────────────────┘
+ *                                          discovers server with higher term
+ *
+ *
+ */
 public class RaftStateMachine {
     enum State { FOLLOWER, CANDIDATE, LEADER }
     private volatile State state = State.FOLLOWER;
