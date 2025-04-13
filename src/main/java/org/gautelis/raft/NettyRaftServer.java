@@ -11,8 +11,8 @@ public class NettyRaftServer {
     private final RaftStateMachine stateMachine;  // your state machine
     private final int port;
 
-    public NettyRaftServer(RaftStateMachine raftServer, int port) {
-        this.stateMachine = raftServer;
+    public NettyRaftServer(RaftStateMachine stateMachine, int port) {
+        this.stateMachine = stateMachine;
         this.port = port;
     }
 
