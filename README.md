@@ -84,7 +84,7 @@ Here we manually kill 'server-10083', which initiate a new leader election:
 ```
 Here somewhere we start killing all server nodes (after having run the demo):
 ```
-➜  ./kill_raft.sh ```
+➜  ./kill_raft.sh
 ```
 This results in...
 ```
