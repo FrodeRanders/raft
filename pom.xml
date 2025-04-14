@@ -20,6 +20,7 @@
         <junit.version>5.12.1</junit.version>
         <jackson.version>2.17.0</jackson.version>
         <netty.version>5.0.0.Alpha2</netty.version>
+        <guid-gen.version>5.1.0</guid-gen.version>
     </properties>
 
     <dependencies>
@@ -33,6 +34,12 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>${jackson.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.uuid</groupId>
+            <artifactId>java-uuid-generator</artifactId>
+            <version>${guid-gen.version}</version>
         </dependency>
 
         <!--<dependency>
@@ -108,6 +115,7 @@
                                     <include>com.fasterxml.jackson.core:jackson-core</include>
                                     <include>com.fasterxml.jackson.core:jackson-annotations</include>
                                     <include>com.fasterxml.jackson.core:jackson-databind</include>
+                                    <include>com.fasterxml.uuid:java-uuid-generator</include>
                                     <include>org.gautelis:vopn</include>
                                     <include>org.slf4j:slf4j-api</include>
                                     <include>org.apache.logging.log4j:log4j-api</include>

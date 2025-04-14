@@ -19,4 +19,14 @@ public class LogEntry {
     public Type getType() { return type; }
     public long getTerm() { return term; }
     public String getPeerId() { return peerId; }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("LogEntry{");
+        sb.append("type=").append(type);
+        sb.append(", term=").append(term);
+        sb.append(", peerId=").append(peerId);
+        sb.append('}');
+        return sb.toString();
+    }
 }

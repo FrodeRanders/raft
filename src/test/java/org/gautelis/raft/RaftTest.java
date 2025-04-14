@@ -28,7 +28,7 @@ class RaftTest {
         long timeoutMillis = 5000;
         NettyRaftClient raftClient = new NettyRaftClient();
 
-        RaftStateMachine stateMachine = new RaftStateMachine(peers, me, timeoutMillis, raftClient);
+        RaftStateMachine stateMachine = new RaftStateMachine(me, peers, timeoutMillis, raftClient);
 
         NettyRaftServer raftServer = new NettyRaftServer(stateMachine, myPort);
 

@@ -16,4 +16,13 @@ public class Peer {
 
     public String getId() { return id; }
     public InetSocketAddress getAddress() { return address; }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("Peer{");
+        sb.append("id=").append(id);
+        sb.append(", address=").append(address);
+        sb.append('}');
+        return sb.toString();
+    }
 }

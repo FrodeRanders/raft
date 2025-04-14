@@ -15,12 +15,13 @@ public class RaftChannelInitializer extends ChannelInitializer<SocketChannel> {
     protected void initChannel(SocketChannel ch) {
         ChannelPipeline p = ch.pipeline();
 
-        // Optional: add a frame decoder if you have delimited messages or length-based frames.
+        // Optional: add a frame decoder if messages are delimited or uses length-based frames.
         // p.addLast(new LengthFieldBasedFrameDecoder(65536, 0, 4, 0, 4));
 
-        // You could decode ByteBuf -> String, or directly to JsonNode (Jackson).
+        // Consider decodeing ByteBuf -> String, or directly to JsonNode (Jackson).
         p.addLast(new ByteBufToJsonDecoder()); // see notes below for a custom decoder example
-        // Then a RaftHandler that deals with the JSON messages and calls raftServer
+
+        // The RaftHandler  deals with the JSON messages and calls raftServer
         p.addLast(new RaftHandler(stateMachine));
     }
 }

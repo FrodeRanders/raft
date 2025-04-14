@@ -1,6 +1,7 @@
 package org.gautelis.raft;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.uuid.Generators;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
@@ -11,19 +12,26 @@ import io.netty.util.concurrent.DefaultPromise;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 import org.gautelis.raft.model.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CompletableFuture;
+
 
 public class NettyRaftClient {
+    private static final Logger log = LoggerFactory.getLogger(NettyRaftClient.class);
+
     private final EventLoopGroup group = new NioEventLoopGroup();
     private final Bootstrap bootstrap;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<Peer, Channel> channels = new ConcurrentHashMap<>();
+
+    // Shared map for in-flight requests
+    private final Map<String, CompletableFuture<VoteResponse>> inFlightRequests = new ConcurrentHashMap<>();
 
     public NettyRaftClient() {
         bootstrap = new Bootstrap()
@@ -33,33 +41,85 @@ public class NettyRaftClient {
                     protected void initChannel(SocketChannel ch) throws Exception {
                         ChannelPipeline p = ch.pipeline();
                         p.addLast(new ByteBufToJsonDecoder());
-                        p.addLast(new ClientResponseHandler());
+                        p.addLast(new ClientResponseHandler(inFlightRequests));
                     }
                 });
     }
 
-    public Future<List<VoteResponse>> requestVoteFromAll(VoteRequest req) {
-        // In a real scenario, you'd gather all peer channels, send the request,
-        // and use a CountDownLatch or some aggregator Future to gather results.
+    public Future<List<VoteResponse>> requestVoteFromAll(
+            Collection<Peer> peers,
+            VoteRequest req
+    ) {
+        // A Netty Promise that we'll complete once we have all responses
         Promise<List<VoteResponse>> promise = new DefaultPromise<>(group.next());
+
         List<VoteResponse> responses = new ArrayList<>();
         AtomicInteger count = new AtomicInteger(0);
 
-        for (Peer peer : getPeers()) {
-            Channel ch = channels.get(peer);
-            if (ch == null || !ch.isActive()) {
-                // connect on-demand
+        // Edge case: if no peers
+        if (peers.isEmpty()) {
+            promise.setSuccess(responses);
+            return promise;
+        }
+
+        if (channels.isEmpty()) {
+            log.info("No channels yet established");
+        }
+        else {
+            log.trace("{} channels available", channels.size());
+        }
+
+        for (Peer peer : peers) {
+            Channel channel = channels.get(peer);
+            if (channel == null || !channel.isActive()) {
+                // We have not yet connected to this peer, or the channel died
+                log.trace("Connecting to {} at {}", peer.getId(), peer.getAddress());
+
                 connect(peer).addListener((ChannelFuture cf) -> {
                     if (cf.isSuccess()) {
-                        sendVoteRequest(cf.channel(), req, responses, count, promise);
-                    } else {
-                        // handle fail => default negative vote
-                        responses.add(new VoteResponse(req.getTerm(), false));
+                        Channel newChannel = cf.channel();
+
+                        // store the channel so next time we won't reconnect
+                        channels.put(peer, newChannel);
+
+                        log.trace("Request vote for term {} from {}", req.getTerm(), peer.getId());
+                        CompletableFuture<VoteResponse> future = sendVoteRequest(newChannel, req);
+
+                        // Attach aggregator callback
+                        future.whenComplete((voteResponse, throwable) -> {
+                            if (throwable != null) {
+                                log.debug("Vote request to {} failed: {}", peer.getId(), throwable.toString());
+                                responses.add(new VoteResponse(req, false)); // Negative vote
+                            } else {
+                                responses.add(voteResponse);
+                            }
+                            checkDone(responses, count, promise);
+                        });
+                    }
+                    else {
+                        log.debug("Could not request vote for term {} from {}: cannot connect",
+                                req.getTerm(), peer.getId());
+                        // treat it as negative
+                        responses.add(new VoteResponse(req, false));
                         checkDone(responses, count, promise);
                     }
                 });
-            } else {
-                sendVoteRequest(ch, req, responses, count, promise);
+            }
+            else {
+                // Channel is active, so we can send the request right away
+                log.trace("Request vote for term {} from {}", req.getTerm(), peer.getId());
+                CompletableFuture<VoteResponse> future = sendVoteRequest(channel, req);
+
+                // same aggregator callback
+                future.whenComplete((voteResponse, throwable) -> {
+                    if (throwable != null) {
+                        log.debug("Vote request to {} failed: {}", peer.getId(), throwable.toString());
+                        responses.add(new VoteResponse(req, false));
+                    } else {
+                        responses.add(voteResponse);
+                    }
+                    checkDone(responses, count, promise);
+                });
             }
         }
 
@@ -67,49 +127,100 @@ public class NettyRaftClient {
     }
 
     private ChannelFuture connect(Peer peer) {
-        return bootstrap.connect(peer.getAddress());
+        ChannelFuture cf = bootstrap.connect(peer.getAddress());
+        cf.addListener((ChannelFuture f) -> {
+            if (f.isSuccess()) {
+                channels.put(peer, f.channel());
+            } else {
+                log.warn("Failed to connect to {} at {}", peer.getId(), peer.getAddress());
+            }
+        });
+        return cf;
     }
 
-    private void sendVoteRequest(Channel ch, VoteRequest req,
-                                 List<VoteResponse> responses,
-                                 AtomicInteger count,
-                                 Promise<List<VoteResponse>> promise) {
-        // The client response handler (ClientResponseHandler) must know how
-        // to correlate the incoming response with the request. Possibly store
-        // a callback or correlation ID. For simplicity, let's just do
-        // "fire-and-forget" and rely on some shared structure.
+
+    private CompletableFuture<VoteResponse> sendVoteRequest(
+            Channel ch,
+            VoteRequest req
+    ) {
+        CompletableFuture<VoteResponse> future = new CompletableFuture<>();
+        String requestId = Generators.timeBasedEpochGenerator().generate().toString(); // Version 7
+        inFlightRequests.put(requestId, future);
+
         try {
-            Message msg = new Message("VoteRequest", req);
+            Message msg = new Message(requestId, "VoteRequest", req);
             String json = mapper.writeValueAsString(msg);
+            log.trace("Sending on channel {}: candidate {}: {}", ch.id(),  req.getCandidateId(), json);
+
             ch.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
                     .addListener(f -> {
                         if (!f.isSuccess()) {
-                            // treat it as a negative
-                            responses.add(new VoteResponse(req.getTerm(), false));
-                            checkDone(responses, count, promise);
+                            // If we couldn't even send the request, treat as a failure
+                            log.trace("Failed to send vote request: {}", f.cause().toString());
+                            future.completeExceptionally(f.cause());
+                        }
+                        else {
+                            // The request is now 'in flight'. We'll complete 'future' once
+                            // the server responds (see ClientResponseHandler).
+                            log.trace("Successfully sent vote request: {}", json);
                         }
                     });
         } catch (Exception e) {
-            responses.add(new VoteResponse(req.getTerm(), false));
-            checkDone(responses, count, promise);
+            log.trace("Exception building or sending the message: ", e);
+            future.completeExceptionally(e);
         }
+        return future;
     }
 
     private void checkDone(List<VoteResponse> responses,
                            AtomicInteger count,
                            Promise<List<VoteResponse>> promise) {
         int current = count.incrementAndGet();
-        if (current == getPeers().size()) {
+        if (current == /* number of peers */ channels.size()) {
             promise.setSuccess(responses);
         }
     }
 
-    public void broadcastLogEntry(LogEntry entry) {
-        // TODO
-    }
+    public void broadcastLogEntry(LogEntry logEntry) {
+        log.trace("Broadcasting log entry {} to {}", logEntry.getType(), logEntry.getPeerId());
 
-    List<Peer> getPeers() {
-        List<Peer> peers = new ArrayList<>(); // TODO
-        return peers;
+        for (Map.Entry<Peer, Channel> channelEntry : channels.entrySet()) {
+            Peer peer = channelEntry.getKey();
+            Channel channel = channelEntry.getValue();
+
+            log.trace("Broadcasting for term {} to {}", logEntry.getTerm(), peer.getId());
+
+            if (channel == null || !channel.isActive()) {
+                // We have not yet connected to this peer
+                log.trace("Connecting to {} at {}", peer.getId(), peer.getAddress());
+
+                // connect on-demand
+                connect(peer).addListener((ChannelFuture f) -> {
+                    if (f.isSuccess()) {
+                        log.trace("Successfully broadcast for term {} to {}", logEntry.getTerm(), peer.getId());
+                    } else {
+                        log.warn("Could not broadcast to {}: {}", logEntry.getPeerId(), f.cause());
+                    }
+                });
+            } else {
+
+                try {
+                    String requestId = Generators.timeBasedEpochGenerator().generate().toString(); // Version 7
+                    Message msg = new Message(requestId, "LogEntry", logEntry);
+                    String json = mapper.writeValueAsString(msg);
+
+                    log.trace("Sending on channel {}: log entry {}: {}", channel.id(),  logEntry.getPeerId(), json);
+
+                    channel.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
+                            .addListener(f -> {
+                                if (!f.isSuccess()) {
+                                    log.warn("Could not broadcast to {}: {}", logEntry.getPeerId(), f.cause());
+                                }
+                            });
+                } catch (Exception e) {
+                    log.warn("Failed to broadcast to {}: {}", logEntry.getPeerId(), e.getMessage(), e);
+                }
+            }
+        }
     }
 }

@@ -23,8 +23,9 @@ for ((i=0; i<${#PORTS[@]}; i++)); do
     echo "Starting Raft node on port $MY_PORT with peers ${PEERS[*]}"
 
     # Run the jar in the background, capturing logs in a separate file if desired
-    java -jar "$JAR_NAME" "$MY_PORT" "${PEERS[@]}" \
-        > "raft_${MY_PORT}.log" 2>&1 &
+    # java -jar "$JAR_NAME" "$MY_PORT" "${PEERS[@]}" \
+    #    > "raft_${MY_PORT}.log" 2>&1 &
+    java -jar "$JAR_NAME" "$MY_PORT" "${PEERS[@]}" 2>&1 &
 done
 
 echo "All Raft nodes launched."

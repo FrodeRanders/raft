@@ -28,7 +28,7 @@ public class Application {
 
         NettyRaftClient raftClient = new NettyRaftClient();
         long timeoutMillis = 5000 + Math.round(2000.0 * Math.random());
-        RaftStateMachine stateMachine = new RaftStateMachine(peers, me, timeoutMillis, raftClient);
+        RaftStateMachine stateMachine = new RaftStateMachine(me, peers, timeoutMillis, raftClient);
 
         try {
             NettyRaftServer raftServer = new NettyRaftServer(stateMachine, port);

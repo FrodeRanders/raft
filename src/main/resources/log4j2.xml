@@ -36,7 +36,7 @@
 
     <Loggers>
         <logger name="org.gautelis.raft" level="TRACE" />
-        <logger name="org.apache" level="WARN" />
+        <logger name="io.netty" level="INFO" />
 
         <logger name="STATISTICS" level="INFO">
             <appender-ref ref="STATISTICS"/>
