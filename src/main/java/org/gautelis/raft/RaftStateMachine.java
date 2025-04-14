@@ -172,22 +172,21 @@ public class RaftStateMachine {
     }
 
     private synchronized void handleVoteResponses(List<VoteResponse> responses, long electionTerm) {
-        log.trace("Handling vote responses from {} peers...", responses.size());
-
+        StringBuilder sb = new StringBuilder(String.format("Handling vote responses from %d peers", responses.size()));
         if (log.isTraceEnabled()) {
-            StringBuilder sb = new StringBuilder("Got vote responses for term ").append(term).append(":\n");
+            sb.append(":");
             for (VoteResponse response : responses) {
-                sb.append("  ").append(response.isVoteGranted()).append("\n");
+                sb.append(" /").append(response.isVoteGranted());
             }
-            log.trace(sb.toString());
         }
+        log.trace(sb.toString());
 
         // if we’re still in the same term and still candidate, see if we got a majority
         if (this.term == electionTerm && state == State.CANDIDATE) {
             long votesGranted = responses.stream().filter(VoteResponse::isVoteGranted).count() + 1; // plus my own vote
             int majority = (peers.size() + 1) / 2 + 1;
             if (votesGranted >= majority) {
-                log.trace("Elected LEADER ({} votes >= majority {}): {}", votesGranted, majority, me);
+                log.trace("Elected LEADER ({} votes granted >= majority {}): {}", votesGranted, majority, me);
                 state = State.LEADER;
             }
         }
