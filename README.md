@@ -84,6 +84,10 @@ Here we manually kill 'server-10083', which initiate a new leader election:
 ```
 Here somewhere we start killing all server nodes (after having run the demo):
 ```
+➜  ./kill_raft.sh ```
+```
+This results in...
+```
 [nioEventLoopGroup-0-7] [WARN ] NettyRaftClient: Failed to connect to server-10083 at localhost/127.0.0.1:10083
 [nioEventLoopGroup-0-7] [INFO ] NettyRaftClient: Could not request vote for term 4 from server-10083: cannot connect
 ```
