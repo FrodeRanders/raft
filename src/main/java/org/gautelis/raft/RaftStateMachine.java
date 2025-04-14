@@ -65,18 +65,18 @@ public class RaftStateMachine {
     }
 
     public synchronized VoteResponse handleVoteRequest(VoteRequest req) {
-        log.trace("Received vote request for term {} from {}", req.getTerm(), req.getCandidateId());
+        log.debug("{} received vote request for term {} from {}", me.getId(), req.getTerm(), req.getCandidateId());
 
         // If the candidate's term is behind ours, immediately reject.
         if (req.getTerm() < term) {
-            log.trace("{} has term {} which is newer than requested term {} from {} => reject",
+            log.debug("{} has term {} which is newer than requested term {} from {} => reject",
                     me.getId(), term, req.getTerm(), req.getCandidateId());
             return new VoteResponse(req, false);
         }
 
         // If the candidate's term is higher, step down, become follower.
         if (req.getTerm() > term) {
-            log.trace("{} steps down from leadership to follower since requested term is {} (> {})",
+            log.debug("{} steps down from leader to follower since requested term is {} (> {})",
                     me.getId(), req.getTerm(), term);
             term = req.getTerm();
             state = State.FOLLOWER;
@@ -90,7 +90,7 @@ public class RaftStateMachine {
             if (peer != null) {
                 state = State.FOLLOWER;
                 votedFor = peer;
-                log.trace("{} grants vote to {} for term {} => accepted",
+                log.debug("{} grants vote to {} for term {} => accepted",
                         me.getId(), req.getCandidateId(), req.getTerm());
                 refreshTimeout();
                 return new VoteResponse(req, true);
@@ -102,7 +102,7 @@ public class RaftStateMachine {
         }
         else {
             // We already voted for someone else
-            log.trace("{} will *not* grant vote to {} for term {} (already voted for {})",
+            log.debug("{} will *not* grant vote to {} for term {} (already voted for {})",
                     me.getId(), req.getCandidateId(), req.getTerm(), votedFor.getId());
             return new VoteResponse(req, false);
         }
@@ -116,8 +116,10 @@ public class RaftStateMachine {
             case HEARTBEAT -> {
                 // If the peer's term is higher, step down, become follower.
                 if (peerTerm > term) {
-                    log.trace("{} steps down from leadership to follower since requested term is {} (> {})",
-                            me.getId(), peerTerm, term);
+                    log.debug(
+                            "{} steps down from leader to follower since requested term is {} (> {})",
+                            me.getId(), peerTerm, term
+                    );
                     term = peerTerm;
                     state = State.FOLLOWER;
                     votedFor = null;
@@ -186,7 +188,7 @@ public class RaftStateMachine {
             long votesGranted = responses.stream().filter(VoteResponse::isVoteGranted).count() + 1; // plus my own vote
             int majority = (peers.size() + 1) / 2 + 1;
             if (votesGranted >= majority) {
-                log.trace("Elected LEADER ({} votes granted >= majority {}): {}", votesGranted, majority, me);
+                log.debug("Elected LEADER ({} votes granted >= majority {}): {}", votesGranted, majority, me);
                 state = State.LEADER;
             }
         }

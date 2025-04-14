@@ -28,7 +28,7 @@ public class RaftHandler extends SimpleChannelInboundHandler<JsonNode> {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        log.error("Error in channel: ", cause);
+        log.error("Error in channel: {}", cause.getMessage(), cause);
         ctx.close();
     }
 
@@ -37,7 +37,12 @@ public class RaftHandler extends SimpleChannelInboundHandler<JsonNode> {
         log.trace("Received message: {}", jsonNode);
 
         // Expect a structure like: { "type": "VoteRequest", "payload": ... }
-        String requestId = jsonNode.get("requestId").asText();
+        JsonNode _correlationId = jsonNode.get("correlationId");
+        if (null == _correlationId) {
+            log.warn("Incorrect message: No correlationId");
+            return;
+        }
+        String correlationId = _correlationId.asText();
         String type = jsonNode.get("type").asText();
         JsonNode payload = jsonNode.get("payload");
 
@@ -48,11 +53,14 @@ public class RaftHandler extends SimpleChannelInboundHandler<JsonNode> {
 
                 // Server response
                 String peerId = voteRequest.getCandidateId();
-                Message responseMsg = new Message(requestId, "VoteResponse", voteResponse);
+                Message responseMsg = new Message(correlationId, "VoteResponse", voteResponse);
                 String json = mapper.writeValueAsString(responseMsg);
 
                 try {
-                    log.trace("Sending on channel {}: vote response to {}: {}", ctx.channel().id(),  peerId, json);
+                    log.trace(
+                            "Sending vote response to {}: {}",
+                            peerId, voteResponse.isVoteGranted() ? "granted" : "denied"
+                    );
 
                     ctx.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
                             .addListener(f -> {
@@ -69,7 +77,7 @@ public class RaftHandler extends SimpleChannelInboundHandler<JsonNode> {
                 stateMachine.handleLogEntry(entry);
                 // Possibly no direct response if it's just a heartbeat
             }
-            // Other message types...
+
             default -> log.warn("Unknown message type: {}", type);
         }
     }

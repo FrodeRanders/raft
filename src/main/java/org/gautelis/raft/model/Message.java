@@ -1,20 +1,20 @@
 package org.gautelis.raft.model;
 
 public class Message {
-    private String requestId = "unassigned";
+    private String correlationId;
     private String type;
     private Object payload;
 
     // Default constructor needed for Jackson
     public Message() {}
 
-    public Message(String requestId, String type, Object payload) {
-        this.requestId = requestId;
+    public Message(String correlationId, String type, Object payload) {
+        this.correlationId = correlationId;
         this.type = type;
         this.payload = payload;
     }
 
-    public String getRequestId() { return requestId; }
+    public String getCorrelationId() { return correlationId; }
     public String getType() { return type; }
     public void setType(String type) { this.type = type; }
     public Object getPayload() { return payload; }
@@ -23,7 +23,7 @@ public class Message {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder("Message{");
-        sb.append("requestId='").append(requestId).append('\'');
+        sb.append("correlationId='").append(correlationId).append('\'');
         sb.append(", type='").append(type).append('\'');
         sb.append(", payload=").append(payload);
         sb.append('}');
