@@ -85,6 +85,7 @@ Here we manually kill 'server-10083', which initiate a new leader election:
 Here somewhere we start killing all server nodes (after having run the demo):
 ```
 ➜  ./kill_raft.sh
+Killing processes matching pattern: java -jar target/raft-1.0-SNAPSHOT.jar
 ```
 This results in...
 ```
