@@ -22,8 +22,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CompletableFuture;
 
 
-public class NettyRaftClient {
-    private static final Logger log = LoggerFactory.getLogger(NettyRaftClient.class);
+public class RaftClient {
+    private static final Logger log = LoggerFactory.getLogger(RaftClient.class);
 
     private final EventLoopGroup group = new NioEventLoopGroup();
     private final Bootstrap bootstrap;
@@ -33,7 +33,7 @@ public class NettyRaftClient {
     // Shared map for in-flight requests
     private final Map<String, CompletableFuture<VoteResponse>> inFlightRequests = new ConcurrentHashMap<>();
 
-    public NettyRaftClient() {
+    public RaftClient() {
         bootstrap = new Bootstrap()
                 .group(group)
                 .channel(NioSocketChannel.class)
@@ -87,7 +87,7 @@ public class NettyRaftClient {
                         future.whenComplete((voteResponse, throwable) -> {
                             if (throwable != null) {
                                 log.debug("Vote request to {} failed: {}", peer.getId(), throwable.toString());
-                                responses.add(new VoteResponse(req, false)); // Negative vote
+                                responses.add(new VoteResponse(req, false, -1)); // Synthetic negative vote
                             } else {
                                 responses.add(voteResponse);
                             }
@@ -98,7 +98,7 @@ public class NettyRaftClient {
                         log.info("Could not request vote for term {} from {}: cannot connect", req.getTerm(), peer.getId());
 
                         // treat it as negative
-                        responses.add(new VoteResponse(req, false));
+                        responses.add(new VoteResponse(req, false, -1)); // Synthetic negative vote
                         checkDone(responses, count, promise);
                     }
                 });
@@ -112,7 +112,7 @@ public class NettyRaftClient {
                 future.whenComplete((voteResponse, throwable) -> {
                     if (throwable != null) {
                         log.info("Vote request to {} failed: {}", peer.getId(), throwable.toString());
-                        responses.add(new VoteResponse(req, false));
+                        responses.add(new VoteResponse(req, false, -1)); // Synthetic negative vote
                     } else {
                         responses.add(voteResponse);
                     }
@@ -130,7 +130,12 @@ public class NettyRaftClient {
             if (f.isSuccess()) {
                 channels.put(peer, f.channel());
             } else {
-                log.warn("Failed to connect to {} at {}", peer.getId(), peer.getAddress());
+                // We should log at some higher level, but since this situation
+                // may continue for some time and flood the log we will refrain
+                // from warn, info and even debug logging
+                if (log.isTraceEnabled()) {
+                    log.trace("Failed to connect to {} at {}", peer.getId(), peer.getAddress());
+                }
             }
         });
         return cf;
@@ -176,7 +181,7 @@ public class NettyRaftClient {
     ) {
         int current = count.incrementAndGet();
         if (current == /* number of peers */ channels.size()) {
-            promise.setSuccess(responses);
+            promise.trySuccess(responses);
         }
     }
 
@@ -192,7 +197,12 @@ public class NettyRaftClient {
                     if (f.isSuccess()) {
                         log.trace("Successfully broadcast {} for term {} to {}", logEntry.getType(), logEntry.getTerm(), peer.getId());
                     } else {
-                        log.warn("Could not broadcast to {}: {}", logEntry.getPeerId(), f.cause());
+                        // We should log at some higher level, but since this situation
+                        // may continue for some time and flood the log we will refrain
+                        // from warn, info and even debug logging
+                        if (log.isTraceEnabled()) {
+                            log.trace("Could not broadcast to {}", logEntry.getPeerId(), f.cause());
+                        }
                     }
                 });
             } else {
@@ -204,11 +214,11 @@ public class NettyRaftClient {
                     channel.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
                             .addListener(f -> {
                                 if (!f.isSuccess()) {
-                                    log.warn("Could not broadcast to {}", logEntry.getPeerId(), f.cause());
+                                    log.debug("Could not broadcast to {}", logEntry.getPeerId(), f.cause());
                                 }
                             });
                 } catch (Exception e) {
-                    log.warn("Failed to broadcast to {}: {}", logEntry.getPeerId(), e.getMessage(), e);
+                    log.warn("Failed to broadcast to {}", logEntry.getPeerId(), e);
                 }
             }
         }

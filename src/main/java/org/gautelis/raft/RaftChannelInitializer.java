@@ -22,6 +22,6 @@ public class RaftChannelInitializer extends ChannelInitializer<SocketChannel> {
         p.addLast(new ByteBufToJsonDecoder()); // see notes below for a custom decoder example
 
         // The RaftHandler  deals with the JSON messages and calls raftServer
-        p.addLast(new RaftHandler(stateMachine));
+        p.addLast(new RaftMessageHandler(stateMachine));
     }
 }

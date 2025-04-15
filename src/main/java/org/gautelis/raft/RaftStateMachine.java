@@ -47,15 +47,14 @@ public class RaftStateMachine {
     private Peer votedFor = null;
     private long lastHeartbeat = 0;
     private long timeoutMillis;
-    //private final List<Peer> peers;
     private final Map<String, Peer> peers = new HashMap<>();
     private final Peer me;
 
     // Netty-based approach might store channels for each peer or
     // a separate Netty "client" to connect out:
-    private final NettyRaftClient nettyRaftClient; // or similar
+    private final RaftClient nettyRaftClient; // or similar
 
-    public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, NettyRaftClient nettyRaftClient) {
+    public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, RaftClient nettyRaftClient) {
         for (Peer peer : peers) {
             this.peers.putIfAbsent(peer.getId(), peer);
         }
@@ -69,15 +68,26 @@ public class RaftStateMachine {
 
         // If the candidate's term is behind ours, immediately reject.
         if (req.getTerm() < term) {
-            log.debug("{} has term {} which is newer than requested term {} from {} => reject",
-                    me.getId(), term, req.getTerm(), req.getCandidateId());
-            return new VoteResponse(req, false);
+            if (log.isDebugEnabled()) {
+                log.debug("{} ({}) has term {} which is newer than requested term {} from {} => reject",
+                        me.getId(), state.name(), term, req.getTerm(), req.getCandidateId());
+            }
+            return new VoteResponse(req, false, term);
         }
 
         // If the candidate's term is higher, step down, become follower.
         if (req.getTerm() > term) {
-            log.debug("{} steps down from leader to follower since requested term is {} (> {})",
-                    me.getId(), req.getTerm(), term);
+            if (log.isDebugEnabled()) {
+                String info = "remains FOLLOWER";
+                if (state != State.FOLLOWER) {
+                    info = "steps from " + state.name() + " to FOLLOWER";
+                }
+                log.debug(
+                        "{} {} since requested term is {} (> {})",
+                        me.getId(), info, req.getTerm(), term
+                );
+            }
+
             term = req.getTerm();
             state = State.FOLLOWER;
             votedFor = null;
@@ -88,23 +98,32 @@ public class RaftStateMachine {
         if (votedFor == null || votedFor.getId().equals(req.getCandidateId())) {
             Peer peer = peers.get(req.getCandidateId());
             if (peer != null) {
+                if (log.isDebugEnabled()) {
+                    String info = "remains FOLLOWER";
+                    if (state != State.FOLLOWER) {
+                        info = "steps from " + state.name() + " to FOLLOWER";
+                    }
+                    log.debug("{} grants vote to {} for term {} and {} => accepted",
+                            me.getId(), req.getCandidateId(), req.getTerm(), info);
+                }
+
                 state = State.FOLLOWER;
                 votedFor = peer;
-                log.debug("{} grants vote to {} for term {} => accepted",
-                        me.getId(), req.getCandidateId(), req.getTerm());
                 refreshTimeout();
-                return new VoteResponse(req, true);
+                return new VoteResponse(req, true, term);
             }
             else {
                 log.warn("Unknown candidate {} => reject", req.getCandidateId());
-                return new VoteResponse(req, false);
+                return new VoteResponse(req, false, term);
             }
         }
         else {
             // We already voted for someone else
-            log.debug("{} will *not* grant vote to {} for term {} (already voted for {})",
-                    me.getId(), req.getCandidateId(), req.getTerm(), votedFor.getId());
-            return new VoteResponse(req, false);
+            if (log.isDebugEnabled()) {
+                log.debug("{} ({}) will *not* grant vote to {} for term {} (already voted for {})",
+                        me.getId(), state.name(), req.getCandidateId(), req.getTerm(), votedFor.getId());
+            }
+            return new VoteResponse(req, false, term);
         }
     }
 
@@ -116,10 +135,16 @@ public class RaftStateMachine {
             case HEARTBEAT -> {
                 // If the peer's term is higher, step down, become follower.
                 if (peerTerm > term) {
-                    log.debug(
-                            "{} steps down from leader to follower since requested term is {} (> {})",
-                            me.getId(), peerTerm, term
-                    );
+                    if (log.isDebugEnabled()) {
+                        String info = "remains FOLLOWER";
+                        if (state != State.FOLLOWER) {
+                            info = "steps from " + state.name() + " to FOLLOWER";
+                        }
+                        log.debug(
+                                "{} {} since requested term is {} (higher than my {})",
+                                me.getId(), info, peerTerm, term
+                        );
+                    }
                     term = peerTerm;
                     state = State.FOLLOWER;
                     votedFor = null;
@@ -148,8 +173,19 @@ public class RaftStateMachine {
         }
     }
 
+    private synchronized boolean hasTimedOut() {
+        // Adding some entropy
+        long entropy = timeoutMillis / 10; // one tenth of configured timeout
+        long delta = Math.round(entropy * Math.random());
+        return System.currentTimeMillis() - lastHeartbeat > (timeoutMillis + delta);
+    }
+
+    private synchronized void refreshTimeout() {
+        lastHeartbeat = System.currentTimeMillis();
+    }
+
     private void newElection() {
-        log.trace("{} initiating new election...", me.getId());
+        log.debug("{} initiating new election...", me.getId());
 
         synchronized (this) {
             state = State.CANDIDATE;
@@ -159,7 +195,7 @@ public class RaftStateMachine {
         }
 
         VoteRequest voteReq = new VoteRequest(term, me.getId());
-        log.trace("{} voting for myself for term {}", me.getId(), voteReq.getTerm());
+        log.trace("{} ({}) voting for myself for term {}", me.getId(), state.name(), voteReq.getTerm());
         nettyRaftClient.requestVoteFromAll(peers.values(), voteReq)
                 .addListener((Future<List<VoteResponse>> f) -> {
                     if (f.isSuccess()) {
@@ -179,35 +215,54 @@ public class RaftStateMachine {
             sb.append(":");
             for (VoteResponse response : responses) {
                 sb.append(" /").append(response.isVoteGranted());
+                sb.append("@").append(response.getCurrentTerm());
             }
         }
         log.trace(sb.toString());
 
-        // if we’re still in the same term and still candidate, see if we got a majority
-        if (this.term == electionTerm && state == State.CANDIDATE) {
-            long votesGranted = responses.stream().filter(VoteResponse::isVoteGranted).count() + 1; // plus my own vote
-            int majority = (peers.size() + 1) / 2 + 1;
-            if (votesGranted >= majority) {
-                log.debug("Elected LEADER ({} votes granted >= majority {}): {}", votesGranted, majority, me);
-                state = State.LEADER;
+        if (state == State.CANDIDATE) {
+            if (this.term == electionTerm) {
+                // We’re still in the same term we were when issuing vote
+                // and we are still a candidate
+                long votesGranted = 1; // since I voted for myself
+                for (VoteResponse response : responses) {
+                    if (response.isVoteGranted()) {
+                        votesGranted++;
+                    } else {
+                        // This node rejected my vote, could be that I am trying to
+                        // rejoin the cluster and have to get up to speed and update my term
+                        long currentTerm = response.getCurrentTerm();
+                        if (currentTerm > term) {
+                            // I am lagging behind
+                            log.info("{} rejoining cluster at term {} as FOLLOWER", me.getId(), currentTerm);
+                            term = currentTerm;
+                            state = State.FOLLOWER;
+                            refreshTimeout();
+                            return;
+                        }
+                    }
+                }
+
+                // Let's see if we got a majority
+                int majority = (peers.size() + 1) / 2 + 1;
+                if (votesGranted >= majority) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("{} elected LEADER ({} votes granted >= majority {})", me.getId(), votesGranted, majority);
+                    }
+                    state = State.LEADER;
+                }
             }
         }
     }
 
     private synchronized void broadcastHeartbeat() {
         if (state == State.LEADER) {
-            log.trace("LEADER {} broadcasting heartbeat for term {}", me.getId(), term);
+            if (log.isTraceEnabled()) {
+                log.trace("LEADER {} broadcasting heartbeat for term {}", me.getId(), term);
+            }
 
             LogEntry entry = new LogEntry(LogEntry.Type.HEARTBEAT, term, me.getId());
             nettyRaftClient.broadcastLogEntry(entry);
         }
-    }
-
-    private synchronized boolean hasTimedOut() {
-        return System.currentTimeMillis() - lastHeartbeat > timeoutMillis;
-    }
-
-    private synchronized void refreshTimeout() {
-        lastHeartbeat = System.currentTimeMillis();
     }
 }

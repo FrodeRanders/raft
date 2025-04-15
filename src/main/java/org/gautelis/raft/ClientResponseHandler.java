@@ -36,9 +36,15 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<JsonNode>
             return;
         }
 
-        String correlationId = jsonNode.get("correlationId").asText();  // must match
-
+        // Expect a structure like: { "correlationId":"<UUID>", "type": "VoteRequest", "payload": ... }
+        JsonNode _correlationId = jsonNode.get("correlationId");
+        if (null == _correlationId) {
+            log.warn("Incorrect message: No correlationId");
+            return;
+        }
+        String correlationId = _correlationId.asText();
         String type = jsonNode.get("type").asText();
+
         switch (type) {
             case "VoteResponse" -> {
                 VoteResponse voteResponse = mapper.treeToValue(jsonNode.get("payload"), VoteResponse.class);

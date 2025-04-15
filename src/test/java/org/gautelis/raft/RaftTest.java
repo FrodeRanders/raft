@@ -26,14 +26,12 @@ class RaftTest {
         peers.add(new Peer("server3", new InetSocketAddress("localhost", 10083)));
 
         long timeoutMillis = 5000;
-        NettyRaftClient raftClient = new NettyRaftClient();
-
-        RaftStateMachine stateMachine = new RaftStateMachine(me, peers, timeoutMillis, raftClient);
-
-        NettyRaftServer raftServer = new NettyRaftServer(stateMachine, myPort);
+        RaftClient client = new RaftClient();
+        RaftStateMachine stateMachine = new RaftStateMachine(me, peers, timeoutMillis, client);
+        RaftServer server = new RaftServer(stateMachine, myPort);
 
         try {
-            raftServer.start();
+            server.start();
         }
         catch (InterruptedException ie) {
             log.info("Interrupted!", ie);

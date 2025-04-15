@@ -9,13 +9,13 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class NettyRaftServer {
-    private static final Logger log = LoggerFactory.getLogger(NettyRaftServer.class);
+public class RaftServer {
+    private static final Logger log = LoggerFactory.getLogger(RaftServer.class);
 
     private final RaftStateMachine stateMachine;  // your state machine
     private final int port;
 
-    public NettyRaftServer(RaftStateMachine stateMachine, int port) {
+    public RaftServer(RaftStateMachine stateMachine, int port) {
         this.stateMachine = stateMachine;
         this.port = port;
     }
@@ -36,7 +36,6 @@ public class NettyRaftServer {
 
             ChannelFuture f = b.bind(port).sync();
             String info = String.format("Raft server started on port %d", port);
-            System.out.println(info);
             log.info(info);
 
             // Block until the server socket is closed.

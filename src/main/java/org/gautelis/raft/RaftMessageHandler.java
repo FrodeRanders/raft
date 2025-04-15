@@ -16,13 +16,13 @@ import org.slf4j.Logger;
 import java.nio.charset.StandardCharsets;
 
 @ChannelHandler.Sharable
-public class RaftHandler extends SimpleChannelInboundHandler<JsonNode> {
-    private static final Logger log = LoggerFactory.getLogger(RaftHandler.class);
+public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
+    private static final Logger log = LoggerFactory.getLogger(RaftMessageHandler.class);
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final RaftStateMachine stateMachine;
 
-    public RaftHandler(RaftStateMachine raftServer) {
+    public RaftMessageHandler(RaftStateMachine raftServer) {
         this.stateMachine = raftServer;
     }
 
@@ -36,7 +36,7 @@ public class RaftHandler extends SimpleChannelInboundHandler<JsonNode> {
     protected void messageReceived(ChannelHandlerContext ctx, JsonNode jsonNode) throws Exception {
         log.trace("Received message: {}", jsonNode);
 
-        // Expect a structure like: { "type": "VoteRequest", "payload": ... }
+        // Expect a structure like: { "correlationId":"<UUID>", "type": "VoteRequest", "payload": ... }
         JsonNode _correlationId = jsonNode.get("correlationId");
         if (null == _correlationId) {
             log.warn("Incorrect message: No correlationId");

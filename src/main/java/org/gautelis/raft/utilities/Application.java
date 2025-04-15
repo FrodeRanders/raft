@@ -1,7 +1,10 @@
-package org.gautelis.raft;
+package org.gautelis.raft.utilities;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.gautelis.raft.RaftClient;
+import org.gautelis.raft.RaftServer;
+import org.gautelis.raft.RaftStateMachine;
 import org.gautelis.raft.model.Peer;
 
 import java.net.InetSocketAddress;
@@ -26,12 +29,12 @@ public class Application {
             peers.add(new Peer("server-" + peerPort, new InetSocketAddress("localhost", peerPort)));
         }
 
-        NettyRaftClient raftClient = new NettyRaftClient();
+        RaftClient client = new RaftClient();
         long timeoutMillis = 5000 + Math.round(2000.0 * Math.random());
-        RaftStateMachine stateMachine = new RaftStateMachine(me, peers, timeoutMillis, raftClient);
+        RaftStateMachine stateMachine = new RaftStateMachine(me, peers, timeoutMillis, client);
 
         try {
-            NettyRaftServer raftServer = new NettyRaftServer(stateMachine, port);
+            RaftServer raftServer = new RaftServer(stateMachine, port);
 
             log.info("Starting server on port {}...", port);
             raftServer.start();
