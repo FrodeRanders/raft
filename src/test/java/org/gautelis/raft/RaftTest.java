@@ -14,28 +14,19 @@ import java.util.List;
 class RaftTest {
     private static final Logger log = LogManager.getLogger(RaftTest.class);
 
-
     @Test
     void initiation() {
         int myPort = 10080;
-        Peer me = new Peer("server0", new InetSocketAddress("localhost", myPort));
+        Peer me = new Peer("server-" + myPort, new InetSocketAddress("localhost", myPort));
 
         List<Peer> peers = new ArrayList<>();
-        peers.add(new Peer("server1", new InetSocketAddress("localhost", 10081)));
-        peers.add(new Peer("server2", new InetSocketAddress("localhost", 10082)));
-        peers.add(new Peer("server3", new InetSocketAddress("localhost", 10083)));
+        peers.add(new Peer("server-" + (myPort + 1), new InetSocketAddress("localhost", myPort + 1)));
+        peers.add(new Peer("server-" + (myPort + 2), new InetSocketAddress("localhost", myPort + 2)));
+        peers.add(new Peer("server-" + (myPort + 3), new InetSocketAddress("localhost", myPort + 3)));
 
-        long timeoutMillis = 5000;
-        RaftClient client = new RaftClient();
-        RaftStateMachine stateMachine = new RaftStateMachine(me, peers, timeoutMillis, client);
-        RaftServer server = new RaftServer(stateMachine, myPort);
+        long timeoutMillis = 2000;
 
-        try {
-            server.start();
-        }
-        catch (InterruptedException ie) {
-            log.info("Interrupted!", ie);
-        }
+        ClusterMember member = new ClusterMember(timeoutMillis, me, peers);
+        member.start();
     }
-
 }

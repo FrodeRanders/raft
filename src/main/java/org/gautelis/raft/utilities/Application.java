@@ -16,7 +16,7 @@ public class Application {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 2) {
-            System.err.println("Usage: java -jar target/raft-application.jar <my-port> <peer-port> ...");
+            System.err.println("Usage: java -jar target/raft.jar <my-port> <peer-port> ...");
             System.exit(1);
         }
 
@@ -29,18 +29,9 @@ public class Application {
             peers.add(new Peer("server-" + peerPort, new InetSocketAddress("localhost", peerPort)));
         }
 
-        RaftClient client = new RaftClient();
-        long timeoutMillis = 2000; //  + Math.round(2000.0 * Math.random());
-        RaftStateMachine stateMachine = new RaftStateMachine(me, peers, timeoutMillis, client);
+        long timeoutMillis = 2000;
 
-        try {
-            RaftServer raftServer = new RaftServer(stateMachine, port);
-
-            log.info("Starting server on port {}...", port);
-            raftServer.start();
-        }
-        catch (InterruptedException ie) {
-            log.info("Interrupted!", ie);
-        }
+        BasicAdapter adapter = new BasicAdapter(timeoutMillis, me, peers);
+        adapter.start();
     }
 }

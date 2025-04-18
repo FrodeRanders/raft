@@ -20,26 +20,30 @@ import java.util.concurrent.TimeUnit;
  *                                     └───────────────────────────┘
  *
  *
- *                            times out, starts election          receives votes from majority of servers
- *                           ┌───────────────────────────┐       ┌────────────────────────┐
- *                           │                           ▼       │                        ▼
- *                ┌──────────────────────┐        ┌─────────────────────┐       ┌───────────────────┐
- *  ──  starts up │                      │        │                     │       │                   │
- * │  │──────────▶│       Follower       │        │      Candidate      │       │      Leader       │
- *  ──            │                      │        │                     │       │                   │
- *                └──────────────────────┘        └─────────────────────┘       └───────────────────┘
- *                       ▲        ▲                      │       │                    ▲       │
- *                       │        └──────────────────────┘       └────────────────────┘       │
- *                       │            discovers current                times out,             │
- *                       │            leader or new term               new election           │
- *                       │                                                                    │
- *                       └────────────────────────────────────────────────────────────────────┘
- *                                          discovers server with higher term
+ *                       a) times out, starts election        b) receives votes from majority of servers
+ *                       ┌───────────────────────────┐       ┌────────────────────────┐
+ *                       │                           ▼       │                        ▼
+ *            ┌──────────────────────┐        ┌─────────────────────┐       ┌───────────────────┐
+ *  starts up │                      │        │                     │       │                   │
+ * ──────────▶│       Follower       │        │      Candidate      │       │      Leader       │
+ *            │                      │        │                     │◀──┐   │                   │
+ *            └──────────────────────┘        └─────────────────────┘   │   └───────────────────┘
+ *                   ▲        ▲                          │       │      │             │
+ *                   │        └──────────────────────────┘       └──────┘             │
+ *                   │           d) discovers current             e) times out,       │
+ *                   │              leader or new term               new election     │
+ *                   │                                                                │
+ *                   └────────────────────────────────────────────────────────────────┘
+ *                      c) discovers server with higher term (via received heartbeat)
  *
  *
  */
 public class RaftStateMachine {
     private static final Logger log = LoggerFactory.getLogger(RaftStateMachine.class);
+
+    public interface LogHandler {
+        void handle(long myTerm, LogEntry entry);
+    }
 
     enum State { FOLLOWER, CANDIDATE, LEADER }
     private volatile State state = State.FOLLOWER;
@@ -49,18 +53,29 @@ public class RaftStateMachine {
     private long timeoutMillis;
     private final Map<String, Peer> peers = new HashMap<>();
     private final Peer me;
+    private final LogHandler logHandler;
 
-    // Netty-based approach might store channels for each peer or
-    // a separate Netty "client" to connect out:
-    private final RaftClient nettyRaftClient; // or similar
+    // Netty-based approach might either
+    //  - store channels for each peer, or
+    //  - keep a separate client
+    protected final RaftClient raftClient; // or similar
 
-    public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, RaftClient nettyRaftClient) {
+    public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler, RaftClient raftClient) {
         for (Peer peer : peers) {
             this.peers.putIfAbsent(peer.getId(), peer);
         }
         this.me = me;
         this.timeoutMillis = timeoutMillis;
-        this.nettyRaftClient = nettyRaftClient;
+        this.logHandler = logHandler;
+        this.raftClient = raftClient;
+    }
+
+    public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler) {
+        this(me, peers, timeoutMillis, logHandler, new RaftClient());
+    }
+
+    public RaftClient getRaftClient() {
+        return raftClient;
     }
 
     public synchronized VoteResponse handleVoteRequest(VoteRequest req) {
@@ -75,8 +90,11 @@ public class RaftStateMachine {
             return new VoteResponse(req, false, /* my term */ term);
         }
 
-        // If the candidate's term is higher, step down, become follower.
+        // If the candidate's term is higher, become follower.
         if (req.getTerm() > term) {
+            //-------------------------------------
+            // c) discovers node with higher term
+            //-------------------------------------
             if (log.isDebugEnabled()) {
                 String info = "remains FOLLOWER";
                 if (state != State.FOLLOWER) {
@@ -128,13 +146,17 @@ public class RaftStateMachine {
     }
 
     public synchronized void handleLogEntry(LogEntry entry) {
-        long peerTerm = entry.getTerm();
-        log.trace("Receive heartbeat for term {} from {}: {}", peerTerm, entry.getPeerId(), entry.getType());
-
         switch (entry.getType()) {
             case HEARTBEAT -> {
-                // If the peer's term is higher, step down, become follower.
+                long peerTerm = entry.getTerm();
+                log.trace("Receive heartbeat for term {} from {}: {}", peerTerm, entry.getPeerId(), entry.getType());
+
+                // If the peer's term is higher, become follower.
                 if (peerTerm > term) {
+                    //----------------------------------------
+                    // c) discovers server with higher term
+                    // e) discovers new term
+                    //----------------------------------------
                     if (log.isDebugEnabled()) {
                         String info = "remains FOLLOWER";
                         if (state != State.FOLLOWER) {
@@ -153,9 +175,7 @@ public class RaftStateMachine {
                 refreshTimeout();
             }
 
-            default -> {
-
-            }
+            default -> logHandler.handle(/* my term */ term, entry);
         }
     }
 
@@ -169,15 +189,19 @@ public class RaftStateMachine {
 
     private synchronized void checkTimeout() {
         if (state != State.LEADER && hasTimedOut()) {
+            //---------------------------------
+            // a) times out, starts election
+            // e) times out, new election
+            //---------------------------------
             newElection();
         }
     }
 
     private synchronized boolean hasTimedOut() {
         // Adding some entropy
-        long entropy = timeoutMillis / 10; // one tenth of configured timeout
-        long delta = Math.round(entropy * Math.random());
-        return System.currentTimeMillis() - lastHeartbeat > (timeoutMillis + delta);
+        long baseDelay = timeoutMillis / 10; // one tenth of configured timeout
+        long delay = Math.round(baseDelay * Math.random());
+        return System.currentTimeMillis() - lastHeartbeat > (timeoutMillis + delay);
     }
 
     private synchronized void refreshTimeout() {
@@ -196,7 +220,7 @@ public class RaftStateMachine {
 
         VoteRequest voteReq = new VoteRequest(term, me.getId());
         log.trace("{} ({}) voting for myself for term {}", me.getId(), state.name(), voteReq.getTerm());
-        nettyRaftClient.requestVoteFromAll(peers.values(), voteReq)
+        raftClient.requestVoteFromAll(peers.values(), voteReq)
                 .addListener((Future<List<VoteResponse>> f) -> {
                     if (f.isSuccess()) {
                         log.trace("{} received responses for term {}", me.getId(), voteReq.getTerm());
@@ -231,9 +255,12 @@ public class RaftStateMachine {
                     } else {
                         // This node rejected my vote, could be that I am trying to
                         // rejoin the cluster and have to get up to speed and update my term
+
                         long currentTerm = response.getCurrentTerm();
                         if (currentTerm > term) {
-                            // I am lagging behind
+                            //--------------------------------------------
+                            // d) discovers current leader or new term
+                            //--------------------------------------------
                             log.info("{} rejoining cluster at term {} as FOLLOWER", me.getId(), currentTerm);
                             term = currentTerm;
                             state = State.FOLLOWER;
@@ -246,6 +273,9 @@ public class RaftStateMachine {
                 // Let's see if we got a majority
                 int majority = (peers.size() + 1) / 2 + 1;
                 if (votesGranted >= majority) {
+                    //--------------------------------------------
+                    // b) receives votes from majority of nodes
+                    //--------------------------------------------
                     if (log.isDebugEnabled()) {
                         log.debug("{} elected LEADER ({} votes granted >= majority {})", me.getId(), votesGranted, majority);
                     }
@@ -262,7 +292,7 @@ public class RaftStateMachine {
             }
 
             LogEntry entry = new LogEntry(LogEntry.Type.HEARTBEAT, /* my term */ term, me.getId());
-            nettyRaftClient.broadcastLogEntry(entry);
+            raftClient.broadcastLogEntry(entry);
         }
     }
 }
