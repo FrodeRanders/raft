@@ -30,7 +30,7 @@ public class Application {
         }
 
         RaftClient client = new RaftClient();
-        long timeoutMillis = 5000 + Math.round(2000.0 * Math.random());
+        long timeoutMillis = 2000; //  + Math.round(2000.0 * Math.random());
         RaftStateMachine stateMachine = new RaftStateMachine(me, peers, timeoutMillis, client);
 
         try {

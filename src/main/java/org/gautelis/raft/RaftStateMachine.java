@@ -72,7 +72,7 @@ public class RaftStateMachine {
                 log.debug("{} ({}) has term {} which is newer than requested term {} from {} => reject",
                         me.getId(), state.name(), term, req.getTerm(), req.getCandidateId());
             }
-            return new VoteResponse(req, false, term);
+            return new VoteResponse(req, false, /* my term */ term);
         }
 
         // If the candidate's term is higher, step down, become follower.
@@ -110,11 +110,11 @@ public class RaftStateMachine {
                 state = State.FOLLOWER;
                 votedFor = peer;
                 refreshTimeout();
-                return new VoteResponse(req, true, term);
+                return new VoteResponse(req, true, /* my term */ term);
             }
             else {
                 log.warn("Unknown candidate {} => reject", req.getCandidateId());
-                return new VoteResponse(req, false, term);
+                return new VoteResponse(req, false, /* my term */ term);
             }
         }
         else {
@@ -123,7 +123,7 @@ public class RaftStateMachine {
                 log.debug("{} ({}) will *not* grant vote to {} for term {} (already voted for {})",
                         me.getId(), state.name(), req.getCandidateId(), req.getTerm(), votedFor.getId());
             }
-            return new VoteResponse(req, false, term);
+            return new VoteResponse(req, false, /* my term */ term);
         }
     }
 
@@ -261,7 +261,7 @@ public class RaftStateMachine {
                 log.trace("LEADER {} broadcasting heartbeat for term {}", me.getId(), term);
             }
 
-            LogEntry entry = new LogEntry(LogEntry.Type.HEARTBEAT, term, me.getId());
+            LogEntry entry = new LogEntry(LogEntry.Type.HEARTBEAT, /* my term */ term, me.getId());
             nettyRaftClient.broadcastLogEntry(entry);
         }
     }
