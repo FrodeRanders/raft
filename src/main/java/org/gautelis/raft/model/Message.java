@@ -1,5 +1,10 @@
 package org.gautelis.raft.model;
 
+import com.fasterxml.uuid.Generators;
+
+/**
+ * Acts as both request and response pairs, and as a one-way message.
+ */
 public class Message {
     private String correlationId;
     private String type;
@@ -12,6 +17,10 @@ public class Message {
         this.correlationId = correlationId;
         this.type = type;
         this.payload = payload;
+    }
+
+    public Message(String type, Object payload) {
+        this(Generators.timeBasedEpochGenerator().generate().toString(), type, payload);
     }
 
     public String getCorrelationId() { return correlationId; }

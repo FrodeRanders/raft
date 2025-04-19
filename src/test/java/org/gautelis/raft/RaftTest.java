@@ -27,6 +27,16 @@ class RaftTest {
         long timeoutMillis = 2000;
 
         ClusterMember member = new ClusterMember(timeoutMillis, me, peers);
+
+        Thread _t = new Thread(() -> {
+            try {
+                Thread.sleep(10_000);
+            } catch (InterruptedException ignore) {}
+
+            member.inform("I'll explain it to you slowly");
+        });
+        _t.start();
+
         member.start();
     }
 }

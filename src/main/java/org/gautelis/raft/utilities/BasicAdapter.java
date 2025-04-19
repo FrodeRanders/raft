@@ -1,5 +1,7 @@
 package org.gautelis.raft.utilities;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.gautelis.raft.RaftClient;
 import org.gautelis.raft.RaftServer;
 import org.gautelis.raft.RaftStateMachine;
@@ -17,7 +19,7 @@ public class BasicAdapter {
     protected final Peer me;
     protected final List<Peer> peers;
 
-    protected RaftClient raftClient;
+    protected RaftStateMachine stateMachine;
 
     public BasicAdapter(long timeoutMillis, Peer me, List<Peer> peers) {
         this.timeoutMillis = timeoutMillis;
@@ -26,13 +28,12 @@ public class BasicAdapter {
     }
 
     public void start() {
-        RaftStateMachine stateMachine = new RaftStateMachine(
-                me, peers, timeoutMillis, this::handleLogEntry
+        stateMachine = new RaftStateMachine(
+                me, peers, timeoutMillis, this::handleLogEntry, this::handleMessage
         );
-        raftClient = stateMachine.getRaftClient();
-        RaftServer server = new RaftServer(stateMachine, me.getAddress().getPort());
 
         try {
+            RaftServer server = new RaftServer(stateMachine, me.getAddress().getPort());
             server.start();
         }
         catch (InterruptedException ie) {
@@ -45,6 +46,13 @@ public class BasicAdapter {
         log.debug(
                 "Received {} log entry (their term {} {} my term)",
                 logEntry.getType(), logEntry.getTerm(), myTerm == logEntry.getTerm() ? "==" : "!=", myTerm
+        );
+    }
+
+    public void handleMessage(String correlationId, String type, JsonNode node) throws JsonProcessingException {
+        log.debug(
+                "Received '{}' message {}",
+                type, node
         );
     }
 }

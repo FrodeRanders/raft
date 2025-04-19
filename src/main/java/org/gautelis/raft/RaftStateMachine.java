@@ -1,5 +1,6 @@
 package org.gautelis.raft;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import io.netty.channel.EventLoopGroup;
 import io.netty.util.concurrent.Future;
 import org.gautelis.raft.model.LogEntry;
@@ -41,10 +42,6 @@ import java.util.concurrent.TimeUnit;
 public class RaftStateMachine {
     private static final Logger log = LoggerFactory.getLogger(RaftStateMachine.class);
 
-    public interface LogHandler {
-        void handle(long myTerm, LogEntry entry);
-    }
-
     enum State { FOLLOWER, CANDIDATE, LEADER }
     private volatile State state = State.FOLLOWER;
     private long term = 0;
@@ -54,28 +51,43 @@ public class RaftStateMachine {
     private final Map<String, Peer> peers = new HashMap<>();
     private final Peer me;
     private final LogHandler logHandler;
+    private final MessageHandler messageHandler;
 
     // Netty-based approach might either
     //  - store channels for each peer, or
     //  - keep a separate client
     protected final RaftClient raftClient; // or similar
 
-    public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler, RaftClient raftClient) {
+    public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler, MessageHandler messageHandler, RaftClient raftClient) {
         for (Peer peer : peers) {
             this.peers.putIfAbsent(peer.getId(), peer);
         }
         this.me = me;
         this.timeoutMillis = timeoutMillis;
         this.logHandler = logHandler;
+        this.messageHandler = messageHandler;
         this.raftClient = raftClient;
     }
 
-    public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler) {
-        this(me, peers, timeoutMillis, logHandler, new RaftClient());
+    public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler, MessageHandler messageHandler) {
+        this(me, peers, timeoutMillis, logHandler, messageHandler, new RaftClient());
     }
 
     public RaftClient getRaftClient() {
         return raftClient;
+    }
+
+    public long getTerm() {
+        return term;
+    }
+
+    public String getId() {
+        return me.getId();
+    }
+
+    /* package private */
+    MessageHandler getMessageHandler() {
+        return messageHandler;
     }
 
     public synchronized VoteResponse handleVoteRequest(VoteRequest req) {

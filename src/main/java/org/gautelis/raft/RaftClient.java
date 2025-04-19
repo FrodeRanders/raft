@@ -1,5 +1,6 @@
 package org.gautelis.raft;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.uuid.Generators;
 import io.netty.bootstrap.Bootstrap;
@@ -128,6 +129,7 @@ public class RaftClient {
         ChannelFuture cf = bootstrap.connect(peer.getAddress());
         cf.addListener((ChannelFuture f) -> {
             if (f.isSuccess()) {
+                // Store or replace channel to peer
                 channels.put(peer, f.channel());
             } else {
                 // We should log at some higher level, but since this situation
@@ -146,15 +148,16 @@ public class RaftClient {
             Channel ch,
             VoteRequest req
     ) {
+        Message request = new Message("VoteRequest", req);
+        String correlationId = request.getCorrelationId();
+
         CompletableFuture<VoteResponse> future = new CompletableFuture<>();
-        String correlationId = Generators.timeBasedEpochGenerator().generate().toString(); // Version 7
         inFlightRequests.put(correlationId, future);
 
         try {
-            Message msg = new Message(correlationId, "VoteRequest", req);
-            String json = mapper.writeValueAsString(msg);
+            String requestJson = mapper.writeValueAsString(request);
 
-            ch.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
+            ch.writeAndFlush(Unpooled.copiedBuffer(requestJson, StandardCharsets.UTF_8))
                     .addListener(f -> {
                         if (!f.isSuccess()) {
                             // If we couldn't even send the request, treat as a failure
@@ -193,22 +196,20 @@ public class RaftClient {
             log.trace("Broadcasting {} for term {} to {}", logEntry.getType(), logEntry.getTerm(), peer.getId());
 
             if (channel == null || !channel.isActive()) {
+                // We are unconnected, so...
                 connect(peer).addListener((ChannelFuture f) -> {
-                    if (f.isSuccess()) {
-                        log.trace("Successfully broadcast {} for term {} to {}", logEntry.getType(), logEntry.getTerm(), peer.getId());
-                    } else {
+                    if (!f.isSuccess()) {
                         // We should log at some higher level, but since this situation
                         // may continue for some time and flood the log we will refrain
                         // from warn, info and even debug logging
                         if (log.isTraceEnabled()) {
-                            log.trace("Could not broadcast to {}", logEntry.getPeerId(), f.cause());
+                            log.trace("Could not broadcast to {} at {}", peer.getId(), peer.getAddress(), f.cause());
                         }
                     }
                 });
             } else {
                 try {
-                    String correlationId = Generators.timeBasedEpochGenerator().generate().toString(); // Version 7
-                    Message msg = new Message(correlationId, "LogEntry", logEntry);
+                    Message msg = new Message("LogEntry", logEntry);
                     String json = mapper.writeValueAsString(msg);
 
                     channel.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
@@ -217,10 +218,51 @@ public class RaftClient {
                                     log.debug("Could not broadcast to {}", logEntry.getPeerId(), f.cause());
                                 }
                             });
+                } catch (JsonProcessingException jpe) {
+                    log.warn("{} failed to serialize object: {}", logEntry.getPeerId(), jpe.getMessage(), jpe);
+
                 } catch (Exception e) {
                     log.warn("Failed to broadcast to {}", logEntry.getPeerId(), e);
                 }
             }
         }
+    }
+
+    public Collection<Peer> broadcast(String type, long term, String json) {
+        Collection<Peer> unreachedPeers = new HashSet<>();
+
+        for (Map.Entry<Peer, Channel> channelEntry : channels.entrySet()) {
+            Peer peer = channelEntry.getKey();
+            Channel channel = channelEntry.getValue();
+
+            log.trace("Broadcasting '{}' for term {} to {}", type, term, peer.getId());
+
+            if (channel == null || !channel.isActive()) {
+                connect(peer).addListener((ChannelFuture f) -> {
+                    unreachedPeers.add(peer);
+
+                    if (!f.isSuccess()) {
+                        // We should log at some higher level, but since this situation
+                        // may continue for some time and flood the log we will refrain
+                        // from warn, info and even debug logging
+                        if (log.isTraceEnabled()) {
+                            log.trace("Could not broadcast to {}", peer.getId(), f.cause());
+                        }
+                    }
+                });
+            } else {
+                try {
+                    channel.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
+                            .addListener(f -> {
+                                if (!f.isSuccess()) {
+                                    log.debug("Could not broadcast to {}", peer.getId(), f.cause());
+                                }
+                            });
+                } catch (Exception e) {
+                    log.warn("Failed to broadcast to {}", peer.getId(), e);
+                }
+            }
+        }
+        return unreachedPeers;
     }
 }

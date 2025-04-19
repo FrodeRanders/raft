@@ -53,8 +53,8 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
 
                 // Server response
                 String peerId = voteRequest.getCandidateId();
-                Message responseMsg = new Message(correlationId, "VoteResponse", voteResponse);
-                String json = mapper.writeValueAsString(responseMsg);
+                Message response = new Message(correlationId, "VoteResponse", voteResponse);
+                String responseJson = mapper.writeValueAsString(response);
 
                 try {
                     log.trace(
@@ -62,7 +62,7 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
                             peerId, voteResponse.isVoteGranted() ? "granted" : "denied"
                     );
 
-                    ctx.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
+                    ctx.writeAndFlush(Unpooled.copiedBuffer(responseJson, StandardCharsets.UTF_8))
                             .addListener(f -> {
                                 if (!f.isSuccess()) {
                                     log.warn("Could not send vote response to {}: {}", peerId, f.cause());
@@ -75,10 +75,13 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
             case "LogEntry" -> {
                 LogEntry entry = mapper.treeToValue(payload, LogEntry.class);
                 stateMachine.handleLogEntry(entry);
-                // Possibly no direct response if it's just a heartbeat
+
+                // no expected response if it's just a heartbeat
             }
 
-            default -> log.warn("Unknown message type: {}", type);
+            default -> {
+                stateMachine.getMessageHandler().handle(correlationId, type, payload);
+            }
         }
     }
 }
