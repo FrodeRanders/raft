@@ -16,12 +16,19 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<JsonNode>
 
     private final ObjectMapper mapper = new ObjectMapper();
 
+    //
+    private final MessageHandler messageHandler;
+
     // This map is shared with NettyRaftClient, so we can fulfill the waiting futures.
     // Key = correlationId, Value = future that awaits the response.
     private final Map<String, CompletableFuture<VoteResponse>> inFlightRequests;
 
-    public ClientResponseHandler(Map<String, CompletableFuture<VoteResponse>> inFlightRequests) {
+    public ClientResponseHandler(
+            Map<String, CompletableFuture<VoteResponse>> inFlightRequests,
+            MessageHandler messageHandler
+    ) {
         this.inFlightRequests = inFlightRequests;
+        this.messageHandler = messageHandler;
     }
 
     @Override
@@ -59,9 +66,10 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<JsonNode>
                 }
             }
 
-            // Possibly handle other message types (e.g. "AppendEntries", "HeartbeatResponse", etc.)
             default -> {
-                log.warn("Unknown message type: {}", type);
+                if (null != messageHandler) {
+                    messageHandler.handle(correlationId, type, jsonNode.get("payload"), ctx);
+                }
             }
         }
     }

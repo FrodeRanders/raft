@@ -80,7 +80,10 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
             }
 
             default -> {
-                stateMachine.getMessageHandler().handle(correlationId, type, payload);
+                MessageHandler messageHandler = stateMachine.getMessageHandler();
+                if (null != messageHandler) {
+                    messageHandler.handle(correlationId, type, payload, ctx);
+                }
             }
         }
     }

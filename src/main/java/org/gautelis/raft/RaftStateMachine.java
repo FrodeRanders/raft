@@ -48,6 +48,7 @@ public class RaftStateMachine {
     private Peer votedFor = null;
     private long lastHeartbeat = 0;
     private long timeoutMillis;
+    private long electionSequenceCounter = 0;
     private final Map<String, Peer> peers = new HashMap<>();
     private final Peer me;
     private final LogHandler logHandler;
@@ -70,7 +71,7 @@ public class RaftStateMachine {
     }
 
     public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler, MessageHandler messageHandler) {
-        this(me, peers, timeoutMillis, logHandler, messageHandler, new RaftClient());
+        this(me, peers, timeoutMillis, logHandler, messageHandler, new RaftClient(messageHandler));
     }
 
     public RaftClient getRaftClient() {
@@ -121,6 +122,7 @@ public class RaftStateMachine {
             term = req.getTerm();
             state = State.FOLLOWER;
             votedFor = null;
+            electionSequenceCounter = 0;
             refreshTimeout();
         }
 
@@ -139,6 +141,7 @@ public class RaftStateMachine {
 
                 state = State.FOLLOWER;
                 votedFor = peer;
+                electionSequenceCounter = 0;
                 refreshTimeout();
                 return new VoteResponse(req, true, /* my term */ term);
             }
@@ -182,12 +185,17 @@ public class RaftStateMachine {
                     term = peerTerm;
                     state = State.FOLLOWER;
                     votedFor = null;
+                    electionSequenceCounter = 0;
                 }
 
                 refreshTimeout();
             }
 
-            default -> logHandler.handle(/* my term */ term, entry);
+            default -> {
+                if (null != logHandler) {
+                    logHandler.handle(/* my term */ term, entry); // entry has "their" term
+                }
+            }
         }
     }
 
@@ -210,9 +218,9 @@ public class RaftStateMachine {
     }
 
     private synchronized boolean hasTimedOut() {
-        // Adding some entropy
-        long baseDelay = timeoutMillis / 10; // one tenth of configured timeout
-        long delay = Math.round(baseDelay * Math.random());
+        long baseDelay = timeoutMillis / 10;
+        baseDelay *= electionSequenceCounter;
+        long delay = baseDelay + Math.round( baseDelay * Math.random());
         return System.currentTimeMillis() - lastHeartbeat > (timeoutMillis + delay);
     }
 
@@ -227,6 +235,7 @@ public class RaftStateMachine {
             state = State.CANDIDATE;
             term++;
             votedFor = me;
+            electionSequenceCounter++;
             refreshTimeout();
         }
 
@@ -257,9 +266,10 @@ public class RaftStateMachine {
         log.trace(sb.toString());
 
         if (state == State.CANDIDATE) {
+            // Ascertain that this response emanates from a request we sent in the
+            // current term. We may receive responses from earlier election rounds
+            // and these should be discarded.
             if (this.term == electionTerm) {
-                // We’re still in the same term we were when issuing vote
-                // and we are still a candidate
                 long votesGranted = 1; // since I voted for myself
                 for (VoteResponse response : responses) {
                     if (response.isVoteGranted()) {
@@ -276,6 +286,7 @@ public class RaftStateMachine {
                             log.info("{} rejoining cluster at term {} as FOLLOWER", me.getId(), currentTerm);
                             term = currentTerm;
                             state = State.FOLLOWER;
+                            electionSequenceCounter = 0;
                             refreshTimeout();
                             return;
                         }
@@ -292,6 +303,7 @@ public class RaftStateMachine {
                         log.debug("{} elected LEADER ({} votes granted >= majority {})", me.getId(), votesGranted, majority);
                     }
                     state = State.LEADER;
+                    electionSequenceCounter = 0;
                 }
             }
         }

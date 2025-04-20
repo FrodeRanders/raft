@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.uuid.Generators;
+import io.netty.channel.ChannelHandlerContext;
 import org.gautelis.raft.model.LogEntry;
 import org.gautelis.raft.model.Message;
 import org.gautelis.raft.model.Peer;
@@ -32,7 +33,7 @@ public class ClusterMember extends BasicAdapter {
     }
 
     @Override
-    public void handleMessage(String correlationId, String type, JsonNode node) throws JsonProcessingException {
+    public void handleMessage(String correlationId, String type, JsonNode node, ChannelHandlerContext ctx) throws JsonProcessingException {
         switch (type) {
             case "ClusterCommand" -> {
                 ClusterCommand command = mapper.treeToValue(node, ClusterCommand.class);
