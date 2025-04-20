@@ -1,5 +1,5 @@
 # raft
-A Raft implementation in Java on Netty.io.
+A Raft implementation in Java on Netty.io 5.0.
 
 Start
 ```
