@@ -11,7 +11,7 @@ public class Message {
     private Object payload;
 
     // Default constructor needed for Jackson
-    public Message() {}
+    protected Message() {}
 
     public Message(String correlationId, String type, Object payload) {
         this.correlationId = correlationId;

@@ -35,7 +35,7 @@
     </Appenders>
 
     <Loggers>
-        <logger name="org.gautelis.raft" level="debug" />
+        <logger name="org.gautelis.raft" level="DEBUG" />
         <logger name="io.netty" level="INFO" />
 
         <logger name="STATISTICS" level="INFO">

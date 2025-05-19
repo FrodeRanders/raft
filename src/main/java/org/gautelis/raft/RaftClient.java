@@ -7,6 +7,7 @@ import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.util.concurrent.DefaultPromise;
@@ -27,7 +28,9 @@ public class RaftClient {
     private static final Logger log = LoggerFactory.getLogger(RaftClient.class);
 
     //
-    private final EventLoopGroup group = new NioEventLoopGroup();
+    //private final EventLoopGroup group = new NioEventLoopGroup();
+    private final EventLoopGroup group = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+
     private final Bootstrap bootstrap;
 
     //
@@ -43,11 +46,19 @@ public class RaftClient {
                 .channel(NioSocketChannel.class)
                 .handler(new ChannelInitializer<SocketChannel>() {
                     protected void initChannel(SocketChannel ch) throws Exception {
+                        log.trace("Initializing client channel: {}", ch);
                         ChannelPipeline p = ch.pipeline();
                         p.addLast(new ByteBufToJsonDecoder());
                         p.addLast(new ClientResponseHandler(inFlightRequests, messageHandler));
                     }
-                });
+                })
+                .option(ChannelOption.TCP_NODELAY, true) // disables Nagle's algorithm
+                .option(ChannelOption.SO_KEEPALIVE, true) // helps detect dropped peers
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 1000);  // fast-fail if peer is down
+    }
+
+    public void shutdown() {
+        group.shutdownGracefully();
     }
 
     public Future<List<VoteResponse>> requestVoteFromAll(
@@ -131,6 +142,8 @@ public class RaftClient {
     }
 
     private ChannelFuture connect(Peer peer) {
+        log.trace("Connecting to {}", peer.getAddress());
+
         ChannelFuture cf = bootstrap.connect(peer.getAddress());
         cf.addListener((ChannelFuture f) -> {
             if (f.isSuccess()) {
@@ -141,7 +154,7 @@ public class RaftClient {
                 // may continue for some time and flood the log we will refrain
                 // from warn, info and even debug logging
                 if (log.isTraceEnabled()) {
-                    log.trace("Failed to connect to {} at {}", peer.getId(), peer.getAddress());
+                    log.trace("Failed to connect to {} at {}: {}", peer.getId(), peer.getAddress(), f.cause());
                 }
             }
         });

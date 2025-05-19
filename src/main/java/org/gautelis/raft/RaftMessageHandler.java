@@ -32,8 +32,13 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
         ctx.close();
     }
 
-    @Override
+    /* @Override for netty.io 5.0 */
     protected void messageReceived(ChannelHandlerContext ctx, JsonNode jsonNode) throws Exception {
+        channelRead0(ctx, jsonNode);
+    }
+
+    @Override
+    protected void channelRead0(ChannelHandlerContext ctx, JsonNode jsonNode) throws Exception {
         log.trace("Received message: {}", jsonNode);
 
         // Expect a structure like: { "correlationId":"<UUID>", "type": "VoteRequest", "payload": ... }

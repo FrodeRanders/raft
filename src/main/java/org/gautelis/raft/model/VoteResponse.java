@@ -6,7 +6,7 @@ public class VoteResponse {
     private long currentTerm;
 
     // Default constructor needed for Jackson
-    public VoteResponse() {}
+    protected VoteResponse() {}
 
     public VoteResponse(VoteRequest request, boolean voteGranted, long currentTerm) {
         this.term = request.getTerm();

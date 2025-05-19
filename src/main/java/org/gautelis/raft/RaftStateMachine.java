@@ -74,6 +74,10 @@ public class RaftStateMachine {
         this(me, peers, timeoutMillis, logHandler, messageHandler, new RaftClient(messageHandler));
     }
 
+    public void shutdown() {
+        raftClient.shutdown();
+    }
+
     public RaftClient getRaftClient() {
         return raftClient;
     }

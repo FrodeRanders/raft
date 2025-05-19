@@ -8,7 +8,7 @@ public class LogEntry {
     private String peerId;  // for heartbeat messages
 
     // Default constructor needed for Jackson
-    public LogEntry() {}
+    protected LogEntry() {}
 
     public LogEntry(Type type, long term, String peerId) {
         this.type = type;

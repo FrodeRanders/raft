@@ -1,5 +1,5 @@
 # raft
-An asynchronous Raft implementation in Java, built on netty.io 5.0.0.
+An asynchronous Raft implementation in Java, built on netty.io 4.2.1.
 
 Start
 ```
@@ -255,6 +255,15 @@ Here we restart 'server-10082':
 ```
 RaftServer: Raft server started on port 10082
 RaftStateMachine: server-10082 remains FOLLOWER since requested term is 16 (higher than my 0)
+```
+Checking that all server nodes are up:
+```
+➜  lsof -iTCP -sTCP:LISTEN -nP | grep 1008
+java      33194 froran  110u  IPv6 0xe532d8dbe41e1fdf      0t0  TCP *:10080 (LISTEN)
+java      33195 froran  110u  IPv6 0x6d2fe2df2b8e0640      0t0  TCP *:10081 (LISTEN)
+java      33196 froran  110u  IPv6 0x60f078d0866a1fa3      0t0  TCP *:10082 (LISTEN)
+java      33197 froran  110u  IPv6 0x31d0288b343d3232      0t0  TCP *:10083 (LISTEN)
+java      33198 froran  110u  IPv6 0xdcae40cb0056ee3a      0t0  TCP *:10084 (LISTEN)
 ```
 
 Killing all server nodes:

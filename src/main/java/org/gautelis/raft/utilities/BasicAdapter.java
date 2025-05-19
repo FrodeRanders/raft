@@ -40,6 +40,9 @@ public class BasicAdapter {
         catch (InterruptedException ie) {
             log.info("Interrupted!", ie);
         }
+        finally {
+            stateMachine.shutdown();
+        }
     }
 
     public void handleLogEntry(long myTerm, LogEntry logEntry) {

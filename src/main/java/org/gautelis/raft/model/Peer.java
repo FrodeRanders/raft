@@ -7,7 +7,7 @@ public class Peer {
     private InetSocketAddress address;
 
     // Default constructor needed for Jackson
-    public Peer() {}
+    protected Peer() {}
 
     public Peer(String id, InetSocketAddress address) {
         this.id = id;

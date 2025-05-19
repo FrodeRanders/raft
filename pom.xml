@@ -19,14 +19,68 @@
         <vopn.version>3.0-SNAPSHOT</vopn.version> <!-- sibling project -->
         <junit.version>5.12.1</junit.version>
         <jackson.version>2.17.0</jackson.version>
-        <netty.version>5.0.0.Alpha2</netty.version>
+        <netty.version>4.2.1.Final</netty.version> <!-- 5.0.0.Alpha2 is defunct -->
         <guid-gen.version>5.1.0</guid-gen.version>
     </properties>
 
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>${netty.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
-        <dependency>
+        <!--<dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
+            <version>${netty.version}</version>
+        </dependency>-->
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-buffer</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-base</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+
+        <!--<dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-http</artifactId>
+            <version>${netty.version}</version>
+        </dependency>-->
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-resolver</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-common</artifactId>
             <version>${netty.version}</version>
         </dependency>
 
@@ -111,20 +165,27 @@
                             </transformers>
                             <artifactSet>
                                 <includes>
-                                    <include>io.netty:netty-all</include>
+                                    <include>io.netty:netty-transport</include>
+                                    <include>io.netty:netty-buffer</include>
+                                    <include>io.netty:netty-handler</include>
+                                    <include>io.netty:netty-codec-base</include>
+                                    <!--<include>io.netty:netty-codec-http</include>-->
+                                    <include>io.netty:netty-resolver</include>
+                                    <include>io.netty:netty-common</include>
+
                                     <include>com.fasterxml.jackson.core:jackson-core</include>
                                     <include>com.fasterxml.jackson.core:jackson-annotations</include>
                                     <include>com.fasterxml.jackson.core:jackson-databind</include>
                                     <include>com.fasterxml.uuid:java-uuid-generator</include>
-                                    <include>org.gautelis:vopn</include>
+
+                                    <!--<include>org.gautelis:vopn</include>-->
                                     <include>org.slf4j:slf4j-api</include>
                                     <include>org.apache.logging.log4j:log4j-api</include>
                                     <include>org.apache.logging.log4j:log4j-core</include>
                                     <include>org.apache.logging.log4j:log4j-slf4j2-impl</include>
                                 </includes>
                                 <excludes>
-                                    <!-- jar tf target/muprocessmanager-x.y.jar | egrep '\/$' | sort -->
-                                    <exclude>org.jline:jline</exclude>
+                                    <!-- jar tf target/raft-x.y.jar | egrep '\/$' | sort -->
                                 </excludes>
                             </artifactSet>
                             <filters>

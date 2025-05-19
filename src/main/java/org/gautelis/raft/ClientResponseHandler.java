@@ -31,8 +31,13 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<JsonNode>
         this.messageHandler = messageHandler;
     }
 
-    @Override
+    /* @Override for netty.io 5.0 */
     protected void messageReceived(ChannelHandlerContext ctx, JsonNode jsonNode) throws Exception {
+        channelRead0(ctx, jsonNode);
+    }
+
+    @Override
+    protected void channelRead0(ChannelHandlerContext ctx, JsonNode jsonNode) throws Exception {
         // e.g. {"correlationId": "...", "type": "VoteResponse", "payload": {...}}
         if (!jsonNode.has("type")) {
             log.warn("No 'type' in JSON: {}", jsonNode);

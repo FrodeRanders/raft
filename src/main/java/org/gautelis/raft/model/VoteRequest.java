@@ -5,7 +5,7 @@ public class VoteRequest {
     private String candidateId;
 
     // Default constructor needed for Jackson
-    public VoteRequest() {}
+    protected VoteRequest() {}
 
     public VoteRequest(long term, String candidateId) {
         this.term = term;
