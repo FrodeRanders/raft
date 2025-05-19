@@ -1,5 +1,5 @@
 # raft
-An asynchronous Raft implementation in Java, built on netty.io 4.2.1.
+An asynchronous Raft implementation in Java, built on netty.io 4.2.
 
 Start
 ```
