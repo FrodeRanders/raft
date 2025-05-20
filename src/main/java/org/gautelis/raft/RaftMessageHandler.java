@@ -28,7 +28,7 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        log.error("Error in channel: {}", cause.getMessage(), cause);
+        log.error("Error in server channel: {}", cause.getMessage(), cause);
         ctx.close();
     }
 
