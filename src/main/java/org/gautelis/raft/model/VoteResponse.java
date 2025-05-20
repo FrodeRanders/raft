@@ -20,11 +20,11 @@ public class VoteResponse {
 
     @Override
     public String toString() {
-        StringBuilder builder = new StringBuilder("VoteResponse{");
-        builder.append("term=").append(term);
-        builder.append(", voteGranted=").append(voteGranted);
-        builder.append(", currentTerm=").append(currentTerm);
-        builder.append('}');
-        return builder.toString();
+        StringBuilder sb = new StringBuilder("VoteResponse{");
+        sb.append("term=").append(term);
+        sb.append(", voteGranted=").append(voteGranted);
+        sb.append(", currentTerm=").append(currentTerm);
+        sb.append('}');
+        return sb.toString();
     }
 }

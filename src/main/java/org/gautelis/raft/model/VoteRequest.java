@@ -17,10 +17,10 @@ public class VoteRequest {
 
     @Override
     public String toString() {
-        StringBuilder builder = new StringBuilder("VoteRequest{");
-        builder.append("term=").append(term);
-        builder.append(", candidateId='").append(candidateId).append('\'');
-        builder.append('}');
-        return builder.toString();
+        StringBuilder sb = new StringBuilder("VoteRequest{");
+        sb.append("term=").append(term);
+        sb.append(", candidateId='").append(candidateId).append('\'');
+        sb.append('}');
+        return sb.toString();
     }
 }

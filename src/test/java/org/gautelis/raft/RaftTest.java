@@ -1,7 +1,5 @@
 package org.gautelis.raft;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-
 import org.gautelis.raft.model.Peer;
 import org.junit.jupiter.api.Test;
 import org.apache.logging.log4j.LogManager;

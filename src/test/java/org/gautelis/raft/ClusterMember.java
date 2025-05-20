@@ -3,7 +3,6 @@ package org.gautelis.raft;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.uuid.Generators;
 import io.netty.channel.ChannelHandlerContext;
 import org.gautelis.raft.model.LogEntry;
 import org.gautelis.raft.model.Message;

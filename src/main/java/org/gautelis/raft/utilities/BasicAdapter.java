@@ -3,7 +3,6 @@ package org.gautelis.raft.utilities;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.netty.channel.ChannelHandlerContext;
-import org.gautelis.raft.RaftClient;
 import org.gautelis.raft.RaftServer;
 import org.gautelis.raft.RaftStateMachine;
 import org.gautelis.raft.model.LogEntry;
@@ -48,7 +47,7 @@ public class BasicAdapter {
     public void handleLogEntry(long myTerm, LogEntry logEntry) {
         // This should be a LogEntry.Type.COMMAND
         log.debug(
-                "Received {} log entry (their term {} {} my term)",
+                "Received {} log entry (their term {} {} my term {})",
                 logEntry.getType(), logEntry.getTerm(), myTerm == logEntry.getTerm() ? "==" : "!=", myTerm
         );
     }

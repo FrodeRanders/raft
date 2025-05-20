@@ -1,6 +1,5 @@
 package org.gautelis.raft;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import io.netty.channel.EventLoopGroup;
 import io.netty.util.concurrent.Future;
 import org.gautelis.raft.model.LogEntry;
@@ -47,7 +46,7 @@ public class RaftStateMachine {
     private long term = 0;
     private Peer votedFor = null;
     private long lastHeartbeat = 0;
-    private long timeoutMillis;
+    private final long timeoutMillis;
     private long electionSequenceCounter = 0;
     private final Map<String, Peer> peers = new HashMap<>();
     private final Peer me;

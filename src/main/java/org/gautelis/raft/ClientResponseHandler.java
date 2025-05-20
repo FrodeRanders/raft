@@ -31,11 +31,6 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<JsonNode>
         this.messageHandler = messageHandler;
     }
 
-    /* @Override for netty.io 5.0 */
-    protected void messageReceived(ChannelHandlerContext ctx, JsonNode jsonNode) throws Exception {
-        channelRead0(ctx, jsonNode);
-    }
-
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, JsonNode jsonNode) throws Exception {
         // e.g. {"correlationId": "...", "type": "VoteResponse", "payload": {...}}
@@ -78,7 +73,6 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<JsonNode>
             }
         }
     }
-
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {

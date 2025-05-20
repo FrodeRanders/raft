@@ -2,11 +2,9 @@ package org.gautelis.raft;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.uuid.Generators;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
-import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
@@ -40,18 +38,23 @@ public class RaftClient {
     // Shared map for in-flight requests
     private final Map<String, CompletableFuture<VoteResponse>> inFlightRequests = new ConcurrentHashMap<>();
 
+    private ChannelInitializer<SocketChannel> getChannelInitializer(MessageHandler messageHandler) {
+        return new ChannelInitializer<>() {
+            protected void initChannel(SocketChannel ch) {
+                log.trace("Initializing client channel: {}", ch);
+
+                ChannelPipeline p = ch.pipeline();
+                p.addLast(new ByteBufToJsonDecoder());
+                p.addLast(new ClientResponseHandler(inFlightRequests, messageHandler));
+            }
+        };
+    }
+
     public RaftClient(MessageHandler messageHandler) {
         bootstrap = new Bootstrap()
                 .group(group)
                 .channel(NioSocketChannel.class)
-                .handler(new ChannelInitializer<SocketChannel>() {
-                    protected void initChannel(SocketChannel ch) throws Exception {
-                        log.trace("Initializing client channel: {}", ch);
-                        ChannelPipeline p = ch.pipeline();
-                        p.addLast(new ByteBufToJsonDecoder());
-                        p.addLast(new ClientResponseHandler(inFlightRequests, messageHandler));
-                    }
-                })
+                .handler(getChannelInitializer(messageHandler))
                 .option(ChannelOption.TCP_NODELAY, true) // disables Nagle's algorithm
                 .option(ChannelOption.SO_KEEPALIVE, true) // helps detect dropped peers
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 1000);  // fast-fail if peer is down
@@ -252,7 +255,7 @@ public class RaftClient {
     }
 
     public Collection<Peer> broadcast(String type, long term, String json) {
-        Collection<Peer> unreacheablePeers = new HashSet<>();
+        Collection<Peer> unreachablePeers = new HashSet<>();
 
         for (Map.Entry<Peer, Channel> channelEntry : channels.entrySet()) {
             Peer peer = channelEntry.getKey();
@@ -266,7 +269,7 @@ public class RaftClient {
                 // a connect so that we are connected *next* round...
 
                 connect(peer).addListener((ChannelFuture f) -> {
-                    unreacheablePeers.add(peer);
+                    unreachablePeers.add(peer);
 
                     if (!f.isSuccess()) {
                         // We should log at some higher level, but since this situation
@@ -290,6 +293,6 @@ public class RaftClient {
                 }
             }
         }
-        return unreacheablePeers;
+        return unreachablePeers;
     }
 }

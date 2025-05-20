@@ -2,9 +2,6 @@ package org.gautelis.raft.utilities;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.gautelis.raft.RaftClient;
-import org.gautelis.raft.RaftServer;
-import org.gautelis.raft.RaftStateMachine;
 import org.gautelis.raft.model.Peer;
 
 import java.net.InetSocketAddress;
@@ -14,7 +11,7 @@ import java.util.List;
 public class Application {
     private static final Logger log = LogManager.getLogger(Application.class);
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         if (args.length < 2) {
             System.err.println("Usage: java -jar target/raft.jar <my-port> <peer-port> ...");
             System.exit(1);
