@@ -4,7 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.netty.channel.ChannelHandlerContext;
 import org.gautelis.raft.RaftServer;
-import org.gautelis.raft.RaftStateMachine;
+import org.gautelis.raft.RaftNode;
 import org.gautelis.raft.model.LogEntry;
 import org.gautelis.raft.model.Peer;
 import org.slf4j.Logger;
@@ -19,7 +19,7 @@ public class BasicAdapter {
     protected final Peer me;
     protected final List<Peer> peers;
 
-    protected RaftStateMachine stateMachine;
+    protected RaftNode stateMachine;
 
     public BasicAdapter(long timeoutMillis, Peer me, List<Peer> peers) {
         this.timeoutMillis = timeoutMillis;
@@ -28,7 +28,7 @@ public class BasicAdapter {
     }
 
     public void start() {
-        stateMachine = new RaftStateMachine(
+        stateMachine = new RaftNode(
                 me, peers, timeoutMillis, this::handleLogEntry, this::handleMessage
         );
 

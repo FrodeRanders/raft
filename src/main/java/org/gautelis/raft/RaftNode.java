@@ -38,8 +38,8 @@ import java.util.concurrent.TimeUnit;
  *
  *
  */
-public class RaftStateMachine {
-    private static final Logger log = LoggerFactory.getLogger(RaftStateMachine.class);
+public class RaftNode {
+    private static final Logger log = LoggerFactory.getLogger(RaftNode.class);
 
     enum State { FOLLOWER, CANDIDATE, LEADER }
     private volatile State state = State.FOLLOWER;
@@ -58,7 +58,7 @@ public class RaftStateMachine {
     //  - keep a separate client
     protected final RaftClient raftClient; // or similar
 
-    public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler, MessageHandler messageHandler, RaftClient raftClient) {
+    public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler, MessageHandler messageHandler, RaftClient raftClient) {
         for (Peer peer : peers) {
             this.peers.putIfAbsent(peer.getId(), peer);
         }
@@ -69,7 +69,7 @@ public class RaftStateMachine {
         this.raftClient = raftClient;
     }
 
-    public RaftStateMachine(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler, MessageHandler messageHandler) {
+    public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler, MessageHandler messageHandler) {
         this(me, peers, timeoutMillis, logHandler, messageHandler, new RaftClient(messageHandler));
     }
 

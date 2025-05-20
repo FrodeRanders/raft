@@ -11,10 +11,10 @@ import org.slf4j.LoggerFactory;
 public class RaftServer {
     private static final Logger log = LoggerFactory.getLogger(RaftServer.class);
 
-    private final RaftStateMachine stateMachine;  // your state machine
+    private final RaftNode stateMachine;  // your state machine
     private final int port;
 
-    public RaftServer(RaftStateMachine stateMachine, int port) {
+    public RaftServer(RaftNode stateMachine, int port) {
         this.stateMachine = stateMachine;
         this.port = port;
     }

@@ -20,9 +20,9 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
     private static final Logger log = LoggerFactory.getLogger(RaftMessageHandler.class);
 
     private final ObjectMapper mapper = new ObjectMapper();
-    private final RaftStateMachine stateMachine;
+    private final RaftNode stateMachine;
 
-    public RaftMessageHandler(RaftStateMachine raftServer) {
+    public RaftMessageHandler(RaftNode raftServer) {
         this.stateMachine = raftServer;
     }
 
