@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -45,10 +46,10 @@ public class RaftNode {
     private volatile State state = State.FOLLOWER;
 
     // Logical clock used to identify stale leaders and candidates.
-    private long currentTerm = 0L;
+    private volatile long currentTerm = 0L;
 
     // Track votes, so a node votes for at most one candidate in a given term
-    private Peer votedFor = null;
+    private volatile Peer votedFor = null;
 
     // Configurable timeout (in ms)
     private final long timeoutMillis;
@@ -57,7 +58,7 @@ public class RaftNode {
     private long electionSequenceCounter = 0L;
 
     // When was a heartbeat last received (timestamp in ms)
-    private long lastHeartbeat = 0L;
+    private volatile long lastHeartbeat = 0L;
 
     // Keeps track of peers in cluster
     private final Map<String, Peer> peers = new HashMap<>();
@@ -72,16 +73,40 @@ public class RaftNode {
     //  - keep a separate client
     protected final RaftClient raftClient; // or similar
 
+    @FunctionalInterface
+    interface TimeSource {
+        long nowMillis();
+    }
+
+    private final TimeSource timeSource;
+    private final Random rng;
+
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler, MessageHandler messageHandler, RaftClient raftClient) {
+        this(me, peers, timeoutMillis, logHandler, messageHandler, raftClient, System::currentTimeMillis, new Random());
+    }
+
+    RaftNode(Peer me,
+             List<Peer> peers,
+             long timeoutMillis,
+             LogHandler logHandler,
+             MessageHandler messageHandler,
+             RaftClient raftClient,
+             TimeSource timeSource,
+             Random rng) {
+        this.me = me;
         for (Peer peer : peers) {
+            if (peer == null) continue;
+            if (me != null && me.getId() != null && me.getId().equals(peer.getId())) {
+                continue; // do not include self in peers
+            }
             this.peers.putIfAbsent(peer.getId(), peer);
         }
-
-        this.me = me;
         this.timeoutMillis = timeoutMillis;
         this.logHandler = logHandler;
         this.messageHandler = messageHandler;
         this.raftClient = raftClient;
+        this.timeSource = timeSource;
+        this.rng = rng;
     }
 
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, LogHandler logHandler, MessageHandler messageHandler) {
@@ -102,6 +127,10 @@ public class RaftNode {
 
     public String getId() {
         return me.getId();
+    }
+
+    public boolean isLeader() {
+        return state == State.LEADER;
     }
 
     /* package private */
@@ -184,6 +213,12 @@ public class RaftNode {
                 long peerTerm = entry.getTerm();
                 log.trace("Receive heartbeat for term {} from {}: {}", peerTerm, entry.getPeerId(), entry.getType());
 
+                // Ignore stale heartbeats; do NOT refresh timeout on them.
+                if (peerTerm < currentTerm) {
+                    log.trace("Ignoring stale heartbeat from {}: peerTerm={} < currentTerm={}", entry.getPeerId(), peerTerm, currentTerm);
+                    return;
+                }
+
                 // If the peer's term is higher, become follower.
                 if (peerTerm > currentTerm) {
                     //----------------------------------------
@@ -205,6 +240,18 @@ public class RaftNode {
                     state = State.FOLLOWER;
                     votedFor = null;
                     electionSequenceCounter = 0;
+
+                } else {
+                    // peerTerm == currentTerm: leader discovery for this term
+                    if (state != State.FOLLOWER) {
+                        if (log.isDebugEnabled()) {
+                            log.debug("{} steps from {} to FOLLOWER due to heartbeat in current term {}",
+                                    me.getId(), state.name(), currentTerm);
+                        }
+                        state = State.FOLLOWER;
+                        votedFor = null;
+                        electionSequenceCounter = 0;
+                    }
                 }
 
                 refreshTimeout();
@@ -237,14 +284,16 @@ public class RaftNode {
     }
 
     private synchronized boolean hasTimedOut() {
-        long baseDelay = timeoutMillis / 10;
-        baseDelay *= electionSequenceCounter;
-        long delay = baseDelay + Math.round( baseDelay * Math.random());
-        return System.currentTimeMillis() - lastHeartbeat > (timeoutMillis + delay);
+        // Includes some jitter (also for the first election) to avoid synchronized elections.
+        long jitter = (long) (timeoutMillis * rng.nextDouble()); // [0..timeoutMillis)
+        long backoffBase = (timeoutMillis / 10) * electionSequenceCounter;
+        long backoffJitter = (long) (backoffBase * rng.nextDouble()); // [0..backoffBase)
+        long extra = jitter + backoffBase + backoffJitter;
+        return (timeSource.nowMillis() - lastHeartbeat) > (timeoutMillis + extra);
     }
 
     private synchronized void refreshTimeout() {
-        lastHeartbeat = System.currentTimeMillis();
+        lastHeartbeat = timeSource.nowMillis();
     }
 
     private void newElection() {
@@ -289,6 +338,24 @@ public class RaftNode {
             // current term. We may receive responses from earlier election rounds
             // and these should be discarded.
             if (this.currentTerm == electionTerm) {
+                // Step down immediately if any response reports a newer term, regardless of voteGranted.
+                long maxTerm = this.currentTerm;
+                for (VoteResponse r : responses) {
+                    if (r.getCurrentTerm() > maxTerm) {
+                        maxTerm = r.getCurrentTerm();
+                    }
+                }
+                if (maxTerm > this.currentTerm) {
+                    log.info("{} discovered higher term {} in vote responses (was {}), stepping down to FOLLOWER",
+                            me.getId(), maxTerm, this.currentTerm);
+                    this.currentTerm = maxTerm;
+                    state = State.FOLLOWER;
+                    votedFor = null;
+                    electionSequenceCounter = 0;
+                    refreshTimeout();
+                    return;
+                }
+
                 long votesGranted = 1; // since I voted for myself
                 for (VoteResponse response : responses) {
                     if (response.isVoteGranted()) {
@@ -313,7 +380,9 @@ public class RaftNode {
                 }
 
                 // Let's see if we got a majority
-                int majority = (peers.size() + 1) / 2 + 1;
+                int clusterSize = peers.size() + 1; // peers excludes me
+                int majority = (clusterSize / 2) + 1;
+
                 if (votesGranted >= majority) {
                     //--------------------------------------------
                     // b) receives votes from majority of nodes
@@ -337,5 +406,32 @@ public class RaftNode {
             LogEntry entry = new LogEntry(LogEntry.Type.HEARTBEAT, /* my term */ currentTerm, me.getId());
             raftClient.broadcastLogEntry(entry);
         }
+    }
+
+    // ---------------------------
+    // Test hooks (package-private)
+    // ---------------------------
+    State getStateForTest() {
+        return state;
+    }
+
+    long getLastHeartbeatMillisForTest() {
+        return lastHeartbeat;
+    }
+
+    void setLastHeartbeatMillisForTest(long v) {
+        lastHeartbeat = v;
+    }
+
+    void electionTickForTest() {
+        checkTimeout();
+    }
+
+    void heartbeatTickForTest() {
+        broadcastHeartbeat();
+    }
+
+    void handleVoteResponsesForTest(java.util.List<VoteResponse> r, long t) {
+        handleVoteResponses(r, t);
     }
 }
