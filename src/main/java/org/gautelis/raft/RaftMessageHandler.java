@@ -6,10 +6,7 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
-import org.gautelis.raft.model.LogEntry;
-import org.gautelis.raft.model.Message;
-import org.gautelis.raft.model.VoteRequest;
-import org.gautelis.raft.model.VoteResponse;
+import org.gautelis.raft.model.*;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
 
@@ -47,6 +44,16 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
         JsonNode payload = jsonNode.get("payload");
 
         switch (type) {
+            case "Heartbeat" -> {
+                Heartbeat heartbeat = mapper.treeToValue(payload, Heartbeat.class);
+                stateMachine.handleHeartbeat(heartbeat);
+                // no expected response
+            }
+            case "LogEntry" -> {
+                LogEntry entry = mapper.treeToValue(payload, LogEntry.class);
+                stateMachine.handleLogEntry(entry);
+                // no expected response
+            }
             case "VoteRequest" -> {
                 VoteRequest voteRequest = mapper.treeToValue(payload, VoteRequest.class);
                 VoteResponse voteResponse = stateMachine.handleVoteRequest(voteRequest);
@@ -72,13 +79,6 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
                     log.warn("Failed to send vote response to {}: {}", peerId, e.getMessage(), e);
                 }
             }
-            case "LogEntry" -> {
-                LogEntry entry = mapper.treeToValue(payload, LogEntry.class);
-                stateMachine.handleLogEntry(entry);
-
-                // no expected response if it's just a heartbeat
-            }
-
             default -> {
                 MessageHandler messageHandler = stateMachine.getMessageHandler();
                 if (null != messageHandler) {

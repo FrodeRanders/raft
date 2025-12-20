@@ -3,8 +3,7 @@ package org.gautelis.raft.utilities;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.netty.channel.ChannelHandlerContext;
-import org.gautelis.raft.RaftServer;
-import org.gautelis.raft.RaftNode;
+import org.gautelis.raft.*;
 import org.gautelis.raft.model.LogEntry;
 import org.gautelis.raft.model.Peer;
 import org.slf4j.Logger;
@@ -28,8 +27,12 @@ public class BasicAdapter {
     }
 
     public void start() {
+        LogStore logStore = new InMemoryLogStore();
+
+        MessageHandler messageHandler = this::handleMessage;
+
         stateMachine = new RaftNode(
-                me, peers, timeoutMillis, this::handleLogEntry, this::handleMessage
+                me, peers, timeoutMillis, messageHandler, new RaftClient(messageHandler), logStore
         );
 
         try {
@@ -42,14 +45,6 @@ public class BasicAdapter {
         finally {
             stateMachine.shutdown();
         }
-    }
-
-    public void handleLogEntry(long myTerm, LogEntry logEntry) {
-        // This should be a LogEntry.Type.COMMAND
-        log.debug(
-                "Received {} log entry (their term {} {} my term {})",
-                logEntry.getType(), logEntry.getTerm(), myTerm == logEntry.getTerm() ? "==" : "!=", myTerm
-        );
     }
 
     public void handleMessage(String correlationId, String type, JsonNode node, ChannelHandlerContext ctx) throws JsonProcessingException {

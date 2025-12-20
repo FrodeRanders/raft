@@ -4,10 +4,7 @@ import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.ImmediateEventExecutor;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.gautelis.raft.model.LogEntry;
-import org.gautelis.raft.model.Peer;
-import org.gautelis.raft.model.VoteRequest;
-import org.gautelis.raft.model.VoteResponse;
+import org.gautelis.raft.model.*;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;
@@ -78,8 +75,7 @@ class RaftNodeElectionTest {
     }
 
     /**
-     * Peer factory that does NOT assume a specific constructor signature.
-     * It tries a few common patterns via reflection.
+     * Peer factory (simplified)
      */
     static Peer peer(String id) {
         return new Peer(id, /* InetSocketAddress */ null);
@@ -95,18 +91,24 @@ class RaftNodeElectionTest {
         Peer b = peer("B");
 
         // RaftClient unused in this test
-        RaftNode n = new RaftNode(me, List.of(b), 1_000, null, null, new QueuedRaftClient("A", Map.of()), time, new Random(123));
+        RaftNode n = new RaftNode(me, List.of(b), 1_000, null, new QueuedRaftClient("A", Map.of()), new InMemoryLogStore(), time, new Random(123));
 
         log.debug("Put node at term 5 with an old lastHeartbeat");
-        n.handleLogEntry(new LogEntry(LogEntry.Type.HEARTBEAT, 5, "B"));
+        n.handleHeartbeat(new Heartbeat(5, "B"));
         long old = time.nowMillis() - 5_000;
         n.setLastHeartbeatMillisForTest(old);
 
         log.info("Receive stale heartbeat (term 4) -> must NOT refresh");
-        n.handleLogEntry(new LogEntry(LogEntry.Type.HEARTBEAT, 4, "B"));
+        n.handleHeartbeat(new Heartbeat(4, "B"));
         assertEquals(old, n.getLastHeartbeatMillisForTest(), "stale heartbeat must not refresh lastHeartbeat");
         assertEquals(5, n.getTerm(), "stale heartbeat must not decrease term");
         log.info("Successful test!");
+    }
+
+    @Test
+    void staleLogCandidateCannotWin() {
+        log.info("*** Testcase *** Stale log candidate cannot win");
+        log.info("Not implemented");
     }
 
     @Test
@@ -123,8 +125,8 @@ class RaftNodeElectionTest {
         QueuedRaftClient clientA = new QueuedRaftClient("A", nodes);
         QueuedRaftClient clientB = new QueuedRaftClient("B", nodes);
 
-        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, null, clientA, time, new Random(1));
-        RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, null, clientB, time, new Random(2));
+        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, clientA, new InMemoryLogStore(), time, new Random(1));
+        RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, clientB, new InMemoryLogStore(), time, new Random(2));
 
         nodes.put("A", nodeA);
         nodes.put("B", nodeB);
@@ -142,7 +144,7 @@ class RaftNodeElectionTest {
         // Using “heartbeat from B” as a stand-in for “some (other) leader exists”.
         // That leader would not have voted for A. This is a test of A's behaviour,
         // so this is sufficient to trigger the right behaviour in A.
-        nodeA.handleLogEntry(new LogEntry(LogEntry.Type.HEARTBEAT, 1, "B"));
+        nodeA.handleHeartbeat(new Heartbeat(1, "B"));
         assertEquals(RaftNode.State.FOLLOWER, nodeA.getStateForTest());
         log.info("Successful test!");
 
@@ -163,7 +165,7 @@ class RaftNodeElectionTest {
         Peer a = peer("A");
         Peer b = peer("B");
 
-        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, null, new QueuedRaftClient("A", Map.of()), time, new Random(1));
+        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, new QueuedRaftClient("A", Map.of()), new InMemoryLogStore(), time, new Random(1));
 
         log.info("Make A candidate at term 1");
         nodeA.setLastHeartbeatMillisForTest(0);
@@ -176,7 +178,7 @@ class RaftNodeElectionTest {
         log.info("");
         VoteRequest req = new VoteRequest(1, "A");
         // Pathological but good for guarding logic: voteGranted=true but currentTerm=2
-        List<VoteResponse> responses = List.of(new VoteResponse(req, true, 2));
+        List<VoteResponse> responses = List.of(new VoteResponse(req, "B", true, 2)); // B voting for A
         nodeA.handleVoteResponsesForTest(responses, 1);
 
         assertEquals(RaftNode.State.FOLLOWER, nodeA.getStateForTest());
@@ -200,9 +202,9 @@ class RaftNodeElectionTest {
         QueuedRaftClient clientB = new QueuedRaftClient("B", nodes);
         QueuedRaftClient clientC = new QueuedRaftClient("C", nodes);
 
-        RaftNode nodeA = new RaftNode(a, List.of(b, c), 200, null, null, clientA, time, new Random(1));
-        RaftNode nodeB = new RaftNode(b, List.of(a, c), 200, null, null, clientB, time, new Random(2));
-        RaftNode nodeC = new RaftNode(c, List.of(a, b), 200, null, null, clientC, time, new Random(3));
+        RaftNode nodeA = new RaftNode(a, List.of(b, c), 200, null, clientA, new InMemoryLogStore(), time, new Random(1));
+        RaftNode nodeB = new RaftNode(b, List.of(a, c), 200, null, clientB, new InMemoryLogStore(), time, new Random(2));
+        RaftNode nodeC = new RaftNode(c, List.of(a, b), 200, null, clientC, new InMemoryLogStore(), time, new Random(3));
 
         nodes.put("A", nodeA);
         nodes.put("B", nodeB);

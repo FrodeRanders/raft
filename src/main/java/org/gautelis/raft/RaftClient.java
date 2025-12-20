@@ -107,7 +107,7 @@ public class RaftClient {
                         future.whenComplete((voteResponse, throwable) -> {
                             if (throwable != null) {
                                 log.debug("Vote request to {} failed: {}", peer.getId(), throwable.toString());
-                                responses.add(new VoteResponse(req, false, -1)); // Synthetic negative vote
+                                responses.add(new VoteResponse(req, peer.getId(), false, -1)); // Synthetic negative vote
                             } else {
                                 responses.add(voteResponse);
                             }
@@ -118,7 +118,7 @@ public class RaftClient {
                         log.info("Could not request vote for term {} from {}: cannot connect", req.getTerm(), peer.getId());
 
                         // treat it as negative
-                        responses.add(new VoteResponse(req, false, -1)); // Synthetic negative vote
+                        responses.add(new VoteResponse(req, peer.getId(), false, -1)); // Synthetic negative vote
                         checkDone(responses, responseCount, promise);
                     }
                 });
@@ -132,7 +132,7 @@ public class RaftClient {
                 future.whenComplete((voteResponse, throwable) -> {
                     if (throwable != null) {
                         log.info("Vote request to {} failed: {}", peer.getId(), throwable.toString());
-                        responses.add(new VoteResponse(req, false, -1)); // Synthetic negative vote
+                        responses.add(new VoteResponse(req, peer.getId(),false, -1)); // Synthetic negative vote
                     } else {
                         responses.add(voteResponse);
                     }
@@ -209,13 +209,58 @@ public class RaftClient {
         }
     }
 
+    public void broadcastHeartbeat(Heartbeat heartbeat) {
+        for (Map.Entry<Peer, Channel> channelEntry : channels.entrySet()) {
+            Peer peer = channelEntry.getKey();
+            Channel channel = channelEntry.getValue();
+
+            if (log.isTraceEnabled()) {
+                log.trace("Broadcasting heartbeat for term {} to {}", heartbeat.getTerm(), peer.getId());
+            }
+
+            if (channel == null || !channel.isActive()) {
+                // We are not connected to this peer, so we will not be able
+                // to broadcast anything *this* round -- but we will initiate
+                // a connect so that we are connected *next* round...
+
+                connect(peer).addListener((ChannelFuture f) -> {
+                    if (!f.isSuccess()) {
+                        // We should log at some higher level, but since this situation
+                        // may continue for some time and flood the log we will refrain
+                        // from warn, info and even debug logging
+                        if (log.isTraceEnabled()) {
+                            log.trace("Could not broadcast to {} at {}", peer.getId(), peer.getAddress(), f.cause());
+                        }
+                    }
+                });
+            } else {
+                try {
+                    Message msg = new Message("Heartbeat", heartbeat);
+                    String json = mapper.writeValueAsString(msg);
+
+                    channel.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
+                            .addListener(f -> {
+                                if (!f.isSuccess()) {
+                                    log.debug("Could not broadcast heartbeat to {}", heartbeat.getPeerId(), f.cause());
+                                }
+                            });
+                } catch (JsonProcessingException jpe) {
+                    log.warn("{} failed to serialize heartbeat object: {}", heartbeat.getPeerId(), jpe.getMessage(), jpe);
+
+                } catch (Exception e) {
+                    log.warn("Failed to broadcast heartbeat to {}", heartbeat.getPeerId(), e);
+                }
+            }
+        }
+    }
+
     public void broadcastLogEntry(LogEntry logEntry) {
         for (Map.Entry<Peer, Channel> channelEntry : channels.entrySet()) {
             Peer peer = channelEntry.getKey();
             Channel channel = channelEntry.getValue();
 
             if (log.isTraceEnabled()) {
-                log.trace("Broadcasting {} for term {} to {}", logEntry.getType(), logEntry.getTerm(), peer.getId());
+                log.trace("Broadcasting log entry for term {} to {}", logEntry.getTerm(), peer.getId());
             }
 
             if (channel == null || !channel.isActive()) {
@@ -241,14 +286,14 @@ public class RaftClient {
                     channel.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
                             .addListener(f -> {
                                 if (!f.isSuccess()) {
-                                    log.debug("Could not broadcast to {}", logEntry.getPeerId(), f.cause());
+                                    log.debug("Could not broadcast log entry to {}", logEntry.getPeerId(), f.cause());
                                 }
                             });
                 } catch (JsonProcessingException jpe) {
-                    log.warn("{} failed to serialize object: {}", logEntry.getPeerId(), jpe.getMessage(), jpe);
+                    log.warn("{} failed to serialize log entry object: {}", logEntry.getPeerId(), jpe.getMessage(), jpe);
 
                 } catch (Exception e) {
-                    log.warn("Failed to broadcast to {}", logEntry.getPeerId(), e);
+                    log.warn("Failed to broadcast log entry to {}", logEntry.getPeerId(), e);
                 }
             }
         }

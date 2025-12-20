@@ -2,16 +2,14 @@ package org.gautelis.raft.model;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
-public class LogEntry {
+public class Heartbeat {
     private long term;
-    private String peerId;  // for heartbeat messages
-
-    private JsonNode data; // byte[]??
+    private String peerId;
 
     // Default constructor needed for Jackson
-    protected LogEntry() {}
+    protected Heartbeat() {}
 
-    public LogEntry(long term, String peerId) {
+    public Heartbeat(long term, String peerId) {
         this.term = term;
         this.peerId = peerId;
     }
@@ -21,7 +19,7 @@ public class LogEntry {
 
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder("LogEntry{");
+        StringBuilder sb = new StringBuilder("Heartbeat{");
         sb.append("term=").append(term);
         sb.append(", peerId=").append(peerId);
         sb.append('}');
