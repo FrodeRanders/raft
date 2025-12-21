@@ -14,13 +14,13 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>21</maven.compiler.release>
-        <log4j.version>2.25.2</log4j.version>
+        <log4j.version>2.25.3</log4j.version>
         <slf4j.version>2.0.17</slf4j.version>
         <vopn.version>3.0-SNAPSHOT</vopn.version> <!-- sibling project -->
-        <junit.version>5.14.1</junit.version>
+        <junit.version>6.0.1</junit.version>
         <jackson.version>2.20.1</jackson.version>
-        <netty.version>4.2.7.Final</netty.version> <!-- 5.0.0.Alpha2 is defunct -->
-        <guid-gen.version>5.1.1</guid-gen.version>
+        <netty.version>4.2.9.Final</netty.version> <!-- 5.0.0.Alpha2 is defunct! -->
+        <guid-gen.version>5.2.0</guid-gen.version>
     </properties>
 
     <dependencyManagement>
