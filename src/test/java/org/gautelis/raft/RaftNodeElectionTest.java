@@ -108,7 +108,128 @@ class RaftNodeElectionTest {
     @Test
     void staleLogCandidateCannotWin() {
         log.info("*** Testcase *** Stale log candidate cannot win");
-        log.info("Not implemented");
+        MutableTime time = new MutableTime(0);
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+
+        InMemoryLogStore storeB = new InMemoryLogStore();
+        storeB.append(List.of(
+                new LogEntry(1, "B"),
+                new LogEntry(2, "B")
+        ));
+
+        RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new QueuedRaftClient("B", Map.of()), storeB, time, new Random(1));
+
+        // Candidate A has stale term and index -> reject.
+        VoteRequest staleTerm = new VoteRequest(3, "A", 2, 1);
+        VoteResponse r1 = nodeB.handleVoteRequest(staleTerm);
+        assertFalse(r1.isVoteGranted());
+
+        // Candidate A has up-to-date term but stale index -> reject.
+        VoteRequest staleIndex = new VoteRequest(3, "A", 1, 2);
+        VoteResponse r2 = nodeB.handleVoteRequest(staleIndex);
+        assertFalse(r2.isVoteGranted());
+
+        // Candidate A matches log -> grant.
+        VoteRequest upToDate = new VoteRequest(3, "A", 2, 2);
+        VoteResponse r3 = nodeB.handleVoteRequest(upToDate);
+        assertTrue(r3.isVoteGranted());
+    }
+
+    @Test
+    void voteGrantedOncePerTermUnlessSameCandidate() {
+        log.info("*** Testcase *** Vote granted once per term unless same candidate");
+
+        MutableTime time = new MutableTime(0);
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+        Peer c = peer("C");
+
+        RaftNode nodeB = new RaftNode(b, List.of(a, c), 100, null, new QueuedRaftClient("B", Map.of()), new InMemoryLogStore(), time, new Random(1));
+
+        VoteRequest reqA = new VoteRequest(1, "A");
+        VoteResponse r1 = nodeB.handleVoteRequest(reqA);
+        assertTrue(r1.isVoteGranted());
+
+        VoteRequest reqC = new VoteRequest(1, "C");
+        VoteResponse r2 = nodeB.handleVoteRequest(reqC);
+        assertFalse(r2.isVoteGranted());
+
+        // Same candidate in same term should be granted again.
+        VoteResponse r3 = nodeB.handleVoteRequest(reqA);
+        assertTrue(r3.isVoteGranted());
+    }
+
+    @Test
+    void staleVoteResponsesAreIgnored() {
+        log.info("*** Testcase *** Stale vote responses are ignored");
+
+        MutableTime time = new MutableTime(0);
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+
+        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, new QueuedRaftClient("A", Map.of()), new InMemoryLogStore(), time, new Random(1));
+
+        nodeA.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        nodeA.electionTickForTest();
+        assertEquals(1, nodeA.getTerm());
+        assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
+
+        // Move to a newer term before handling old responses.
+        nodeA.handleHeartbeat(new Heartbeat(2, "B"));
+        assertEquals(2, nodeA.getTerm());
+        assertEquals(RaftNode.State.FOLLOWER, nodeA.getStateForTest());
+
+        VoteRequest oldReq = new VoteRequest(1, "A");
+        List<VoteResponse> oldResponses = List.of(new VoteResponse(oldReq, "B", true, 1));
+        nodeA.handleVoteResponsesForTest(oldResponses, 1);
+
+        assertEquals(2, nodeA.getTerm());
+        assertEquals(RaftNode.State.FOLLOWER, nodeA.getStateForTest());
+    }
+
+    @Test
+    void majorityRequiredToBecomeLeader() {
+        log.info("*** Testcase *** Majority required to become leader");
+
+        MutableTime time = new MutableTime(0);
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+        Peer c = peer("C");
+        Peer d = peer("D");
+        Peer e = peer("E");
+
+        RaftNode nodeA = new RaftNode(a, List.of(b, c, d, e), 100, null, new QueuedRaftClient("A", Map.of()), new InMemoryLogStore(), time, new Random(1));
+
+        nodeA.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        nodeA.electionTickForTest();
+        assertEquals(1, nodeA.getTerm());
+        assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
+
+        VoteRequest req = new VoteRequest(1, "A");
+        List<VoteResponse> notEnough = List.of(
+                new VoteResponse(req, "B", true, 1),
+                new VoteResponse(req, "C", false, 1),
+                new VoteResponse(req, "D", false, 1),
+                new VoteResponse(req, "E", false, 1)
+        );
+        nodeA.handleVoteResponsesForTest(notEnough, 1);
+        assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
+
+        List<VoteResponse> enough = List.of(
+                new VoteResponse(req, "B", true, 1),
+                new VoteResponse(req, "C", true, 1),
+                new VoteResponse(req, "D", true, 1),
+                new VoteResponse(req, "E", false, 1)
+        );
+        nodeA.handleVoteResponsesForTest(enough, 1);
+        assertEquals(RaftNode.State.LEADER, nodeA.getStateForTest());
     }
 
     @Test
