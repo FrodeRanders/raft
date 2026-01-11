@@ -1,12 +1,8 @@
 package org.gautelis.raft.model;
 
-import com.fasterxml.jackson.databind.JsonNode;
-
 public class LogEntry {
     private long term;
     private String peerId;  // for heartbeat messages
-
-    private JsonNode data; // byte[]??
 
     // Default constructor needed for Jackson
     protected LogEntry() {}

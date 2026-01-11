@@ -1,24 +1,23 @@
 package org.gautelis.raft;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
-import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.handler.codec.protobuf.ProtobufDecoder;
+import io.netty.handler.codec.protobuf.ProtobufEncoder;
+import io.netty.handler.codec.protobuf.ProtobufVarint32FrameDecoder;
+import io.netty.handler.codec.protobuf.ProtobufVarint32LengthFieldPrepender;
 import io.netty.util.concurrent.Future;
-import org.gautelis.raft.model.Message;
 import org.gautelis.raft.model.Peer;
 import org.gautelis.raft.model.VoteRequest;
 import org.gautelis.raft.model.VoteResponse;
+import org.gautelis.raft.proto.Envelope;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -26,8 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftClientIntegrationTest {
-    static class VoteServerHandler extends SimpleChannelInboundHandler<JsonNode> {
-        private final ObjectMapper mapper = new ObjectMapper();
+    static class VoteServerHandler extends SimpleChannelInboundHandler<Envelope> {
         private final String serverId;
 
         VoteServerHandler(String serverId) {
@@ -35,22 +33,28 @@ class RaftClientIntegrationTest {
         }
 
         @Override
-        protected void channelRead0(ChannelHandlerContext ctx, JsonNode jsonNode) throws Exception {
-            if (!jsonNode.has("type") || !jsonNode.has("correlationId")) {
+        protected void channelRead0(ChannelHandlerContext ctx, Envelope envelope) throws Exception {
+            if (envelope.getType().isEmpty() || envelope.getCorrelationId().isEmpty()) {
                 return;
             }
-            String type = jsonNode.get("type").asText();
+            String type = envelope.getType();
             if (!"VoteRequest".equals(type)) {
                 return;
             }
 
-            String correlationId = jsonNode.get("correlationId").asText();
-            VoteRequest req = mapper.treeToValue(jsonNode.get("payload"), VoteRequest.class);
+            String correlationId = envelope.getCorrelationId();
+            var reqProto = ProtoMapper.parseVoteRequest(envelope.getPayload().toByteArray());
+            if (reqProto.isEmpty()) {
+                return;
+            }
+            VoteRequest req = ProtoMapper.fromProto(reqProto.get());
             VoteResponse resp = new VoteResponse(req, serverId, true, req.getTerm());
-            Message msg = new Message(correlationId, "VoteResponse", resp);
-
-            String json = mapper.writeValueAsString(msg);
-            ctx.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8));
+            Envelope response = ProtoMapper.wrap(
+                    correlationId,
+                    "VoteResponse",
+                    ProtoMapper.toProto(resp).toByteString()
+            );
+            ctx.writeAndFlush(response);
         }
     }
 
@@ -72,7 +76,10 @@ class RaftClientIntegrationTest {
                     .childHandler(new ChannelInitializer<SocketChannel>() {
                         @Override
                         protected void initChannel(SocketChannel ch) {
-                            ch.pipeline().addLast(new ByteBufToJsonDecoder());
+                            ch.pipeline().addLast(new ProtobufVarint32FrameDecoder());
+                            ch.pipeline().addLast(new ProtobufDecoder(Envelope.getDefaultInstance()));
+                            ch.pipeline().addLast(new ProtobufVarint32LengthFieldPrepender());
+                            ch.pipeline().addLast(new ProtobufEncoder());
                             ch.pipeline().addLast(new VoteServerHandler("B"));
                         }
                     });

@@ -1,21 +1,22 @@
 package org.gautelis.raft;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.bootstrap.Bootstrap;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.codec.protobuf.ProtobufDecoder;
+import io.netty.handler.codec.protobuf.ProtobufEncoder;
+import io.netty.handler.codec.protobuf.ProtobufVarint32FrameDecoder;
+import io.netty.handler.codec.protobuf.ProtobufVarint32LengthFieldPrepender;
 import io.netty.util.concurrent.DefaultPromise;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 import org.gautelis.raft.model.*;
+import org.gautelis.raft.proto.Envelope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -32,7 +33,6 @@ public class RaftClient {
     private final Bootstrap bootstrap;
 
     //
-    private final ObjectMapper mapper = new ObjectMapper();
     private final Map<Peer, Channel> channels = new ConcurrentHashMap<>();
 
     // Shared map for in-flight requests
@@ -44,7 +44,10 @@ public class RaftClient {
                 log.trace("Initializing client channel: {}", ch);
 
                 ChannelPipeline p = ch.pipeline();
-                p.addLast(new ByteBufToJsonDecoder());
+                p.addLast(new ProtobufVarint32FrameDecoder());
+                p.addLast(new ProtobufDecoder(Envelope.getDefaultInstance()));
+                p.addLast(new ProtobufVarint32LengthFieldPrepender());
+                p.addLast(new ProtobufEncoder());
                 p.addLast(new ClientResponseHandler(inFlightRequests, messageHandler));
             }
         };
@@ -169,16 +172,16 @@ public class RaftClient {
             Channel ch,
             VoteRequest req
     ) {
-        Message requestMessage = new Message("VoteRequest", req);
-        String correlationId = requestMessage.getCorrelationId();
+        String correlationId = java.util.UUID.randomUUID().toString();
 
         CompletableFuture<VoteResponse> future = new CompletableFuture<>();
         inFlightRequests.put(correlationId, future);
 
         try {
-            String requestJson = mapper.writeValueAsString(requestMessage);
+            var voteRequest = ProtoMapper.toProto(req);
+            Envelope envelope = ProtoMapper.wrap(correlationId, "VoteRequest", voteRequest.toByteString());
 
-            ch.writeAndFlush(Unpooled.copiedBuffer(requestJson, StandardCharsets.UTF_8))
+            ch.writeAndFlush(envelope)
                     .addListener(f -> {
                         if (!f.isSuccess()) {
                             // If we couldn't even send the request, treat as a failure
@@ -235,18 +238,18 @@ public class RaftClient {
                 });
             } else {
                 try {
-                    Message msg = new Message("Heartbeat", heartbeat);
-                    String json = mapper.writeValueAsString(msg);
-
-                    channel.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
+                    var hb = ProtoMapper.toProto(heartbeat);
+                    Envelope envelope = ProtoMapper.wrap(
+                            java.util.UUID.randomUUID().toString(),
+                            "Heartbeat",
+                            hb.toByteString()
+                    );
+                    channel.writeAndFlush(envelope)
                             .addListener(f -> {
                                 if (!f.isSuccess()) {
                                     log.debug("Could not broadcast heartbeat to {}", heartbeat.getPeerId(), f.cause());
                                 }
                             });
-                } catch (JsonProcessingException jpe) {
-                    log.warn("{} failed to serialize heartbeat object: {}", heartbeat.getPeerId(), jpe.getMessage(), jpe);
-
                 } catch (Exception e) {
                     log.warn("Failed to broadcast heartbeat to {}", heartbeat.getPeerId(), e);
                 }
@@ -280,18 +283,18 @@ public class RaftClient {
                 });
             } else {
                 try {
-                    Message msg = new Message("LogEntry", logEntry);
-                    String json = mapper.writeValueAsString(msg);
-
-                    channel.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
+                    var entry = ProtoMapper.toProto(logEntry);
+                    Envelope envelope = ProtoMapper.wrap(
+                            java.util.UUID.randomUUID().toString(),
+                            "LogEntry",
+                            entry.toByteString()
+                    );
+                    channel.writeAndFlush(envelope)
                             .addListener(f -> {
                                 if (!f.isSuccess()) {
                                     log.debug("Could not broadcast log entry to {}", logEntry.getPeerId(), f.cause());
                                 }
                             });
-                } catch (JsonProcessingException jpe) {
-                    log.warn("{} failed to serialize log entry object: {}", logEntry.getPeerId(), jpe.getMessage(), jpe);
-
                 } catch (Exception e) {
                     log.warn("Failed to broadcast log entry to {}", logEntry.getPeerId(), e);
                 }
@@ -299,7 +302,7 @@ public class RaftClient {
         }
     }
 
-    public Collection<Peer> broadcast(String type, long term, String json) {
+    public Collection<Peer> broadcast(String type, long term, byte[] payload) {
         Collection<Peer> unreachablePeers = new HashSet<>();
 
         for (Map.Entry<Peer, Channel> channelEntry : channels.entrySet()) {
@@ -327,7 +330,13 @@ public class RaftClient {
                 });
             } else {
                 try {
-                    channel.writeAndFlush(Unpooled.copiedBuffer(json, StandardCharsets.UTF_8))
+                    byte[] safePayload = payload == null ? new byte[0] : payload;
+                    Envelope envelope = ProtoMapper.wrap(
+                            java.util.UUID.randomUUID().toString(),
+                            type,
+                            safePayload
+                    );
+                    channel.writeAndFlush(envelope)
                            .addListener(f -> {
                                 if (!f.isSuccess()) {
                                     log.debug("Could not broadcast to {}", peer.getId(), f.cause());

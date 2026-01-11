@@ -1,19 +1,15 @@
 package org.gautelis.raft;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.netty.buffer.ByteBuf;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.gautelis.raft.model.Heartbeat;
-import org.gautelis.raft.model.Message;
 import org.gautelis.raft.model.Peer;
 import org.gautelis.raft.model.VoteRequest;
 import org.gautelis.raft.model.VoteResponse;
+import org.gautelis.raft.proto.Envelope;
 import org.junit.jupiter.api.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Map;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -21,8 +17,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftMessageHandlerTest {
-    private final ObjectMapper mapper = new ObjectMapper();
-
     static class NoopRaftClient extends RaftClient {
         NoopRaftClient() {
             super(null);
@@ -32,13 +26,13 @@ class RaftMessageHandlerTest {
     static class CapturingMessageHandler implements MessageHandler {
         String correlationId;
         String type;
-        JsonNode payload;
+        byte[] payload;
 
         @Override
-        public void handle(String correlationId, String type, JsonNode node, io.netty.channel.ChannelHandlerContext ctx) {
+        public void handle(String correlationId, String type, byte[] payload, io.netty.channel.ChannelHandlerContext ctx) {
             this.correlationId = correlationId;
             this.type = type;
-            this.payload = node;
+            this.payload = payload;
         }
     }
 
@@ -49,27 +43,27 @@ class RaftMessageHandlerTest {
         RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new NoopRaftClient(), new InMemoryLogStore());
 
         EmbeddedChannel channel = new EmbeddedChannel(new RaftMessageHandler(nodeB));
-        Message msg = new Message("corr-1", "VoteRequest", new VoteRequest(1, "A"));
-        channel.writeInbound(mapper.valueToTree(msg));
+        VoteRequest request = new VoteRequest(1, "A");
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-1",
+                "VoteRequest",
+                ProtoMapper.toProto(request).toByteString()
+        );
+        channel.writeInbound(envelope);
 
-        ByteBuf outbound = channel.readOutbound();
+        Envelope outbound = channel.readOutbound();
         assertNotNull(outbound);
-        try {
-            String json = outbound.toString(StandardCharsets.UTF_8);
-            JsonNode out = mapper.readTree(json);
+        assertEquals("corr-1", outbound.getCorrelationId());
+        assertEquals("VoteResponse", outbound.getType());
 
-            assertEquals("corr-1", out.get("correlationId").asText());
-            assertEquals("VoteResponse", out.get("type").asText());
-
-            VoteResponse response = mapper.treeToValue(out.get("payload"), VoteResponse.class);
-            assertEquals("B", response.getPeerId());
-            assertEquals(1, response.getTerm());
-            assertTrue(response.isVoteGranted());
-            assertEquals(1, response.getCurrentTerm());
-        } finally {
-            outbound.release();
-            channel.finishAndReleaseAll();
-        }
+        var responseProto = ProtoMapper.parseVoteResponse(outbound.getPayload().toByteArray());
+        assertTrue(responseProto.isPresent());
+        VoteResponse response = ProtoMapper.fromProto(responseProto.get());
+        assertEquals("B", response.getPeerId());
+        assertEquals(1, response.getTerm());
+        assertTrue(response.isVoteGranted());
+        assertEquals(1, response.getCurrentTerm());
+        channel.finishAndReleaseAll();
     }
 
     @Test
@@ -79,10 +73,15 @@ class RaftMessageHandlerTest {
         RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new NoopRaftClient(), new InMemoryLogStore());
 
         EmbeddedChannel channel = new EmbeddedChannel(new RaftMessageHandler(nodeB));
-        Message msg = new Message("corr-2", "Heartbeat", new Heartbeat(2, "A"));
-        channel.writeInbound(mapper.valueToTree(msg));
+        Heartbeat heartbeat = new Heartbeat(2, "A");
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-2",
+                "Heartbeat",
+                ProtoMapper.toProto(heartbeat).toByteString()
+        );
+        channel.writeInbound(envelope);
 
-        ByteBuf outbound = channel.readOutbound();
+        Envelope outbound = channel.readOutbound();
         assertNull(outbound);
         assertEquals(2, nodeB.getTerm());
         assertEquals(RaftNode.State.FOLLOWER, nodeB.getStateForTest());
@@ -97,13 +96,14 @@ class RaftMessageHandlerTest {
         RaftNode nodeB = new RaftNode(b, List.of(a), 100, handler, new NoopRaftClient(), new InMemoryLogStore());
 
         EmbeddedChannel channel = new EmbeddedChannel(new RaftMessageHandler(nodeB));
-        Message msg = new Message("corr-3", "CustomType", Map.of("message", "hello"));
-        channel.writeInbound(mapper.valueToTree(msg));
+        byte[] payload = "hello".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Envelope envelope = ProtoMapper.wrap("corr-3", "CustomType", payload);
+        channel.writeInbound(envelope);
 
         assertEquals("corr-3", handler.correlationId);
         assertEquals("CustomType", handler.type);
         assertNotNull(handler.payload);
-        assertEquals("hello", handler.payload.get("message").asText());
+        assertTrue(Arrays.equals(payload, handler.payload));
         assertNull(channel.readOutbound());
         channel.finishAndReleaseAll();
     }

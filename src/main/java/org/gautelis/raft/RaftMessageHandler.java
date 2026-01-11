@@ -1,22 +1,17 @@
 package org.gautelis.raft;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import org.gautelis.raft.model.*;
+import org.gautelis.raft.proto.Envelope;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
 
-import java.nio.charset.StandardCharsets;
-
 @ChannelHandler.Sharable
-public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
+public class RaftMessageHandler extends SimpleChannelInboundHandler<Envelope> {
     private static final Logger log = LoggerFactory.getLogger(RaftMessageHandler.class);
 
-    private final ObjectMapper mapper = new ObjectMapper();
     private final RaftNode stateMachine;
 
     public RaftMessageHandler(RaftNode raftServer) {
@@ -30,38 +25,55 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, JsonNode jsonNode) throws Exception {
-        log.trace("Received message: {}", jsonNode);
+    protected void channelRead0(ChannelHandlerContext ctx, Envelope envelope) throws Exception {
+        log.trace("Received message: {}", envelope);
 
-        // Expect a structure like: { "correlationId":"<UUID>", "type": "VoteRequest", "payload": ... }
-        JsonNode _correlationId = jsonNode.get("correlationId");
-        if (null == _correlationId) {
+        String correlationId = envelope.getCorrelationId();
+        if (correlationId == null || correlationId.isEmpty()) {
             log.warn("Incorrect message: No correlationId");
             return;
         }
-        String correlationId = _correlationId.asText();
-        String type = jsonNode.get("type").asText();
-        JsonNode payload = jsonNode.get("payload");
+        String type = envelope.getType();
+        if (type == null || type.isEmpty()) {
+            log.warn("Incorrect message: No type");
+            return;
+        }
+        byte[] payload = envelope.getPayload().toByteArray();
 
         switch (type) {
             case "Heartbeat" -> {
-                Heartbeat heartbeat = mapper.treeToValue(payload, Heartbeat.class);
+                var parsed = ProtoMapper.parseHeartbeat(payload);
+                if (parsed.isEmpty()) {
+                    log.warn("Failed to parse Heartbeat payload");
+                    return;
+                }
+                Heartbeat heartbeat = ProtoMapper.fromProto(parsed.get());
                 stateMachine.handleHeartbeat(heartbeat);
                 // no expected response
             }
             case "LogEntry" -> {
-                LogEntry entry = mapper.treeToValue(payload, LogEntry.class);
+                var parsed = ProtoMapper.parseLogEntry(payload);
+                if (parsed.isEmpty()) {
+                    log.warn("Failed to parse LogEntry payload");
+                    return;
+                }
+                LogEntry entry = ProtoMapper.fromProto(parsed.get());
                 stateMachine.handleLogEntry(entry);
                 // no expected response
             }
             case "VoteRequest" -> {
-                VoteRequest voteRequest = mapper.treeToValue(payload, VoteRequest.class);
+                var parsed = ProtoMapper.parseVoteRequest(payload);
+                if (parsed.isEmpty()) {
+                    log.warn("Failed to parse VoteRequest payload");
+                    return;
+                }
+                VoteRequest voteRequest = ProtoMapper.fromProto(parsed.get());
                 VoteResponse voteResponse = stateMachine.handleVoteRequest(voteRequest);
 
                 // Server response
                 String peerId = voteRequest.getCandidateId();
-                Message response = new Message(correlationId, "VoteResponse", voteResponse);
-                String responseJson = mapper.writeValueAsString(response);
+                var responsePayload = ProtoMapper.toProto(voteResponse);
+                Envelope response = ProtoMapper.wrap(correlationId, "VoteResponse", responsePayload.toByteString());
 
                 try {
                     log.trace(
@@ -69,7 +81,7 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<JsonNode> {
                             peerId, voteResponse.isVoteGranted() ? "granted" : "denied"
                     );
 
-                    ctx.writeAndFlush(Unpooled.copiedBuffer(responseJson, StandardCharsets.UTF_8))
+                    ctx.writeAndFlush(response)
                             .addListener(f -> {
                                 if (!f.isSuccess()) {
                                     log.warn("Could not send vote response to {}: {}", peerId, f.cause());

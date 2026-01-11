@@ -1,7 +1,5 @@
 package org.gautelis.raft.model;
 
-import com.fasterxml.jackson.databind.JsonNode;
-
 public class Heartbeat {
     private long term;
     private String peerId;

@@ -1,7 +1,5 @@
 package org.gautelis.raft;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import io.netty.channel.ChannelHandlerContext;
 
 public interface MessageHandler {
@@ -18,9 +16,8 @@ public interface MessageHandler {
      * <p/>
      * @param correlationId
      * @param type
-     * @param node
+     * @param payload raw payload bytes (e.g., protobuf-encoded)
      * @param ctx
-     * @throws JsonProcessingException
      */
-    void handle(String correlationId, String type, JsonNode node, ChannelHandlerContext ctx) throws JsonProcessingException;
+    void handle(String correlationId, String type, byte[] payload, ChannelHandlerContext ctx) throws Exception;
 }

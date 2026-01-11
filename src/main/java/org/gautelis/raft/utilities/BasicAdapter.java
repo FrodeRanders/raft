@@ -1,10 +1,7 @@
 package org.gautelis.raft.utilities;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import io.netty.channel.ChannelHandlerContext;
 import org.gautelis.raft.*;
-import org.gautelis.raft.model.LogEntry;
 import org.gautelis.raft.model.Peer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,10 +44,10 @@ public class BasicAdapter {
         }
     }
 
-    public void handleMessage(String correlationId, String type, JsonNode node, ChannelHandlerContext ctx) throws JsonProcessingException {
+    public void handleMessage(String correlationId, String type, byte[] payload, ChannelHandlerContext ctx) {
         log.debug(
-                "Received '{}' message {}",
-                type, node
+                "Received '{}' message ({} bytes)",
+                type, payload == null ? 0 : payload.length
         );
     }
 }

@@ -17,10 +17,10 @@
         <log4j.version>2.25.3</log4j.version>
         <slf4j.version>2.0.17</slf4j.version>
         <vopn.version>3.0-SNAPSHOT</vopn.version> <!-- sibling project -->
-        <junit.version>6.0.1</junit.version>
-        <jackson.version>2.20.1</jackson.version>
+        <junit.version>6.0.2</junit.version>
         <netty.version>4.2.9.Final</netty.version> <!-- 5.0.0.Alpha2 is defunct! -->
-        <guid-gen.version>5.2.0</guid-gen.version>
+        <protobuf.version>4.33.3</protobuf.version>
+        <protobuf.plugin.version>0.6.1</protobuf.plugin.version>
     </properties>
 
     <dependencyManagement>
@@ -66,6 +66,18 @@
             <version>${netty.version}</version>
         </dependency>
 
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-protobuf</artifactId>
+            <version>${netty.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.google.protobuf</groupId>
+                    <artifactId>protobuf-java</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
         <!--<dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-codec-http</artifactId>
@@ -85,15 +97,9 @@
         </dependency>
 
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-            <version>${jackson.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>com.fasterxml.uuid</groupId>
-            <artifactId>java-uuid-generator</artifactId>
-            <version>${guid-gen.version}</version>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-javalite</artifactId>
+            <version>${protobuf.version}</version>
         </dependency>
 
         <!--<dependency>
@@ -135,6 +141,13 @@
     </dependencies>
 
     <build>
+        <extensions>
+            <extension>
+                <groupId>kr.motd.maven</groupId>
+                <artifactId>os-maven-plugin</artifactId>
+                <version>1.7.1</version>
+            </extension>
+        </extensions>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -144,6 +157,23 @@
                     <source>21</source>
                     <target>21</target>
                 </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.xolstice.maven.plugins</groupId>
+                <artifactId>protobuf-maven-plugin</artifactId>
+                <version>${protobuf.plugin.version}</version>
+                <configuration>
+                    <protocExecutable>${project.basedir}/scripts/protoc-lite.sh</protocExecutable>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compile</goal>
+                            <goal>test-compile</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
 
             <plugin>
@@ -169,14 +199,12 @@
                                     <include>io.netty:netty-buffer</include>
                                     <include>io.netty:netty-handler</include>
                                     <include>io.netty:netty-codec-base</include>
+                                    <include>io.netty:netty-codec-protobuf</include>
                                     <!--<include>io.netty:netty-codec-http</include>-->
                                     <include>io.netty:netty-resolver</include>
                                     <include>io.netty:netty-common</include>
 
-                                    <include>com.fasterxml.jackson.core:jackson-core</include>
-                                    <include>com.fasterxml.jackson.core:jackson-annotations</include>
-                                    <include>com.fasterxml.jackson.core:jackson-databind</include>
-                                    <include>com.fasterxml.uuid:java-uuid-generator</include>
+                                    <include>com.google.protobuf:protobuf-javalite</include>
 
                                     <!--<include>org.gautelis:vopn</include>-->
                                     <include>org.slf4j:slf4j-api</include>
@@ -279,5 +307,3 @@
         </profile>
     </profiles>
 </project>
-
-

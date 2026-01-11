@@ -1,6 +1,14 @@
 # raft
 An asynchronous Raft implementation in Java, built on netty.io 4.2.
 
+Protobuf (lite) codegen
+```
+./scripts/protoc-lite.sh
+```
+The protobuf Maven plugin uses this wrapper to force lite code generation. It prefers the Maven-cached protoc
+(`com.google.protobuf:protoc` at `PROTOC_VERSION`) and falls back to `protoc` on `PATH`. If you bump
+`protobuf.version`, update `PROTOC_VERSION` in `scripts/protoc-lite.sh` too.
+
 Start
 ```
 ➜  ./start_raft.sh 

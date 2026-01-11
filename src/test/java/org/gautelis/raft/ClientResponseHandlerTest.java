@@ -1,13 +1,12 @@
 package org.gautelis.raft;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.channel.embedded.EmbeddedChannel;
-import org.gautelis.raft.model.Message;
 import org.gautelis.raft.model.VoteRequest;
 import org.gautelis.raft.model.VoteResponse;
+import org.gautelis.raft.proto.Envelope;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
@@ -18,18 +17,16 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientResponseHandlerTest {
-    private final ObjectMapper mapper = new ObjectMapper();
-
     static class CapturingMessageHandler implements MessageHandler {
         String correlationId;
         String type;
-        JsonNode payload;
+        byte[] payload;
 
         @Override
-        public void handle(String correlationId, String type, JsonNode node, io.netty.channel.ChannelHandlerContext ctx) {
+        public void handle(String correlationId, String type, byte[] payload, io.netty.channel.ChannelHandlerContext ctx) {
             this.correlationId = correlationId;
             this.type = type;
-            this.payload = node;
+            this.payload = payload;
         }
     }
 
@@ -44,9 +41,13 @@ class ClientResponseHandlerTest {
 
         VoteRequest req = new VoteRequest(2, "A");
         VoteResponse resp = new VoteResponse(req, "B", true, 2);
-        Message msg = new Message("corr-1", "VoteResponse", resp);
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-1",
+                "VoteResponse",
+                ProtoMapper.toProto(resp).toByteString()
+        );
 
-        channel.writeInbound(mapper.valueToTree(msg));
+        channel.writeInbound(envelope);
 
         assertTrue(future.isDone());
         assertFalse(future.isCompletedExceptionally());
@@ -63,13 +64,14 @@ class ClientResponseHandlerTest {
         ClientResponseHandler handler = new ClientResponseHandler(inFlight, messageHandler);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
-        Message msg = new Message("corr-2", "CustomType", Map.of("value", "ok"));
-        channel.writeInbound(mapper.valueToTree(msg));
+        byte[] payload = "ok".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Envelope envelope = ProtoMapper.wrap("corr-2", "CustomType", payload);
+        channel.writeInbound(envelope);
 
         assertEquals("corr-2", messageHandler.correlationId);
         assertEquals("CustomType", messageHandler.type);
         assertNotNull(messageHandler.payload);
-        assertEquals("ok", messageHandler.payload.get("value").asText());
+        assertTrue(Arrays.equals(payload, messageHandler.payload));
         channel.finishAndReleaseAll();
     }
 
@@ -79,8 +81,12 @@ class ClientResponseHandlerTest {
         ClientResponseHandler handler = new ClientResponseHandler(inFlight, null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
-        JsonNode noType = mapper.readTree("{\"correlationId\":\"corr-3\",\"payload\":{}}");
-        JsonNode noCorrelation = mapper.readTree("{\"type\":\"VoteResponse\",\"payload\":{}}");
+        Envelope noType = Envelope.newBuilder()
+                .setCorrelationId("corr-3")
+                .build();
+        Envelope noCorrelation = Envelope.newBuilder()
+                .setType("VoteResponse")
+                .build();
 
         channel.writeInbound(noType);
         channel.writeInbound(noCorrelation);
