@@ -5,10 +5,6 @@ import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-import io.netty.handler.codec.protobuf.ProtobufDecoder;
-import io.netty.handler.codec.protobuf.ProtobufEncoder;
-import io.netty.handler.codec.protobuf.ProtobufVarint32FrameDecoder;
-import io.netty.handler.codec.protobuf.ProtobufVarint32LengthFieldPrepender;
 import io.netty.util.concurrent.Future;
 import org.gautelis.raft.model.Peer;
 import org.gautelis.raft.model.VoteRequest;
@@ -76,10 +72,8 @@ class RaftClientIntegrationTest {
                     .childHandler(new ChannelInitializer<SocketChannel>() {
                         @Override
                         protected void initChannel(SocketChannel ch) {
-                            ch.pipeline().addLast(new ProtobufVarint32FrameDecoder());
-                            ch.pipeline().addLast(new ProtobufDecoder(Envelope.getDefaultInstance()));
-                            ch.pipeline().addLast(new ProtobufVarint32LengthFieldPrepender());
-                            ch.pipeline().addLast(new ProtobufEncoder());
+                            ch.pipeline().addLast(new ProtobufLiteDecoder());
+                            ch.pipeline().addLast(new ProtobufLiteEncoder());
                             ch.pipeline().addLast(new VoteServerHandler("B"));
                         }
                     });

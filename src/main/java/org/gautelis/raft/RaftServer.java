@@ -5,11 +5,6 @@ import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-import io.netty.handler.codec.protobuf.ProtobufDecoder;
-import io.netty.handler.codec.protobuf.ProtobufEncoder;
-import io.netty.handler.codec.protobuf.ProtobufVarint32FrameDecoder;
-import io.netty.handler.codec.protobuf.ProtobufVarint32LengthFieldPrepender;
-import org.gautelis.raft.proto.Envelope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,10 +25,8 @@ public class RaftServer {
                 log.trace("Initializing server channel: {}", ch);
 
                 ChannelPipeline p = ch.pipeline();
-                p.addLast(new ProtobufVarint32FrameDecoder());
-                p.addLast(new ProtobufDecoder(Envelope.getDefaultInstance()));
-                p.addLast(new ProtobufVarint32LengthFieldPrepender());
-                p.addLast(new ProtobufEncoder());
+                p.addLast(new ProtobufLiteDecoder());
+                p.addLast(new ProtobufLiteEncoder());
                 p.addLast(new RaftMessageHandler(stateMachine));
                 p.addLast(new ChannelInboundHandlerAdapter() {
                     @Override

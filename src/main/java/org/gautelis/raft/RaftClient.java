@@ -5,10 +5,6 @@ import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.protobuf.ProtobufDecoder;
-import io.netty.handler.codec.protobuf.ProtobufEncoder;
-import io.netty.handler.codec.protobuf.ProtobufVarint32FrameDecoder;
-import io.netty.handler.codec.protobuf.ProtobufVarint32LengthFieldPrepender;
 import io.netty.util.concurrent.DefaultPromise;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
@@ -44,10 +40,8 @@ public class RaftClient {
                 log.trace("Initializing client channel: {}", ch);
 
                 ChannelPipeline p = ch.pipeline();
-                p.addLast(new ProtobufVarint32FrameDecoder());
-                p.addLast(new ProtobufDecoder(Envelope.getDefaultInstance()));
-                p.addLast(new ProtobufVarint32LengthFieldPrepender());
-                p.addLast(new ProtobufEncoder());
+                p.addLast(new ProtobufLiteDecoder());
+                p.addLast(new ProtobufLiteEncoder());
                 p.addLast(new ClientResponseHandler(inFlightRequests, messageHandler));
             }
         };

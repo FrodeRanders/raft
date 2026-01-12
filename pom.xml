@@ -66,18 +66,6 @@
             <version>${netty.version}</version>
         </dependency>
 
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-codec-protobuf</artifactId>
-            <version>${netty.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>com.google.protobuf</groupId>
-                    <artifactId>protobuf-java</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
         <!--<dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-codec-http</artifactId>
@@ -199,7 +187,6 @@
                                     <include>io.netty:netty-buffer</include>
                                     <include>io.netty:netty-handler</include>
                                     <include>io.netty:netty-codec-base</include>
-                                    <include>io.netty:netty-codec-protobuf</include>
                                     <!--<include>io.netty:netty-codec-http</include>-->
                                     <include>io.netty:netty-resolver</include>
                                     <include>io.netty:netty-common</include>
