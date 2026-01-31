@@ -1,6 +1,10 @@
 # raft
 An asynchronous Raft implementation in Java, built on netty.io 4.2.
 
+There are two different implementations: 
+On the `'main' branch`, messages are exchanged using JSON envelopes (akin to MCP thinking). 
+On the `'protobuf' branch`, messages are packaged according to protobuf and sent/received through Netty.
+
 Protobuf (lite) codegen
 ```
 ./scripts/protoc-lite.sh
