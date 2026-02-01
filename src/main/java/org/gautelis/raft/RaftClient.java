@@ -403,25 +403,21 @@ public class RaftClient {
             synchronized (stats) {
                 if (stats.getCount() == 0) {
                     fragment = String.format(
-                            java.util.Locale.ROOT,
-                            " %s[n=0]",
-                            peerId
-                    );
+                            java.util.Locale.ROOT, " %s[n=0]", peerId);
                 } else {
                     fragment = String.format(
                             java.util.Locale.ROOT,
-                            " %s[n=%d mean=%.3fms min=%.3fms max=%.3fms sd=%.3fms cv=%.2f%%]",
+                            " %s[n=%d mean=%.3fms min=%.3fms max=%.3fms cv=%.2f%%]",
                             peerId,
                             stats.getCount(),
                             stats.getMean(),
                             stats.getMin(),
                             stats.getMax(),
-                            stats.getStdDev(),
                             stats.getCV()
                     );
                 }
             }
-            line.append(fragment);
+            line.append("\n   ").append(fragment);
         }
 
         statisticsLog.info(line.toString());
