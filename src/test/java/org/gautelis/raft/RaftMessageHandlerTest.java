@@ -7,6 +7,8 @@ import org.gautelis.raft.model.VoteRequest;
 import org.gautelis.raft.model.VoteResponse;
 import org.gautelis.raft.proto.Envelope;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Arrays;
@@ -17,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftMessageHandlerTest {
+    private static final Logger log = LoggerFactory.getLogger(RaftMessageHandlerTest.class);
+
     static class NoopRaftClient extends RaftClient {
         NoopRaftClient() {
             super(null);
@@ -38,6 +42,8 @@ class RaftMessageHandlerTest {
 
     @Test
     void voteRequestProducesVoteResponse() throws Exception {
+        log.info("*** Testcase *** VoteRequest yields VoteResponse");
+
         Peer a = new Peer("A", null);
         Peer b = new Peer("B", null);
         RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new NoopRaftClient(), new InMemoryLogStore());
@@ -68,6 +74,8 @@ class RaftMessageHandlerTest {
 
     @Test
     void heartbeatDoesNotWriteResponseAndUpdatesTerm() throws Exception {
+        log.info("*** Testcase *** Heartbeat updates term and writes no response");
+
         Peer a = new Peer("A", null);
         Peer b = new Peer("B", null);
         RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new NoopRaftClient(), new InMemoryLogStore());
@@ -90,6 +98,8 @@ class RaftMessageHandlerTest {
 
     @Test
     void unknownTypeDelegatesToMessageHandler() throws Exception {
+        log.info("*** Testcase *** Unknown type delegates to message handler");
+
         Peer a = new Peer("A", null);
         Peer b = new Peer("B", null);
         CapturingMessageHandler handler = new CapturingMessageHandler();

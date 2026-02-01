@@ -296,7 +296,7 @@ class RaftNodeElectionTest {
         assertEquals(1, nodeA.getTerm());
         log.info("Successful test!");
 
-        log.info("");
+        log.info("Make A yield at term 1 when seeing higher term vote response");
         VoteRequest req = new VoteRequest(1, "A");
         // Pathological but good for guarding logic: voteGranted=true but currentTerm=2
         List<VoteResponse> responses = List.of(new VoteResponse(req, "B", true, 2)); // B voting for A

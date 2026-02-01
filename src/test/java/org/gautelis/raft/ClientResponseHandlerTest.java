@@ -4,6 +4,8 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import org.gautelis.raft.model.VoteRequest;
 import org.gautelis.raft.model.VoteResponse;
 import org.gautelis.raft.proto.Envelope;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -17,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientResponseHandlerTest {
+    private static final Logger log = LoggerFactory.getLogger(ClientResponseHandlerTest.class);
+
     static class CapturingMessageHandler implements MessageHandler {
         String correlationId;
         String type;
@@ -32,6 +36,8 @@ class ClientResponseHandlerTest {
 
     @Test
     void voteResponseCompletesFuture() throws Exception {
+        log.info("*** Testcase *** VoteResponse completes waiting future");
+
         CompletableFuture<VoteResponse> future = new CompletableFuture<>();
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
         inFlight.put("corr-1", future);
@@ -58,6 +64,8 @@ class ClientResponseHandlerTest {
 
     @Test
     void unknownTypeDelegatesToMessageHandler() throws Exception {
+        log.info("*** Testcase *** Unknown type delegates to message handler");
+
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
         CapturingMessageHandler messageHandler = new CapturingMessageHandler();
 
@@ -77,6 +85,8 @@ class ClientResponseHandlerTest {
 
     @Test
     void missingFieldsAreIgnored() throws Exception {
+        log.info("*** Testcase *** Testing incomplete envelope; WARN logs expected for missing type/correlationId");
+
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
         ClientResponseHandler handler = new ClientResponseHandler(inFlight, null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);

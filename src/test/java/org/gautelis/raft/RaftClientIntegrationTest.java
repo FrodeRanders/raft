@@ -12,6 +12,8 @@ import org.gautelis.raft.model.VoteResponse;
 import org.gautelis.raft.proto.Envelope;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.util.List;
@@ -21,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftClientIntegrationTest {
+    private static final Logger log = LoggerFactory.getLogger(RaftClientIntegrationTest.class);
+
     static class VoteServerHandler extends SimpleChannelInboundHandler<Envelope> {
         private final String serverId;
 
@@ -56,6 +60,8 @@ class RaftClientIntegrationTest {
 
     @Test
     void requestVoteFromAllReceivesVoteResponse() throws Exception {
+        log.info("*** Testcase *** requestVoteFromAll receives VoteResponse from server");
+
         Assumptions.assumeTrue(Boolean.getBoolean("netty.it"),
                 "Set -Dnetty.it=true to enable this integration test.");
 

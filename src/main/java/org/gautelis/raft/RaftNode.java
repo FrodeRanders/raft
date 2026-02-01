@@ -144,13 +144,13 @@ public class RaftNode {
     }
 
     public synchronized VoteResponse handleVoteRequest(VoteRequest req) {
-        log.debug("{} received vote request for term {} from {}", me.getId(), req.getTerm(), req.getCandidateId());
+        log.debug("{}@{} received vote request for term {} from {}", me.getId(), currentTerm, req.getTerm(), req.getCandidateId());
 
         // If the candidate's term is behind ours, immediately reject.
         if (req.getTerm() < currentTerm) {
             if (log.isDebugEnabled()) {
-                log.debug("{} ({}) has term {} which is newer than requested term {} from {} => reject",
-                        me.getId(), state.name(), currentTerm, req.getTerm(), req.getCandidateId());
+                log.debug("{}@{} ({}) has higher term than requested term {} from {} => reject",
+                        me.getId(), currentTerm, state.name(), req.getTerm(), req.getCandidateId());
             }
             return new VoteResponse(req, me.getId(), false, /* my term */ currentTerm);
         }
@@ -166,8 +166,8 @@ public class RaftNode {
                     info = "steps from " + state.name() + " to FOLLOWER";
                 }
                 log.debug(
-                        "{} {} since requested term is {} (> {})",
-                        me.getId(), info, req.getTerm(), currentTerm
+                        "{}@{} {} since requested term {} is higher",
+                        me.getId(), currentTerm, info, req.getTerm()
                 );
             }
 
@@ -180,8 +180,8 @@ public class RaftNode {
 
         //
         if (!isCandidateLogUpToDate(req)) {
-            log.debug("{} rejects vote for {}: candidate log is not up-to-date (cand term/index={}/{}, mine={}/{})",
-                    me.getId(), req.getCandidateId(),
+            log.debug("{}@{} rejects vote for {}: candidate log is not up-to-date (cand term/index={}/{}, mine={}/{})",
+                    me.getId(), currentTerm, req.getCandidateId(),
                     req.getLastLogTerm(), req.getLastLogIndex(),
                     logStore.lastTerm(), logStore.lastIndex());
             return new VoteResponse(req, me.getId(), false, currentTerm);
@@ -196,8 +196,8 @@ public class RaftNode {
                     if (state != State.FOLLOWER) {
                         info = "steps from " + state.name() + " to FOLLOWER";
                     }
-                    log.debug("{} grants vote to {} for term {} and {} => accepted",
-                            me.getId(), req.getCandidateId(), req.getTerm(), info);
+                    log.debug("{}@{} grants vote to {} for term {} and {} => accepted",
+                            me.getId(), currentTerm, req.getCandidateId(), req.getTerm(), info);
                 }
 
                 state = State.FOLLOWER;
@@ -207,15 +207,15 @@ public class RaftNode {
                 return new VoteResponse(req, me.getId(), true, /* my term */ currentTerm);
             }
             else {
-                log.warn("Unknown candidate {} => reject", req.getCandidateId());
+                log.warn("{}@{}: Unknown candidate {} => reject", me.getId(), currentTerm, req.getCandidateId());
                 return new VoteResponse(req, me.getId(), false, /* my term */ currentTerm);
             }
         }
         else {
             // We already voted for someone else
             if (log.isDebugEnabled()) {
-                log.debug("{} ({}) will *not* grant vote to {} for term {} (already voted for {})",
-                        me.getId(), state.name(), req.getCandidateId(), req.getTerm(), votedFor.getId());
+                log.debug("{}@{} ({}) will *not* grant vote to {} for term {} (already voted for {})",
+                        me.getId(), currentTerm, state.name(), req.getCandidateId(), req.getTerm(), votedFor.getId());
             }
             return new VoteResponse(req, me.getId(), false, /* my term */ currentTerm);
         }
@@ -223,11 +223,11 @@ public class RaftNode {
 
     public synchronized void handleHeartbeat(Heartbeat heartbeat) {
         long peerTerm = heartbeat.getTerm();
-        log.trace("{} received heartbeat for term {} from {}", me.getId(), peerTerm, heartbeat.getPeerId());
+        log.trace("{}@{} received heartbeat for term {} from {}", me.getId(), currentTerm, peerTerm, heartbeat.getPeerId());
 
         // Ignore stale heartbeats; do NOT refresh timeout on them.
         if (peerTerm < currentTerm) {
-            log.trace("Ignoring stale heartbeat from {}: peerTerm={} < currentTerm={}", heartbeat.getPeerId(), peerTerm, currentTerm);
+            log.trace("{}@{} ignoring stale heartbeat from {}: peerTerm={} < currentTerm={}", me.getId(), currentTerm, heartbeat.getPeerId(), peerTerm, currentTerm);
             return;
         }
 
@@ -243,8 +243,8 @@ public class RaftNode {
                     info = "steps from " + state.name() + " to FOLLOWER";
                 }
                 log.debug(
-                        "{} {} since requested term is {} (higher than my {})",
-                        me.getId(), info, peerTerm, currentTerm
+                        "{}@{} {} since requested term {} is higher",
+                        me.getId(), currentTerm, info, peerTerm
                 );
             }
 
@@ -257,8 +257,8 @@ public class RaftNode {
             // peerTerm == currentTerm: leader discovery for this term
             if (state != State.FOLLOWER) {
                 if (log.isDebugEnabled()) {
-                    log.debug("{} steps from {} to FOLLOWER due to heartbeat in current term {}",
-                            me.getId(), state.name(), currentTerm);
+                    log.debug("{}@{} steps from {} to FOLLOWER due to heartbeat in current term",
+                            me.getId(), currentTerm, state.name());
                 }
                 state = State.FOLLOWER;
                 votedFor = null;
@@ -271,7 +271,7 @@ public class RaftNode {
 
     public synchronized void handleLogEntry(LogEntry entry) {
         long peerTerm = entry.getTerm();
-        log.trace("{} received log-entry for term {} from {}", me.getId(), peerTerm, entry.getPeerId());
+        log.trace("{}@{} received log-entry for term {} from {}", me.getId(), currentTerm, peerTerm, entry.getPeerId());
     }
 
     public void startTimers(EventLoopGroup eventLoopGroup) {
@@ -320,11 +320,11 @@ public class RaftNode {
         long lastTerm  = logStore.lastTerm();
 
         VoteRequest voteReq = new VoteRequest(currentTerm, me.getId(), lastIndex, lastTerm);
-        log.trace("{} ({}) voting for myself for term {}", me.getId(), state.name(), voteReq.getTerm());
+        log.trace("{}@{} ({}) voting for myself for term {}", me.getId(), currentTerm, state.name(), voteReq.getTerm());
         raftClient.requestVoteFromAll(peers.values(), voteReq)
                 .addListener((Future<List<VoteResponse>> f) -> {
                     if (f.isSuccess()) {
-                        log.trace("{} received responses for term {}", me.getId(), voteReq.getTerm());
+                        log.trace("{}@{} received responses for term {}", me.getId(), currentTerm, voteReq.getTerm());
                         List<VoteResponse> responses = f.getNow();
                         handleVoteResponses(responses, voteReq.getTerm());
                     }
@@ -335,13 +335,13 @@ public class RaftNode {
     }
 
    private synchronized void handleVoteResponses(List<VoteResponse> responses, long electionTerm) {
-        StringBuilder sb = new StringBuilder(String.format("Handling vote responses from %d peers", responses.size()));
+        StringBuilder sb = new StringBuilder(String.format("%s@%d handling vote responses from %d peers", me.getId(), currentTerm, responses.size()));
         if (log.isTraceEnabled()) {
             sb.append(":");
             for (VoteResponse response : responses) {
                 sb.append(" /").append(response.getPeerId());
+                sb.append("@").append(response.getCurrentTerm()); // Peer's view of current term
                 sb.append(":").append(response.isVoteGranted());
-                sb.append("@").append(response.getCurrentTerm());
             }
         }
         log.trace(sb.toString());
@@ -350,18 +350,18 @@ public class RaftNode {
             // Ascertain that this response emanates from a request we sent in the
             // current term. We may receive responses from earlier election rounds
             // and these should be discarded.
-            if (this.currentTerm == electionTerm) {
+            if (currentTerm == electionTerm) {
                 // Step down immediately if any response reports a newer term, regardless of voteGranted.
-                long maxTerm = this.currentTerm;
+                long maxTerm = currentTerm;
                 for (VoteResponse r : responses) {
                     if (r.getCurrentTerm() > maxTerm) {
                         maxTerm = r.getCurrentTerm();
                     }
                 }
-                if (maxTerm > this.currentTerm) {
-                    log.info("{} discovered higher term {} in vote responses (was {}), stepping down to FOLLOWER",
-                            me.getId(), maxTerm, this.currentTerm);
-                    this.currentTerm = maxTerm;
+                if (maxTerm > currentTerm) {
+                    log.info("{}@{} discovered higher term {} in vote responses, stepping down to FOLLOWER",
+                            me.getId(), currentTerm, maxTerm);
+                    currentTerm = maxTerm;
                     state = State.FOLLOWER;
                     votedFor = null;
                     electionSequenceCounter = 0;
@@ -378,11 +378,11 @@ public class RaftNode {
                         // rejoin the cluster and have to get up to speed and update my term
 
                         long currentTerm = response.getCurrentTerm();
-                        if (currentTerm > this.currentTerm) {
+                        if (currentTerm > currentTerm) {
                             //--------------------------------------------
                             // d) discovers current leader or new term
                             //--------------------------------------------
-                            log.info("{} rejoining cluster at term {} as FOLLOWER", me.getId(), currentTerm);
+                            log.info("{}@{} rejoining cluster as FOLLOWER", me.getId(), currentTerm);
                             this.currentTerm = currentTerm;
                             state = State.FOLLOWER;
                             electionSequenceCounter = 0;
@@ -401,7 +401,7 @@ public class RaftNode {
                     // b) receives votes from majority of nodes
                     //--------------------------------------------
                     if (log.isDebugEnabled()) {
-                        log.debug("{} elected LEADER ({} votes granted >= majority {})", me.getId(), votesGranted, majority);
+                        log.debug("{}@{} elected LEADER ({} votes granted >= majority {})", me.getId(), currentTerm, votesGranted, majority);
                     }
                     state = State.LEADER;
                     electionSequenceCounter = 0;
@@ -413,7 +413,7 @@ public class RaftNode {
     private synchronized void broadcastHeartbeat() {
         if (state == State.LEADER) {
             if (log.isTraceEnabled()) {
-                log.trace("LEADER {} broadcasting heartbeat for term {}", me.getId(), currentTerm);
+                log.trace("LEADER {}@{} broadcasting heartbeat", me.getId(), currentTerm);
             }
 
             Heartbeat heartbeat = new Heartbeat(/* my term */ currentTerm, me.getId());
