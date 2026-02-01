@@ -19,7 +19,7 @@
         <vopn.version>3.0-SNAPSHOT</vopn.version> <!-- sibling project -->
         <junit.version>6.0.2</junit.version>
         <netty.version>4.2.9.Final</netty.version> <!-- 5.0.0.Alpha2 is defunct! -->
-        <protobuf.version>4.33.3</protobuf.version> <!-- MATCHES scripts/protoc-lite.sh: PROTOC_VERSION="4.33.3" -->
+        <protobuf.version>4.33.5</protobuf.version> <!-- MATCHES scripts/protoc-lite.sh: PROTOC_VERSION="4.33.3" -->
         <protobuf.plugin.version>0.6.1</protobuf.plugin.version>
     </properties>
 
