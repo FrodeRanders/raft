@@ -73,6 +73,15 @@
         </dependency>
 
         <dependency>
+            <!-- Uses ${os.detected.classifier} set by 'kr.motd.maven:os-maven-plugin' -->
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protoc</artifactId>
+            <version>${protobuf.version}</version>
+            <type>exe</type>
+            <classifier>${os.detected.classifier}</classifier>
+        </dependency>
+
+        <dependency>
             <groupId>org.gautelis</groupId>
             <artifactId>vopn</artifactId>
             <version>${vopn.version}</version>
