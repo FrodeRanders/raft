@@ -42,7 +42,12 @@ class ClientResponseHandlerTest {
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
         inFlight.put("corr-1", future);
 
-        ClientResponseHandler handler = new ClientResponseHandler(inFlight, null);
+        ClientResponseHandler handler = new ClientResponseHandler(
+                inFlight,
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                null
+        );
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
         VoteRequest req = new VoteRequest(2, "A");
@@ -69,7 +74,12 @@ class ClientResponseHandlerTest {
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
         CapturingMessageHandler messageHandler = new CapturingMessageHandler();
 
-        ClientResponseHandler handler = new ClientResponseHandler(inFlight, messageHandler);
+        ClientResponseHandler handler = new ClientResponseHandler(
+                inFlight,
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                messageHandler
+        );
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
         byte[] payload = "ok".getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -88,7 +98,12 @@ class ClientResponseHandlerTest {
         log.info("*** Testcase *** Testing incomplete envelope; WARN logs expected for missing type/correlationId");
 
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
-        ClientResponseHandler handler = new ClientResponseHandler(inFlight, null);
+        ClientResponseHandler handler = new ClientResponseHandler(
+                inFlight,
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                null
+        );
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
         Envelope noType = Envelope.newBuilder()

@@ -10,19 +10,25 @@ import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 import org.gautelis.raft.model.*;
 import org.gautelis.raft.proto.Envelope;
+import org.gautelis.vopn.statistics.RunningStatistics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CompletableFuture;
 
 
 public class RaftClient {
     private static final Logger log = LoggerFactory.getLogger(RaftClient.class);
+    private static final Logger statisticsLog = LoggerFactory.getLogger("STATISTICS");
+    private static final int DEFAULT_STATS_INTERVAL_SECONDS = 120;
 
-    //
+    protected final String clientId; // mostly for logging purposes
+
     //private final EventLoopGroup group = new NioEventLoopGroup();
     private final EventLoopGroup group = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
 
@@ -33,21 +39,26 @@ public class RaftClient {
 
     // Shared map for in-flight requests
     private final Map<String, CompletableFuture<VoteResponse>> inFlightRequests = new ConcurrentHashMap<>();
+    private final Map<String, RequestTiming> requestTimings = new ConcurrentHashMap<>();
+    private final Map<String, RunningStatistics> peerResponseStats = new ConcurrentHashMap<>();
+    private final ScheduledFuture<?> statisticsTask;
 
     private ChannelInitializer<SocketChannel> getChannelInitializer(MessageHandler messageHandler) {
         return new ChannelInitializer<>() {
             protected void initChannel(SocketChannel ch) {
-                log.trace("Initializing client channel: {}", ch);
+                log.trace("{}: Initializing client channel: {}", clientId, ch);
 
                 ChannelPipeline p = ch.pipeline();
                 p.addLast(new ProtobufLiteDecoder());
                 p.addLast(new ProtobufLiteEncoder());
-                p.addLast(new ClientResponseHandler(inFlightRequests, messageHandler));
+                p.addLast(new ClientResponseHandler(inFlightRequests, requestTimings, peerResponseStats, messageHandler));
             }
         };
     }
 
-    public RaftClient(MessageHandler messageHandler) {
+    public RaftClient(String clientId, MessageHandler messageHandler) {
+        this.clientId = clientId;
+
         bootstrap = new Bootstrap()
                 .group(group)
                 .channel(NioSocketChannel.class)
@@ -55,9 +66,24 @@ public class RaftClient {
                 .option(ChannelOption.TCP_NODELAY, true) // disables Nagle's algorithm
                 .option(ChannelOption.SO_KEEPALIVE, true) // helps detect dropped peers
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 1000);  // fast-fail if peer is down
+
+        int intervalSeconds = Integer.getInteger("raft.statistics.interval.seconds", DEFAULT_STATS_INTERVAL_SECONDS);
+        if (intervalSeconds > 0) {
+            statisticsTask = group.next().scheduleAtFixedRate(
+                    this::logResponseTimeStatistics,
+                    intervalSeconds,
+                    intervalSeconds,
+                    TimeUnit.SECONDS
+            );
+        } else {
+            statisticsTask = null;
+        }
     }
 
     public void shutdown() {
+        if (statisticsTask != null) {
+            statisticsTask.cancel(false);
+        }
         group.shutdownGracefully();
     }
 
@@ -78,10 +104,10 @@ public class RaftClient {
         }
 
         if (channels.isEmpty()) {
-            log.trace("No channels yet established");
+            log.trace("{}: No channels yet established", clientId);
         }
         else {
-            log.trace("{} channels available", channels.size());
+            log.trace("{}: {} channels available", clientId, channels.size());
         }
 
         for (Peer peer : peers) {
@@ -97,13 +123,13 @@ public class RaftClient {
                         // Store the channel so next time we won't reconnect
                         channels.put(peer, newChannel);
 
-                        log.trace("Request vote for term {} from {}", req.getTerm(), peer.getId());
-                        CompletableFuture<VoteResponse> future = sendVoteRequest(newChannel, req);
+                        log.trace("{} requesting vote for term {} from {}", clientId, req.getTerm(), peer.getId());
+                        CompletableFuture<VoteResponse> future = sendVoteRequest(newChannel, peer, req);
 
                         // Attach aggregator callback
                         future.whenComplete((voteResponse, throwable) -> {
                             if (throwable != null) {
-                                log.debug("Vote request to {} failed: {}", peer.getId(), throwable.toString());
+                                log.debug("{}: Vote request to {} failed: {}", clientId, peer.getId(), throwable.toString());
                                 responses.add(new VoteResponse(req, peer.getId(), false, -1)); // Synthetic negative vote
                             } else {
                                 responses.add(voteResponse);
@@ -112,7 +138,7 @@ public class RaftClient {
                         });
                     }
                     else {
-                        log.info("Could not request vote for term {} from {}: cannot connect", req.getTerm(), peer.getId());
+                        log.info("{} could not request vote for term {} from {}: cannot connect", clientId, req.getTerm(), peer.getId());
 
                         // treat it as negative
                         responses.add(new VoteResponse(req, peer.getId(), false, -1)); // Synthetic negative vote
@@ -122,13 +148,13 @@ public class RaftClient {
             }
             else {
                 // Channel is active, so we can send the request right away
-                log.trace("Request vote for term {} from {}", req.getTerm(), peer.getId());
-                CompletableFuture<VoteResponse> future = sendVoteRequest(channel, req);
+                log.trace("{} requesting vote for term {} from {}", clientId, req.getTerm(), peer.getId());
+                CompletableFuture<VoteResponse> future = sendVoteRequest(channel, peer, req);
 
                 // same aggregator callback as above
                 future.whenComplete((voteResponse, throwable) -> {
                     if (throwable != null) {
-                        log.info("Vote request to {} failed: {}", peer.getId(), throwable.toString());
+                        log.info("{}: Vote request to {} failed: {}", clientId, peer.getId(), throwable.toString());
                         responses.add(new VoteResponse(req, peer.getId(),false, -1)); // Synthetic negative vote
                     } else {
                         responses.add(voteResponse);
@@ -142,7 +168,7 @@ public class RaftClient {
     }
 
     private ChannelFuture connect(Peer peer) {
-        log.trace("Connecting to {}", peer.getAddress());
+        log.trace("{}: Connecting to {}", clientId, peer.getAddress());
 
         ChannelFuture cf = bootstrap.connect(peer.getAddress());
         cf.addListener((ChannelFuture f) -> {
@@ -154,7 +180,7 @@ public class RaftClient {
                 // may continue for some time and flood the log we will refrain
                 // from warn, info and even debug logging
                 if (log.isTraceEnabled()) {
-                    log.trace("Failed to connect to {} at {}: {}", peer.getId(), peer.getAddress(), f.cause());
+                    log.trace("{}: Failed to connect to {} at {}: {}", clientId, peer.getId(), peer.getAddress(), f.cause());
                 }
             }
         });
@@ -162,14 +188,12 @@ public class RaftClient {
     }
 
 
-    private CompletableFuture<VoteResponse> sendVoteRequest(
-            Channel ch,
-            VoteRequest req
-    ) {
+    private CompletableFuture<VoteResponse> sendVoteRequest(Channel ch, Peer peer, VoteRequest req) {
         String correlationId = java.util.UUID.randomUUID().toString();
 
         CompletableFuture<VoteResponse> future = new CompletableFuture<>();
         inFlightRequests.put(correlationId, future);
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
 
         try {
             var voteRequest = ProtoMapper.toProto(req);
@@ -179,17 +203,21 @@ public class RaftClient {
                     .addListener(f -> {
                         if (!f.isSuccess()) {
                             // If we couldn't even send the request, treat as a failure
-                            log.info("Failed to send vote request: {}", f.cause().toString());
+                            log.info("{}: Failed to send vote request: {}", clientId, f.cause().toString());
+                            inFlightRequests.remove(correlationId);
+                            requestTimings.remove(correlationId);
                             future.completeExceptionally(f.cause());
                         }
                         else {
                             // The request is now 'in flight'. We'll complete 'future' once
                             // the server responds (see ClientResponseHandler).
-                            log.trace("Successfully sent vote request");
+                            log.trace("{}: Successfully sent vote request", clientId);
                         }
                     });
         } catch (Exception e) {
             log.info("Exception building or sending vote request: {}", e.getMessage(), e);
+            inFlightRequests.remove(correlationId);
+            requestTimings.remove(correlationId);
             future.completeExceptionally(e);
         }
         return future;
@@ -212,7 +240,7 @@ public class RaftClient {
             Channel channel = channelEntry.getValue();
 
             if (log.isTraceEnabled()) {
-                log.trace("Broadcasting heartbeat for term {} to {}", heartbeat.getTerm(), peer.getId());
+                log.trace("{}: Broadcasting heartbeat for term {} to {}", clientId, heartbeat.getTerm(), peer.getId());
             }
 
             if (channel == null || !channel.isActive()) {
@@ -226,7 +254,7 @@ public class RaftClient {
                         // may continue for some time and flood the log we will refrain
                         // from warn, info and even debug logging
                         if (log.isTraceEnabled()) {
-                            log.trace("Could not broadcast to {} at {}", peer.getId(), peer.getAddress(), f.cause());
+                            log.trace("{}: Could not broadcast to {} at {}", clientId, peer.getId(), peer.getAddress(), f.cause());
                         }
                     }
                 });
@@ -241,11 +269,11 @@ public class RaftClient {
                     channel.writeAndFlush(envelope)
                             .addListener(f -> {
                                 if (!f.isSuccess()) {
-                                    log.debug("Could not broadcast heartbeat to {}", heartbeat.getPeerId(), f.cause());
+                                    log.debug("{}: Could not broadcast heartbeat to {}", clientId, heartbeat.getPeerId(), f.cause());
                                 }
                             });
                 } catch (Exception e) {
-                    log.warn("Failed to broadcast heartbeat to {}", heartbeat.getPeerId(), e);
+                    log.warn("{}: Failed to broadcast heartbeat to {}", clientId, heartbeat.getPeerId(), e);
                 }
             }
         }
@@ -257,7 +285,7 @@ public class RaftClient {
             Channel channel = channelEntry.getValue();
 
             if (log.isTraceEnabled()) {
-                log.trace("Broadcasting log entry for term {} to {}", logEntry.getTerm(), peer.getId());
+                log.trace("{}: Broadcasting log entry for term {} to {}", clientId, logEntry.getTerm(), peer.getId());
             }
 
             if (channel == null || !channel.isActive()) {
@@ -271,7 +299,7 @@ public class RaftClient {
                         // may continue for some time and flood the log we will refrain
                         // from warn, info and even debug logging
                         if (log.isTraceEnabled()) {
-                            log.trace("Could not broadcast to {} at {}", peer.getId(), peer.getAddress(), f.cause());
+                            log.trace("{}: Could not broadcast to {} at {}", clientId, peer.getId(), peer.getAddress(), f.cause());
                         }
                     }
                 });
@@ -286,11 +314,11 @@ public class RaftClient {
                     channel.writeAndFlush(envelope)
                             .addListener(f -> {
                                 if (!f.isSuccess()) {
-                                    log.debug("Could not broadcast log entry to {}", logEntry.getPeerId(), f.cause());
+                                    log.debug("{}: Could not broadcast log entry to {}", clientId, logEntry.getPeerId(), f.cause());
                                 }
                             });
                 } catch (Exception e) {
-                    log.warn("Failed to broadcast log entry to {}", logEntry.getPeerId(), e);
+                    log.warn("{}: Failed to broadcast log entry to {}", clientId, logEntry.getPeerId(), e);
                 }
             }
         }
@@ -303,7 +331,7 @@ public class RaftClient {
             Peer peer = channelEntry.getKey();
             Channel channel = channelEntry.getValue();
 
-            log.trace("Broadcasting '{}' for term {} to {}", type, term, peer.getId());
+            log.trace("{}: Broadcasting '{}' for term {} to {}", clientId, type, term, peer.getId());
 
             if (channel == null || !channel.isActive()) {
                 // We are not connected to this peer, so we will not be able
@@ -318,7 +346,7 @@ public class RaftClient {
                         // may continue for some time and flood the log we will refrain
                         // from warn, info and even debug logging
                         if (log.isTraceEnabled()) {
-                            log.trace("Could not broadcast to {}", peer.getId(), f.cause());
+                            log.trace("{}: Could not broadcast to {}", clientId, peer.getId(), f.cause());
                         }
                     }
                 });
@@ -333,14 +361,69 @@ public class RaftClient {
                     channel.writeAndFlush(envelope)
                            .addListener(f -> {
                                 if (!f.isSuccess()) {
-                                    log.debug("Could not broadcast to {}", peer.getId(), f.cause());
+                                    log.debug("{}: Could not broadcast to {}", clientId, peer.getId(), f.cause());
                                 }
                             });
                 } catch (Exception e) {
-                    log.warn("Failed to broadcast to {}", peer.getId(), e);
+                    log.warn("{}: Failed to broadcast to {}", clientId, peer.getId(), e);
                 }
             }
         }
         return unreachablePeers;
+    }
+
+    public Map<String, RunningStatistics> getResponseTimeStats() {
+        return Collections.unmodifiableMap(peerResponseStats);
+    }
+
+    public RunningStatistics getResponseTimeStats(String peerId) {
+        return peerResponseStats.get(peerId);
+    }
+
+    private void logResponseTimeStatistics() {
+        if (!statisticsLog.isInfoEnabled()) {
+            return;
+        }
+
+        if (peerResponseStats.isEmpty()) {
+            statisticsLog.info("{}: response-times: haven't sent requests", clientId);
+            return;
+        }
+
+        List<String> peerIds = new ArrayList<>(peerResponseStats.keySet());
+        Collections.sort(peerIds);
+
+        StringBuilder line = new StringBuilder(clientId).append(": response-times");
+        for (String peerId : peerIds) {
+            RunningStatistics stats = peerResponseStats.get(peerId);
+            if (stats == null) {
+                continue;
+            }
+            String fragment;
+            synchronized (stats) {
+                if (stats.getCount() == 0) {
+                    fragment = String.format(
+                            java.util.Locale.ROOT,
+                            " %s[n=0]",
+                            peerId
+                    );
+                } else {
+                    fragment = String.format(
+                            java.util.Locale.ROOT,
+                            " %s[n=%d mean=%.3fms min=%.3fms max=%.3fms sd=%.3fms cv=%.2f%%]",
+                            peerId,
+                            stats.getCount(),
+                            stats.getMean(),
+                            stats.getMin(),
+                            stats.getMax(),
+                            stats.getStdDev(),
+                            stats.getCV()
+                    );
+                }
+            }
+            line.append(fragment);
+        }
+
+        statisticsLog.info(line.toString());
     }
 }

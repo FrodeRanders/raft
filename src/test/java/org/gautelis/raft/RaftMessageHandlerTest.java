@@ -23,7 +23,7 @@ class RaftMessageHandlerTest {
 
     static class NoopRaftClient extends RaftClient {
         NoopRaftClient() {
-            super(null);
+            super("test", null);
         }
     }
 

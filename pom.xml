@@ -90,11 +90,11 @@
             <version>${protobuf.version}</version>
         </dependency>
 
-        <!--<dependency>
+        <dependency>
             <groupId>org.gautelis</groupId>
             <artifactId>vopn</artifactId>
             <version>${vopn.version}</version>
-        </dependency>-->
+        </dependency>
 
         <dependency>
             <groupId>org.slf4j</groupId>
@@ -190,10 +190,8 @@
                                     <!--<include>io.netty:netty-codec-http</include>-->
                                     <include>io.netty:netty-resolver</include>
                                     <include>io.netty:netty-common</include>
-
                                     <include>com.google.protobuf:protobuf-javalite</include>
-
-                                    <!--<include>org.gautelis:vopn</include>-->
+                                    <include>org.gautelis:vopn</include>
                                     <include>org.slf4j:slf4j-api</include>
                                     <include>org.apache.logging.log4j:log4j-api</include>
                                     <include>org.apache.logging.log4j:log4j-core</include>

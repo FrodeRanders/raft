@@ -32,7 +32,7 @@ class RaftNodeElectionTest {
         private final Queue<Runnable> queue = new ArrayDeque<>();
 
         QueuedRaftClient(String selfId, Map<String, RaftNode> nodesById) {
-            super(null);
+            super("test", null);
             this.selfId = selfId;
             this.nodesById = nodesById;
         }

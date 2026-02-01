@@ -400,8 +400,8 @@ public class RaftNode {
                     //--------------------------------------------
                     // b) receives votes from majority of nodes
                     //--------------------------------------------
-                    if (log.isDebugEnabled()) {
-                        log.debug("{}@{} elected LEADER ({} votes granted >= majority {})", me.getId(), currentTerm, votesGranted, majority);
+                    if (log.isInfoEnabled()) {
+                        log.info("{}@{} elected LEADER ({} votes granted >= majority {})", me.getId(), currentTerm, votesGranted, majority);
                     }
                     state = State.LEADER;
                     electionSequenceCounter = 0;

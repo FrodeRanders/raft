@@ -68,7 +68,7 @@ class RaftClientIntegrationTest {
         EventLoopGroup boss = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         EventLoopGroup worker = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
 
-        RaftClient client = new RaftClient(null);
+        RaftClient client = new RaftClient("test", null);
         Channel server = null;
 
         try {
@@ -104,6 +104,7 @@ class RaftClientIntegrationTest {
             assertEquals("B", response.getPeerId());
             assertTrue(response.isVoteGranted());
             assertEquals(3, response.getTerm());
+
         } finally {
             client.shutdown();
             if (server != null) {

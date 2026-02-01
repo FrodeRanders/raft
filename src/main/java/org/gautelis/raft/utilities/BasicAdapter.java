@@ -29,7 +29,7 @@ public class BasicAdapter {
         MessageHandler messageHandler = this::handleMessage;
 
         stateMachine = new RaftNode(
-                me, peers, timeoutMillis, messageHandler, new RaftClient(messageHandler), logStore
+                me, peers, timeoutMillis, messageHandler, new RaftClient(me.getId(), messageHandler), logStore
         );
 
         try {

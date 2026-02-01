@@ -4,6 +4,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import org.gautelis.raft.model.VoteResponse;
 import org.gautelis.raft.proto.Envelope;
+import org.gautelis.vopn.statistics.RunningStatistics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,12 +20,18 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
     // This map is shared with NettyRaftClient, so we can fulfill the waiting futures.
     // Key = correlationId, Value = future that awaits the response.
     private final Map<String, CompletableFuture<VoteResponse>> inFlightRequests;
+    private final Map<String, RequestTiming> requestTimings;
+    private final Map<String, RunningStatistics> peerResponseStats;
 
     public ClientResponseHandler(
             Map<String, CompletableFuture<VoteResponse>> inFlightRequests,
+            Map<String, RequestTiming> requestTimings,
+            Map<String, RunningStatistics> peerResponseStats,
             MessageHandler messageHandler
     ) {
         this.inFlightRequests = inFlightRequests;
+        this.requestTimings = requestTimings;
+        this.peerResponseStats = peerResponseStats;
         this.messageHandler = messageHandler;
     }
 
@@ -55,11 +62,38 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
 
                 // Lookup the future for this correlationId
                 CompletableFuture<VoteResponse> fut = inFlightRequests.remove(correlationId);
+                RequestTiming timing = requestTimings.remove(correlationId);
                 if (fut != null) {
                     fut.complete(voteResponse);
                     log.trace("Received {} for correlationId={}", voteResponse, correlationId);
                 } else {
                     log.warn("No future found for VoteResponse correlationId={}", correlationId);
+                }
+
+                if (timing != null) {
+                    double elapsedMillis = (System.nanoTime() - timing.startNanos()) / 1_000_000.0;
+                    RunningStatistics stats = peerResponseStats.computeIfAbsent(
+                            timing.peerId(),
+                            k -> new RunningStatistics()
+                    );
+                    if (log.isTraceEnabled()) {
+                        synchronized (stats) {
+                            stats.addSample(elapsedMillis);
+                            log.trace(
+                                    "Response time from {}: {} ms (n={}, mean={} ms, min={} ms, max={} ms)",
+                                    timing.peerId(),
+                                    String.format(java.util.Locale.ROOT, "%.3f", elapsedMillis),
+                                    stats.getCount(),
+                                    String.format(java.util.Locale.ROOT, "%.3f", stats.getMean()),
+                                    String.format(java.util.Locale.ROOT, "%.3f", stats.getMin()),
+                                    String.format(java.util.Locale.ROOT, "%.3f", stats.getMax())
+                            );
+                        }
+                    } else {
+                        synchronized (stats) {
+                            stats.addSample(elapsedMillis);
+                        }
+                    }
                 }
             }
 
