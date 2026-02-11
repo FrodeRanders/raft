@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2025-2026 Frode Randers
+ * All rights reserved
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.gautelis.raft.transport.netty;
 
 import io.netty.channel.ChannelHandler;
@@ -55,6 +71,7 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<Envelope> {
                     log.warn("Failed to parse VoteRequest payload");
                     return;
                 }
+
                 VoteRequest voteRequest = ProtoMapper.fromProto(parsed.get());
                 VoteResponse voteResponse = stateMachine.handleVoteRequest(voteRequest);
 
@@ -86,6 +103,7 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<Envelope> {
                     log.warn("Failed to parse AppendEntriesRequest payload");
                     return;
                 }
+
                 AppendEntriesRequest request = ProtoMapper.fromProto(parsed.get());
                 AppendEntriesResponse response = stateMachine.handleAppendEntries(request);
 
@@ -106,6 +124,7 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<Envelope> {
                     log.warn("Failed to parse InstallSnapshotRequest payload");
                     return;
                 }
+
                 InstallSnapshotRequest request = ProtoMapper.fromProto(parsed.get());
                 InstallSnapshotResponse response = stateMachine.handleInstallSnapshot(request);
 
