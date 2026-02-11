@@ -6,7 +6,8 @@ import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.util.concurrent.Future;
-import org.gautelis.raft.model.Heartbeat;
+import org.gautelis.raft.model.AppendEntriesRequest;
+import org.gautelis.raft.model.AppendEntriesResponse;
 import org.gautelis.raft.model.Peer;
 import org.gautelis.raft.model.VoteRequest;
 import org.gautelis.raft.model.VoteResponse;
@@ -70,26 +71,43 @@ class RaftClientIntegrationTest {
         }
     }
 
-    static class HeartbeatServerHandler extends SimpleChannelInboundHandler<Envelope> {
-        private final AtomicInteger receivedHeartbeats;
+    static class AppendEntriesServerHandler extends SimpleChannelInboundHandler<Envelope> {
+        private final AtomicInteger receivedRequests;
         private final CountDownLatch latch;
+        private final String peerId;
 
-        HeartbeatServerHandler(AtomicInteger receivedHeartbeats, CountDownLatch latch) {
-            this.receivedHeartbeats = receivedHeartbeats;
+        AppendEntriesServerHandler(String peerId, AtomicInteger receivedRequests, CountDownLatch latch) {
+            this.peerId = peerId;
+            this.receivedRequests = receivedRequests;
             this.latch = latch;
         }
 
         @Override
-        protected void channelRead0(ChannelHandlerContext ctx, Envelope envelope) {
-            if (!"Heartbeat".equals(envelope.getType())) {
+        protected void channelRead0(ChannelHandlerContext ctx, Envelope envelope) throws Exception {
+            if (!"AppendEntriesRequest".equals(envelope.getType())) {
                 return;
             }
-            var heartbeat = ProtoMapper.parseHeartbeat(envelope.getPayload().toByteArray());
-            if (heartbeat.isEmpty()) {
+            if (envelope.getCorrelationId().isEmpty()) {
                 return;
             }
-            receivedHeartbeats.incrementAndGet();
+            var request = ProtoMapper.parseAppendEntriesRequest(envelope.getPayload().toByteArray());
+            if (request.isEmpty()) {
+                return;
+            }
+            receivedRequests.incrementAndGet();
             latch.countDown();
+            AppendEntriesResponse response = new AppendEntriesResponse(
+                    request.get().getTerm(),
+                    peerId,
+                    true,
+                    request.get().getPrevLogIndex() + request.get().getEntriesCount()
+            );
+            Envelope responseEnvelope = ProtoMapper.wrap(
+                    envelope.getCorrelationId(),
+                    "AppendEntriesResponse",
+                    ProtoMapper.toProto(response).toByteString()
+            );
+            ctx.writeAndFlush(responseEnvelope);
         }
     }
 
@@ -173,6 +191,7 @@ class RaftClientIntegrationTest {
 
     @Test
     void requestVoteFromAllCompletesWhenPeerIsUnreachable() throws Exception {
+        log.info("*** Testcase *** Unreachable peer vote completion: verifies vote aggregation completes with synthetic negative vote when connect fails");
         Assumptions.assumeTrue(Boolean.getBoolean("netty.it"),
                 "Set -Dnetty.it=true to enable this integration test.");
 
@@ -197,6 +216,7 @@ class RaftClientIntegrationTest {
 
     @Test
     void requestVoteFromAllTimesOutWhenPeerDoesNotRespond() throws Exception {
+        log.info("*** Testcase *** Vote request timeout fallback: verifies non-responding peer yields timeout-based synthetic negative vote");
         Assumptions.assumeTrue(Boolean.getBoolean("netty.it"),
                 "Set -Dnetty.it=true to enable this integration test.");
 
@@ -250,7 +270,8 @@ class RaftClientIntegrationTest {
     }
 
     @Test
-    void broadcastHeartbeatReconnectsToKnownPeerWithoutActiveChannel() throws Exception {
+    void sendAppendEntriesReconnectsToKnownPeerWithoutActiveChannel() throws Exception {
+        log.info("*** Testcase *** AppendEntries reconnect send: verifies sendAppendEntries reconnects and delivers to a known peer without active channel");
         Assumptions.assumeTrue(Boolean.getBoolean("netty.it"),
                 "Set -Dnetty.it=true to enable this integration test.");
 
@@ -275,8 +296,8 @@ class RaftClientIntegrationTest {
             assertTrue(firstAttempt.await(2, TimeUnit.SECONDS));
             assertTrue(firstAttempt.isSuccess());
 
-            AtomicInteger receivedHeartbeats = new AtomicInteger(0);
-            CountDownLatch heartbeatLatch = new CountDownLatch(1);
+            AtomicInteger receivedRequests = new AtomicInteger(0);
+            CountDownLatch appendEntriesLatch = new CountDownLatch(1);
 
             ServerBootstrap bootstrap = new ServerBootstrap()
                     .group(boss, worker)
@@ -286,7 +307,7 @@ class RaftClientIntegrationTest {
                         protected void initChannel(SocketChannel ch) {
                             ch.pipeline().addLast(new ProtobufLiteDecoder());
                             ch.pipeline().addLast(new ProtobufLiteEncoder());
-                            ch.pipeline().addLast(new HeartbeatServerHandler(receivedHeartbeats, heartbeatLatch));
+                            ch.pipeline().addLast(new AppendEntriesServerHandler("B", receivedRequests, appendEntriesLatch));
                         }
                     });
             try {
@@ -295,12 +316,14 @@ class RaftClientIntegrationTest {
                 Assumptions.assumeTrue(false, "Local bind not permitted in this environment: " + e.getMessage());
             }
 
-            client.broadcastHeartbeat(new Heartbeat(5, "A")); // establish connection to known peer
-            Thread.sleep(200);
-            client.broadcastHeartbeat(new Heartbeat(5, "A")); // send heartbeat on active channel
+            AppendEntriesRequest appendEntriesRequest = new AppendEntriesRequest(5, "A", 0, 0, 0, List.of());
 
-            assertTrue(heartbeatLatch.await(2, TimeUnit.SECONDS));
-            assertTrue(receivedHeartbeats.get() >= 1);
+            client.sendAppendEntries(peer, appendEntriesRequest); // establish connection to known peer
+            Thread.sleep(200);
+            client.sendAppendEntries(peer, appendEntriesRequest); // send on active channel
+
+            assertTrue(appendEntriesLatch.await(2, TimeUnit.SECONDS));
+            assertTrue(receivedRequests.get() >= 1);
         } finally {
             client.shutdown();
             if (server != null) {
@@ -313,6 +336,7 @@ class RaftClientIntegrationTest {
 
     @Test
     void broadcastReconnectsToKnownPeerWithoutActiveChannel() throws Exception {
+        log.info("*** Testcase *** Generic reconnect broadcast: verifies generic broadcast reconnects and delivers to a known peer without active channel");
         Assumptions.assumeTrue(Boolean.getBoolean("netty.it"),
                 "Set -Dnetty.it=true to enable this integration test.");
 

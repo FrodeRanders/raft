@@ -25,6 +25,10 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
 
 public class RaftClient {
+    // Outbound RPC helper used by RaftNode.
+    // Figure 2 mapping:
+    // - Candidates send RequestVote RPCs during elections.
+    // - Leaders send AppendEntries (heartbeats/replication) and InstallSnapshot.
     private static final Logger log = LoggerFactory.getLogger(RaftClient.class);
     private static final Logger statisticsLog = LoggerFactory.getLogger("STATISTICS");
     private static final int DEFAULT_STATS_INTERVAL_SECONDS = 120;
@@ -41,8 +45,10 @@ public class RaftClient {
     private final Map<Peer, Channel> channels = new ConcurrentHashMap<>();
     private final Set<Peer> knownPeers = ConcurrentHashMap.newKeySet();
 
-    // Shared map for in-flight requests
+    // Correlation-id indexed in-flight requests. Completed by ClientResponseHandler when responses arrive.
     private final Map<String, CompletableFuture<VoteResponse>> inFlightRequests = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<AppendEntriesResponse>> inFlightAppendEntries = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<InstallSnapshotResponse>> inFlightInstallSnapshot = new ConcurrentHashMap<>();
     private final Map<String, RequestTiming> requestTimings = new ConcurrentHashMap<>();
     private final Map<String, ScheduledFuture<?>> requestTimeouts = new ConcurrentHashMap<>();
     private final Map<String, RunningStatistics> peerResponseStats = new ConcurrentHashMap<>();
@@ -57,7 +63,7 @@ public class RaftClient {
                 ChannelPipeline p = ch.pipeline();
                 p.addLast(new ProtobufLiteDecoder());
                 p.addLast(new ProtobufLiteEncoder());
-                p.addLast(new ClientResponseHandler(inFlightRequests, requestTimings, requestTimeouts, peerResponseStats, messageHandler));
+                p.addLast(new ClientResponseHandler(inFlightRequests, inFlightAppendEntries, inFlightInstallSnapshot, requestTimings, requestTimeouts, peerResponseStats, messageHandler));
             }
         };
     }
@@ -100,10 +106,23 @@ public class RaftClient {
         group.shutdownGracefully();
     }
 
+    public void setKnownPeers(Collection<Peer> peers) {
+        if (peers == null) {
+            return;
+        }
+        for (Peer peer : peers) {
+            if (peer != null) {
+                knownPeers.add(peer);
+            }
+        }
+    }
+
     public Future<List<VoteResponse>> requestVoteFromAll(
             Collection<Peer> peers,
             VoteRequest req
     ) {
+        // Figure 2 ("Candidates"): candidate sends RequestVote RPCs to all other servers.
+        // This method fans out vote requests and aggregates responses for leader election logic.
         // A Netty Promise that we'll complete once we have all responses
         Promise<List<VoteResponse>> promise = new DefaultPromise<>(group.next());
 
@@ -214,6 +233,8 @@ public class RaftClient {
                 return;
             }
             inFlightRequests.remove(correlationId);
+            inFlightAppendEntries.remove(correlationId);
+            inFlightInstallSnapshot.remove(correlationId);
             requestTimings.remove(correlationId);
             requestTimeouts.remove(correlationId);
             future.completeExceptionally(new TimeoutException("Timed out waiting for VoteResponse from " + peer.getId()));
@@ -230,6 +251,8 @@ public class RaftClient {
                             // If we couldn't even send the request, treat as a failure
                             log.info("{}: Failed to send vote request: {}", clientId, f.cause().toString());
                             inFlightRequests.remove(correlationId);
+                            inFlightAppendEntries.remove(correlationId);
+                            inFlightInstallSnapshot.remove(correlationId);
                             requestTimings.remove(correlationId);
                             ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
                             if (pendingTimeout != null) {
@@ -246,6 +269,163 @@ public class RaftClient {
         } catch (Exception e) {
             log.info("Exception building or sending vote request: {}", e.getMessage(), e);
             inFlightRequests.remove(correlationId);
+            inFlightAppendEntries.remove(correlationId);
+            inFlightInstallSnapshot.remove(correlationId);
+            requestTimings.remove(correlationId);
+            ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+            if (pendingTimeout != null) {
+                pendingTimeout.cancel(false);
+            }
+            future.completeExceptionally(e);
+        }
+        return future;
+    }
+
+    public CompletableFuture<AppendEntriesResponse> sendAppendEntries(Peer peer, AppendEntriesRequest req) {
+        // Figure 2 ("Leaders"): replication and heartbeat are both AppendEntries RPCs.
+        knownPeers.add(peer);
+
+        CompletableFuture<AppendEntriesResponse> outbound = new CompletableFuture<>();
+        Channel channel = channels.get(peer);
+        if (channel == null || !channel.isActive()) {
+            connect(peer).addListener((ChannelFuture cf) -> {
+                if (!cf.isSuccess()) {
+                    outbound.complete(new AppendEntriesResponse(req.getTerm(), peer.getId(), false, -1));
+                    return;
+                }
+                Channel newChannel = cf.channel();
+                channels.put(peer, newChannel);
+                sendAppendEntriesOverChannel(newChannel, peer, req).whenComplete((response, error) -> {
+                    if (error != null) {
+                        outbound.complete(new AppendEntriesResponse(req.getTerm(), peer.getId(), false, -1));
+                    } else {
+                        outbound.complete(response);
+                    }
+                });
+            });
+        } else {
+            sendAppendEntriesOverChannel(channel, peer, req).whenComplete((response, error) -> {
+                if (error != null) {
+                    outbound.complete(new AppendEntriesResponse(req.getTerm(), peer.getId(), false, -1));
+                } else {
+                    outbound.complete(response);
+                }
+            });
+        }
+        return outbound;
+    }
+
+    private CompletableFuture<AppendEntriesResponse> sendAppendEntriesOverChannel(Channel ch, Peer peer, AppendEntriesRequest req) {
+        String correlationId = java.util.UUID.randomUUID().toString();
+        CompletableFuture<AppendEntriesResponse> future = new CompletableFuture<>();
+        inFlightAppendEntries.put(correlationId, future);
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+
+        ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            inFlightAppendEntries.remove(correlationId);
+            requestTimings.remove(correlationId);
+            requestTimeouts.remove(correlationId);
+            future.completeExceptionally(new TimeoutException("Timed out waiting for AppendEntriesResponse from " + peer.getId()));
+        }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
+        requestTimeouts.put(correlationId, timeoutTask);
+
+        try {
+            var appendEntriesRequest = ProtoMapper.toProto(req);
+            Envelope envelope = ProtoMapper.wrap(correlationId, "AppendEntriesRequest", appendEntriesRequest.toByteString());
+            ch.writeAndFlush(envelope).addListener(f -> {
+                if (!f.isSuccess()) {
+                    inFlightAppendEntries.remove(correlationId);
+                    requestTimings.remove(correlationId);
+                    ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+                    if (pendingTimeout != null) {
+                        pendingTimeout.cancel(false);
+                    }
+                    future.completeExceptionally(f.cause());
+                }
+            });
+        } catch (Exception e) {
+            inFlightAppendEntries.remove(correlationId);
+            requestTimings.remove(correlationId);
+            ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+            if (pendingTimeout != null) {
+                pendingTimeout.cancel(false);
+            }
+            future.completeExceptionally(e);
+        }
+        return future;
+    }
+
+    public CompletableFuture<InstallSnapshotResponse> sendInstallSnapshot(Peer peer, InstallSnapshotRequest req) {
+        // Snapshot catch-up path when a follower is behind the compacted prefix.
+        // This supports Figure 2 AppendEntries consistency flow together with log compaction.
+        knownPeers.add(peer);
+
+        CompletableFuture<InstallSnapshotResponse> outbound = new CompletableFuture<>();
+        Channel channel = channels.get(peer);
+        if (channel == null || !channel.isActive()) {
+            connect(peer).addListener((ChannelFuture cf) -> {
+                if (!cf.isSuccess()) {
+                    outbound.complete(new InstallSnapshotResponse(req.getTerm(), peer.getId(), false, req.getLastIncludedIndex()));
+                    return;
+                }
+                Channel newChannel = cf.channel();
+                channels.put(peer, newChannel);
+                sendInstallSnapshotOverChannel(newChannel, peer, req).whenComplete((response, error) -> {
+                    if (error != null) {
+                        outbound.complete(new InstallSnapshotResponse(req.getTerm(), peer.getId(), false, req.getLastIncludedIndex()));
+                    } else {
+                        outbound.complete(response);
+                    }
+                });
+            });
+        } else {
+            sendInstallSnapshotOverChannel(channel, peer, req).whenComplete((response, error) -> {
+                if (error != null) {
+                    outbound.complete(new InstallSnapshotResponse(req.getTerm(), peer.getId(), false, req.getLastIncludedIndex()));
+                } else {
+                    outbound.complete(response);
+                }
+            });
+        }
+        return outbound;
+    }
+
+    private CompletableFuture<InstallSnapshotResponse> sendInstallSnapshotOverChannel(Channel ch, Peer peer, InstallSnapshotRequest req) {
+        String correlationId = java.util.UUID.randomUUID().toString();
+        CompletableFuture<InstallSnapshotResponse> future = new CompletableFuture<>();
+        inFlightInstallSnapshot.put(correlationId, future);
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+
+        ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            inFlightInstallSnapshot.remove(correlationId);
+            requestTimings.remove(correlationId);
+            requestTimeouts.remove(correlationId);
+            future.completeExceptionally(new TimeoutException("Timed out waiting for InstallSnapshotResponse from " + peer.getId()));
+        }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
+        requestTimeouts.put(correlationId, timeoutTask);
+
+        try {
+            var installSnapshotRequest = ProtoMapper.toProto(req);
+            Envelope envelope = ProtoMapper.wrap(correlationId, "InstallSnapshotRequest", installSnapshotRequest.toByteString());
+            ch.writeAndFlush(envelope).addListener(f -> {
+                if (!f.isSuccess()) {
+                    inFlightInstallSnapshot.remove(correlationId);
+                    requestTimings.remove(correlationId);
+                    ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+                    if (pendingTimeout != null) {
+                        pendingTimeout.cancel(false);
+                    }
+                    future.completeExceptionally(f.cause());
+                }
+            });
+        } catch (Exception e) {
+            inFlightInstallSnapshot.remove(correlationId);
             requestTimings.remove(correlationId);
             ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
             if (pendingTimeout != null) {
@@ -268,95 +448,8 @@ public class RaftClient {
         }
     }
 
-    public void broadcastHeartbeat(Heartbeat heartbeat) {
-        for (Peer peer : knownPeers) {
-            Channel channel = channels.get(peer);
-
-            if (log.isTraceEnabled()) {
-                log.trace("{}: Broadcasting heartbeat for term {} to {}", clientId, heartbeat.getTerm(), peer.getId());
-            }
-
-            if (channel == null || !channel.isActive()) {
-                // We are not connected to this peer, so we will not be able
-                // to broadcast anything *this* round -- but we will initiate
-                // a connect so that we are connected *next* round...
-
-                connect(peer).addListener((ChannelFuture f) -> {
-                    if (!f.isSuccess()) {
-                        // We should log at some higher level, but since this situation
-                        // may continue for some time and flood the log we will refrain
-                        // from warn, info and even debug logging
-                        if (log.isTraceEnabled()) {
-                            log.trace("{}: Could not broadcast to {} at {}", clientId, peer.getId(), peer.getAddress(), f.cause());
-                        }
-                    }
-                });
-            } else {
-                try {
-                    var hb = ProtoMapper.toProto(heartbeat);
-                    Envelope envelope = ProtoMapper.wrap(
-                            java.util.UUID.randomUUID().toString(),
-                            "Heartbeat",
-                            hb.toByteString()
-                    );
-                    channel.writeAndFlush(envelope)
-                            .addListener(f -> {
-                                if (!f.isSuccess()) {
-                                    log.debug("{}: Could not broadcast heartbeat to {}", clientId, heartbeat.getPeerId(), f.cause());
-                                }
-                            });
-                } catch (Exception e) {
-                    log.warn("{}: Failed to broadcast heartbeat to {}", clientId, heartbeat.getPeerId(), e);
-                }
-            }
-        }
-    }
-
-    public void broadcastLogEntry(LogEntry logEntry) {
-        for (Peer peer : knownPeers) {
-            Channel channel = channels.get(peer);
-
-            if (log.isTraceEnabled()) {
-                log.trace("{}: Broadcasting log entry for term {} to {}", clientId, logEntry.getTerm(), peer.getId());
-            }
-
-            if (channel == null || !channel.isActive()) {
-                // We are not connected to this peer, so we will not be able
-                // to broadcast anything *this* round -- but we will initiate
-                // a connect so that we are connected *next* round...
-
-                connect(peer).addListener((ChannelFuture f) -> {
-                    if (!f.isSuccess()) {
-                        // We should log at some higher level, but since this situation
-                        // may continue for some time and flood the log we will refrain
-                        // from warn, info and even debug logging
-                        if (log.isTraceEnabled()) {
-                            log.trace("{}: Could not broadcast to {} at {}", clientId, peer.getId(), peer.getAddress(), f.cause());
-                        }
-                    }
-                });
-            } else {
-                try {
-                    var entry = ProtoMapper.toProto(logEntry);
-                    Envelope envelope = ProtoMapper.wrap(
-                            java.util.UUID.randomUUID().toString(),
-                            "LogEntry",
-                            entry.toByteString()
-                    );
-                    channel.writeAndFlush(envelope)
-                            .addListener(f -> {
-                                if (!f.isSuccess()) {
-                                    log.debug("{}: Could not broadcast log entry to {}", clientId, logEntry.getPeerId(), f.cause());
-                                }
-                            });
-                } catch (Exception e) {
-                    log.warn("{}: Failed to broadcast log entry to {}", clientId, logEntry.getPeerId(), e);
-                }
-            }
-        }
-    }
-
     public Collection<Peer> broadcast(String type, long term, byte[] payload) {
+        // Generic best-effort broadcast utility for non-Raft control messages.
         Collection<Peer> unreachablePeers = new HashSet<>();
 
         for (Peer peer : knownPeers) {

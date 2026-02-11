@@ -11,6 +11,9 @@ public class Peer {
     protected Peer() {}
 
     public Peer(String id, InetSocketAddress address) {
+        if (id == null || id.isBlank()) {
+            throw new IllegalArgumentException("Peer id must be non-null and non-blank");
+        }
         this.id = id;
         this.address = address;
     }

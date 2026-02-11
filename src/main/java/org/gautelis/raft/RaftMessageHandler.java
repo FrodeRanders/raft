@@ -10,6 +10,8 @@ import org.slf4j.Logger;
 
 @ChannelHandler.Sharable
 public class RaftMessageHandler extends SimpleChannelInboundHandler<Envelope> {
+    // Netty transport adapter for Raft RPCs.
+    // Figure 2 receiver rules are implemented in RaftNode; this class only parses, dispatches, and replies.
     private static final Logger log = LoggerFactory.getLogger(RaftMessageHandler.class);
 
     private final RaftNode stateMachine;
@@ -26,6 +28,8 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<Envelope> {
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Envelope envelope) throws Exception {
+        // Transport-to-state-machine bridge:
+        // map typed RPC envelopes onto RaftNode receiver implementations (Figure 2 request handlers).
         log.trace("Received message: {}", envelope);
 
         String correlationId = envelope.getCorrelationId();
@@ -41,27 +45,8 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<Envelope> {
         byte[] payload = envelope.getPayload().toByteArray();
 
         switch (type) {
-            case "Heartbeat" -> {
-                var parsed = ProtoMapper.parseHeartbeat(payload);
-                if (parsed.isEmpty()) {
-                    log.warn("Failed to parse Heartbeat payload");
-                    return;
-                }
-                Heartbeat heartbeat = ProtoMapper.fromProto(parsed.get());
-                stateMachine.handleHeartbeat(heartbeat);
-                // no expected response
-            }
-            case "LogEntry" -> {
-                var parsed = ProtoMapper.parseLogEntry(payload);
-                if (parsed.isEmpty()) {
-                    log.warn("Failed to parse LogEntry payload");
-                    return;
-                }
-                LogEntry entry = ProtoMapper.fromProto(parsed.get());
-                stateMachine.handleLogEntry(entry);
-                // no expected response
-            }
             case "VoteRequest" -> {
+                // Figure 2 RequestVote receiver logic lives in RaftNode.handleVoteRequest.
                 var parsed = ProtoMapper.parseVoteRequest(payload);
                 if (parsed.isEmpty()) {
                     log.warn("Failed to parse VoteRequest payload");
@@ -90,6 +75,46 @@ public class RaftMessageHandler extends SimpleChannelInboundHandler<Envelope> {
                 } catch (Exception e) {
                     log.warn("Failed to send vote response to {}: {}", peerId, e.getMessage(), e);
                 }
+            }
+            case "AppendEntriesRequest" -> {
+                // Figure 2 AppendEntries receiver steps 1-5 live in RaftNode.handleAppendEntries.
+                var parsed = ProtoMapper.parseAppendEntriesRequest(payload);
+                if (parsed.isEmpty()) {
+                    log.warn("Failed to parse AppendEntriesRequest payload");
+                    return;
+                }
+                AppendEntriesRequest request = ProtoMapper.fromProto(parsed.get());
+                AppendEntriesResponse response = stateMachine.handleAppendEntries(request);
+
+                String peerId = request.getLeaderId();
+                var responsePayload = ProtoMapper.toProto(response);
+                Envelope envelopeResponse = ProtoMapper.wrap(correlationId, "AppendEntriesResponse", responsePayload.toByteString());
+                ctx.writeAndFlush(envelopeResponse)
+                        .addListener(f -> {
+                            if (!f.isSuccess()) {
+                                log.warn("Could not send AppendEntriesResponse to {}: {}", peerId, f.cause());
+                            }
+                        });
+            }
+            case "InstallSnapshotRequest" -> {
+                // Snapshot installation receiver path (companion to log compaction/catch-up).
+                var parsed = ProtoMapper.parseInstallSnapshotRequest(payload);
+                if (parsed.isEmpty()) {
+                    log.warn("Failed to parse InstallSnapshotRequest payload");
+                    return;
+                }
+                InstallSnapshotRequest request = ProtoMapper.fromProto(parsed.get());
+                InstallSnapshotResponse response = stateMachine.handleInstallSnapshot(request);
+
+                String peerId = request.getLeaderId();
+                var responsePayload = ProtoMapper.toProto(response);
+                Envelope envelopeResponse = ProtoMapper.wrap(correlationId, "InstallSnapshotResponse", responsePayload.toByteString());
+                ctx.writeAndFlush(envelopeResponse)
+                        .addListener(f -> {
+                            if (!f.isSuccess()) {
+                                log.warn("Could not send InstallSnapshotResponse to {}: {}", peerId, f.cause());
+                            }
+                        });
             }
             default -> {
                 MessageHandler messageHandler = stateMachine.getMessageHandler();

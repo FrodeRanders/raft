@@ -1,7 +1,8 @@
 package org.gautelis.raft;
 
 import io.netty.channel.embedded.EmbeddedChannel;
-import org.gautelis.raft.model.Heartbeat;
+import org.gautelis.raft.model.AppendEntriesRequest;
+import org.gautelis.raft.model.AppendEntriesResponse;
 import org.gautelis.raft.model.Peer;
 import org.gautelis.raft.model.VoteRequest;
 import org.gautelis.raft.model.VoteResponse;
@@ -73,24 +74,30 @@ class RaftMessageHandlerTest {
     }
 
     @Test
-    void heartbeatDoesNotWriteResponseAndUpdatesTerm() throws Exception {
-        log.info("*** Testcase *** Heartbeat updates term and writes no response");
+    void appendEntriesHeartbeatWritesResponseAndUpdatesTerm() throws Exception {
+        log.info("*** Testcase *** Empty AppendEntries heartbeat updates term and returns AppendEntriesResponse");
 
         Peer a = new Peer("A", null);
         Peer b = new Peer("B", null);
         RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new NoopRaftClient(), new InMemoryLogStore());
 
         EmbeddedChannel channel = new EmbeddedChannel(new RaftMessageHandler(nodeB));
-        Heartbeat heartbeat = new Heartbeat(2, "A");
+        AppendEntriesRequest heartbeat = new AppendEntriesRequest(2, "A", 0, 0, 0, List.of());
         Envelope envelope = ProtoMapper.wrap(
                 "corr-2",
-                "Heartbeat",
+                "AppendEntriesRequest",
                 ProtoMapper.toProto(heartbeat).toByteString()
         );
         channel.writeInbound(envelope);
 
         Envelope outbound = channel.readOutbound();
-        assertNull(outbound);
+        assertNotNull(outbound);
+        assertEquals("corr-2", outbound.getCorrelationId());
+        assertEquals("AppendEntriesResponse", outbound.getType());
+        var responseProto = ProtoMapper.parseAppendEntriesResponse(outbound.getPayload().toByteArray());
+        assertTrue(responseProto.isPresent());
+        AppendEntriesResponse response = ProtoMapper.fromProto(responseProto.get());
+        assertTrue(response.isSuccess());
         assertEquals(2, nodeB.getTerm());
         assertEquals(RaftNode.State.FOLLOWER, nodeB.getStateForTest());
         channel.finishAndReleaseAll();

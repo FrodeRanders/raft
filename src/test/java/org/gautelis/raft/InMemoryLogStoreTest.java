@@ -48,4 +48,25 @@ class InMemoryLogStoreTest {
 
         assertThrows(IndexOutOfBoundsException.class, () -> store.termAt(2));
     }
+
+    @Test
+    void compactionMaintainsSnapshotMetadataAndGlobalIndexing() {
+        log.info("*** Testcase *** In-memory compaction indexing: verifies snapshot metadata and global index continuity after prefix compaction");
+        InMemoryLogStore store = new InMemoryLogStore();
+        store.append(List.of(
+                new LogEntry(1, "A"),
+                new LogEntry(1, "A"),
+                new LogEntry(2, "A")
+        ));
+
+        store.compactUpTo(2);
+
+        assertEquals(2L, store.snapshotIndex());
+        assertEquals(1L, store.snapshotTerm());
+        assertEquals(3L, store.lastIndex());
+        assertEquals(2L, store.lastTerm());
+        assertEquals(1L, store.termAt(2));
+        assertEquals(2L, store.termAt(3));
+        assertEquals(2L, store.entryAt(3).getTerm());
+    }
 }

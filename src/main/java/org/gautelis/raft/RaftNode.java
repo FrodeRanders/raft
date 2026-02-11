@@ -9,8 +9,12 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
+import java.util.Arrays;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 
 /**
  *                                     ┌───────────────────────────┐
@@ -35,6 +39,12 @@ import java.util.concurrent.TimeUnit;
  *                      c) discovers server with higher term (via received heartbeat)
  *
  *
+ * Implementation note:
+ * - Comments in this class reference the Raft paper "In Search of an Understandable Consensus Algorithm"
+ *   (extended version, 2014), primarily Figure 2 (server rules) and Figure 3 (safety properties).
+ * - Figure 2 is treated as executable guidance: most state transitions and RPC receiver logic below
+ *   are annotated with the exact rule/step they implement.
+ * - Figure 3 properties are called out where this implementation enforces them directly.
  */
 public class RaftNode {
     private static final Logger log = LoggerFactory.getLogger(RaftNode.class);
@@ -60,6 +70,8 @@ public class RaftNode {
 
     // Keeps track of peers in cluster
     private final Map<String, Peer> peers = new HashMap<>();
+    private final Map<String, Long> nextIndex = new HashMap<>();
+    private final Map<String, Long> matchIndex = new HashMap<>();
     private final Peer me;
 
     //
@@ -67,6 +79,7 @@ public class RaftNode {
 
     //
     private final MessageHandler messageHandler;
+    private final SnapshotStateMachine snapshotStateMachine;
 
     // Netty-based approach might either
     //  - store channels for each peer, or
@@ -80,9 +93,37 @@ public class RaftNode {
 
     private final TimeSource timeSource;
     private final Random rng;
+    private long commitIndex = 0L;
+    private long lastApplied = 0L;
+    private final PersistentStateStore persistentState;
+    private final int snapshotMinEntries;
 
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, RaftClient raftClient, LogStore logStore) {
-        this(me, peers, timeoutMillis, messageHandler, raftClient, logStore, System::currentTimeMillis, new Random());
+        this(me, peers, timeoutMillis, messageHandler, (SnapshotStateMachine) null, raftClient, logStore, new InMemoryPersistentStateStore(), System::currentTimeMillis, new Random());
+    }
+
+    public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, RaftClient raftClient, LogStore logStore, PersistentStateStore persistentState) {
+        this(me, peers, timeoutMillis, messageHandler, (SnapshotStateMachine) null, raftClient, logStore, persistentState, System::currentTimeMillis, new Random());
+    }
+
+    public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, CommandHandler commandHandler, RaftClient raftClient, LogStore logStore, PersistentStateStore persistentState) {
+        this(me, peers, timeoutMillis, messageHandler, commandHandler == null ? null : new CommandHandlerStateMachineAdapter(commandHandler), raftClient, logStore, persistentState, System::currentTimeMillis, new Random());
+    }
+
+    public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, SnapshotStateMachine snapshotStateMachine, RaftClient raftClient, LogStore logStore, PersistentStateStore persistentState) {
+        this(me, peers, timeoutMillis, messageHandler, snapshotStateMachine, raftClient, logStore, persistentState, System::currentTimeMillis, new Random());
+    }
+
+    RaftNode(Peer me,
+             List<Peer> peers,
+             long timeoutMillis,
+             MessageHandler messageHandler,
+             SnapshotStateMachine snapshotStateMachine,
+             RaftClient raftClient,
+             LogStore logStore,
+             TimeSource timeSource,
+             Random rng) {
+        this(me, peers, timeoutMillis, messageHandler, snapshotStateMachine, raftClient, logStore, new InMemoryPersistentStateStore(), timeSource, rng);
     }
 
     RaftNode(Peer me,
@@ -93,20 +134,107 @@ public class RaftNode {
              LogStore logStore,
              TimeSource timeSource,
              Random rng) {
+        this(me, peers, timeoutMillis, messageHandler, (SnapshotStateMachine) null, raftClient, logStore, new InMemoryPersistentStateStore(), timeSource, rng);
+    }
+
+    RaftNode(Peer me,
+             List<Peer> peers,
+             long timeoutMillis,
+             MessageHandler messageHandler,
+             RaftClient raftClient,
+             LogStore logStore,
+             PersistentStateStore persistentState,
+             TimeSource timeSource,
+             Random rng) {
+        this(me, peers, timeoutMillis, messageHandler, (SnapshotStateMachine) null, raftClient, logStore, persistentState, timeSource, rng);
+    }
+
+    RaftNode(Peer me,
+             List<Peer> peers,
+             long timeoutMillis,
+             MessageHandler messageHandler,
+             CommandHandler commandHandler,
+             RaftClient raftClient,
+             LogStore logStore,
+             PersistentStateStore persistentState,
+             TimeSource timeSource,
+             Random rng) {
+        this(me, peers, timeoutMillis, messageHandler, commandHandler == null ? null : new CommandHandlerStateMachineAdapter(commandHandler), raftClient, logStore, persistentState, timeSource, rng);
+    }
+
+    RaftNode(Peer me,
+             List<Peer> peers,
+             long timeoutMillis,
+             MessageHandler messageHandler,
+             SnapshotStateMachine snapshotStateMachine,
+             RaftClient raftClient,
+             LogStore logStore,
+             PersistentStateStore persistentState,
+             TimeSource timeSource,
+             Random rng) {
         this.me = me;
+        if (me == null || me.getId() == null || me.getId().isBlank()) {
+            throw new IllegalArgumentException("Local peer must have non-null, non-blank id");
+        }
         for (Peer peer : peers) {
             if (peer == null) continue;
-            if (me != null && me.getId() != null && me.getId().equals(peer.getId())) {
+            if (peer.getId() == null || peer.getId().isBlank()) {
+                throw new IllegalArgumentException("Cluster peer must have non-null, non-blank id");
+            }
+            if (me.getId().equals(peer.getId())) {
+                if (!Objects.equals(me.getAddress(), peer.getAddress())) {
+                    throw new IllegalArgumentException("Conflicting peer configuration for id " + peer.getId() + ": " + me.getAddress() + " vs " + peer.getAddress());
+                }
                 continue; // do not include self in peers
+            }
+            Peer existing = this.peers.get(peer.getId());
+            if (existing != null && !Objects.equals(existing.getAddress(), peer.getAddress())) {
+                throw new IllegalArgumentException("Conflicting peer configuration for id " + peer.getId() + ": " + existing.getAddress() + " vs " + peer.getAddress());
             }
             this.peers.putIfAbsent(peer.getId(), peer);
         }
         this.timeoutMillis = timeoutMillis;
         this.messageHandler = messageHandler;
+        this.snapshotStateMachine = snapshotStateMachine;
         this.raftClient = raftClient;
         this.logStore = logStore;
+        this.persistentState = persistentState;
         this.timeSource = timeSource;
         this.rng = rng;
+        this.snapshotMinEntries = Integer.getInteger("raft.snapshot.min.entries", 1_000);
+        this.raftClient.setKnownPeers(this.peers.values());
+
+        this.currentTerm = persistentState.currentTerm();
+        this.votedFor = persistentState.votedFor()
+                .map(this::resolvePeerById)
+                .orElse(null);
+        if (persistentState.votedFor().isPresent() && this.votedFor == null) {
+            persistentState.setVotedFor(null);
+        }
+    }
+
+    private Peer resolvePeerById(String peerId) {
+        if (peerId == null) {
+            return null;
+        }
+        if (me != null && peerId.equals(me.getId())) {
+            return me;
+        }
+        return peers.get(peerId);
+    }
+
+    private void persistCurrentTerm(long term) {
+        // Figure 2 ("All Servers"): if an RPC has higher term, node updates currentTerm before continuing.
+        // Persisting here preserves election safety across restart (Figure 3: Election Safety).
+        currentTerm = term;
+        persistentState.setCurrentTerm(term);
+    }
+
+    private void persistVotedFor(Peer peer) {
+        // Figure 2 RequestVote receiver and candidate conversion both mutate votedFor.
+        // Persisting vote prevents double-voting after crashes (Figure 3: Election Safety).
+        votedFor = peer;
+        persistentState.setVotedFor(peer == null ? null : peer.getId());
     }
 
     public void shutdown() {
@@ -135,6 +263,8 @@ public class RaftNode {
     }
 
     private boolean isCandidateLogUpToDate(VoteRequest req) {
+        // Figure 2 RequestVote receiver step 2 and §5.4:
+        // candidate log must be at least as up-to-date as receiver log.
         long myLastTerm = logStore.lastTerm();
         long myLastIndex = logStore.lastIndex();
 
@@ -147,7 +277,8 @@ public class RaftNode {
     public synchronized VoteResponse handleVoteRequest(VoteRequest req) {
         log.debug("{}@{} received vote request for term {} from {}", me.getId(), currentTerm, req.getTerm(), req.getCandidateId());
 
-        // If the candidate's term is behind ours, immediately reject.
+        // Figure 2 RequestVote receiver step 1:
+        // reject stale terms immediately.
         if (req.getTerm() < currentTerm) {
             if (log.isDebugEnabled()) {
                 log.debug("{}@{} ({}) has higher term than requested term {} from {} => reject",
@@ -156,7 +287,8 @@ public class RaftNode {
             return new VoteResponse(req, me.getId(), false, /* my term */ currentTerm);
         }
 
-        // If the candidate's term is higher, become follower.
+        // Figure 2 ("All Servers"):
+        // if RPC term > currentTerm, update term and convert to follower.
         if (req.getTerm() > currentTerm) {
             //-------------------------------------
             // c) discovers node with higher term
@@ -172,9 +304,9 @@ public class RaftNode {
                 );
             }
 
-            currentTerm = req.getTerm();
+            persistCurrentTerm(req.getTerm());
             state = State.FOLLOWER;
-            votedFor = null;
+            persistVotedFor(null);
             electionSequenceCounter = 0;
             refreshTimeout();
         }
@@ -188,7 +320,8 @@ public class RaftNode {
             return new VoteResponse(req, me.getId(), false, currentTerm);
         }
 
-        // If we haven't voted yet OR we already voted for this candidate, grant the vote.
+        // Figure 2 RequestVote receiver step 2:
+        // grant vote iff not voted (or same candidate) and candidate log is up-to-date.
         if (votedFor == null || votedFor.getId().equals(req.getCandidateId())) {
             Peer peer = peers.get(req.getCandidateId());
             if (peer != null) {
@@ -202,7 +335,7 @@ public class RaftNode {
                 }
 
                 state = State.FOLLOWER;
-                votedFor = peer;
+                persistVotedFor(peer);
                 electionSequenceCounter = 0;
                 refreshTimeout();
                 return new VoteResponse(req, me.getId(), true, /* my term */ currentTerm);
@@ -222,66 +355,141 @@ public class RaftNode {
         }
     }
 
-    public synchronized void handleHeartbeat(Heartbeat heartbeat) {
-        long peerTerm = heartbeat.getTerm();
-        String peerId = heartbeat.getPeerId();
-        log.trace("{}@{} received heartbeat for term {} from {}", me.getId(), currentTerm, peerTerm, peerId);
-
-        // Ignore heartbeats from nodes that are not members of this cluster.
-        if (peerId == null || (!peerId.equals(me.getId()) && !peers.containsKey(peerId))) {
-            if (log.isDebugEnabled()) {
-                log.debug("{}@{} ignoring heartbeat from unknown peer {}", me.getId(), currentTerm, peerId);
-            }
-            return;
+    public synchronized boolean submitCommand(String command) {
+        // Figure 2 ("Leaders"): only the leader accepts client commands into the log.
+        if (state != State.LEADER) {
+            return false;
+        }
+        if (command == null || command.isBlank()) {
+            return false;
         }
 
-        // Ignore stale heartbeats; do NOT refresh timeout on them.
-        if (peerTerm < currentTerm) {
-            log.trace("{}@{} ignoring stale heartbeat from {}: peerTerm={} < currentTerm={}", me.getId(), currentTerm, peerId, peerTerm, currentTerm);
-            return;
-        }
-
-        // If the peer's term is higher, become follower.
-        if (peerTerm > currentTerm) {
-            //----------------------------------------
-            // c) discovers server with higher term
-            // e) discovers new term
-            //----------------------------------------
-            if (log.isDebugEnabled()) {
-                String info = "remains FOLLOWER";
-                if (state != State.FOLLOWER) {
-                    info = "steps from " + state.name() + " to FOLLOWER";
-                }
-                log.debug(
-                        "{}@{} {} since requested term {} is higher",
-                        me.getId(), currentTerm, info, peerTerm
-                );
-            }
-
-            currentTerm = peerTerm;
-            state = State.FOLLOWER;
-            votedFor = null;
-            electionSequenceCounter = 0;
-
-        } else {
-            // peerTerm == currentTerm: leader discovery for this term
-            if (state != State.FOLLOWER) {
-                if (log.isDebugEnabled()) {
-                    log.debug("{}@{} steps from {} to FOLLOWER due to heartbeat in current term",
-                            me.getId(), currentTerm, state.name());
-                }
-                state = State.FOLLOWER;
-                votedFor = null;
-                electionSequenceCounter = 0;
-            }
-        }
-
-        refreshTimeout();
+        LogEntry entry = new LogEntry(currentTerm, me.getId(), command.getBytes(StandardCharsets.UTF_8));
+        logStore.append(Collections.singletonList(entry));
+        // Figure 2 ("Leaders"): after local append, replicate to followers and eventually commit.
+        advanceCommitIndexFromMajority();
+        broadcastHeartbeat(); // replicate promptly instead of waiting for next tick
+        return true;
     }
 
-    public synchronized void handleLogEntry(LogEntry entry) {
-        long peerTerm = entry.getTerm();
-        log.trace("{}@{} received log-entry for term {} from {}", me.getId(), currentTerm, peerTerm, entry.getPeerId());
+    public synchronized AppendEntriesResponse handleAppendEntries(AppendEntriesRequest request) {
+        long leaderTerm = request.getTerm();
+        String leaderId = request.getLeaderId();
+
+        // Figure 2 AppendEntries receiver step 1: reject stale leader term.
+        if (leaderTerm < currentTerm) {
+            return new AppendEntriesResponse(currentTerm, me.getId(), false, logStore.lastIndex());
+        }
+        if (leaderId == null || leaderId.equals(me.getId()) || !peers.containsKey(leaderId)) {
+            return new AppendEntriesResponse(currentTerm, me.getId(), false, logStore.lastIndex());
+        }
+
+        // Figure 2 ("All Servers"): higher term in RPC causes follower transition.
+        if (leaderTerm > currentTerm) {
+            persistCurrentTerm(leaderTerm);
+            state = State.FOLLOWER;
+            persistVotedFor(null);
+            electionSequenceCounter = 0;
+        } else if (state != State.FOLLOWER) {
+            state = State.FOLLOWER;
+            persistVotedFor(null);
+            electionSequenceCounter = 0;
+        }
+        refreshTimeout();
+
+        long prevLogIndex = request.getPrevLogIndex();
+        long prevLogTerm = request.getPrevLogTerm();
+        // Snapshot boundary handling: if follower already compacted this prefix,
+        // leader must switch to InstallSnapshot (instead of AppendEntries retry).
+        if (prevLogIndex < logStore.snapshotIndex()) {
+            return new AppendEntriesResponse(currentTerm, me.getId(), false, logStore.snapshotIndex());
+        }
+        // Figure 2 AppendEntries receiver step 2:
+        // reject if no entry at prevLogIndex or term mismatch.
+        if (prevLogIndex > logStore.lastIndex()) {
+            return new AppendEntriesResponse(currentTerm, me.getId(), false, logStore.lastIndex());
+        }
+        if (prevLogIndex > 0 && logStore.termAt(prevLogIndex) != prevLogTerm) {
+            return new AppendEntriesResponse(currentTerm, me.getId(), false, prevLogIndex - 1);
+        }
+
+        long index = prevLogIndex + 1;
+        List<LogEntry> entries = request.getEntries();
+        int i = 0;
+        // Figure 2 AppendEntries receiver step 3:
+        // delete conflicting existing entry and all that follow.
+        while (i < entries.size()) {
+            LogEntry incoming = entries.get(i);
+            if (index <= logStore.lastIndex()) {
+                LogEntry local = logStore.entryAt(index);
+                if (!sameEntry(local, incoming)) {
+                    logStore.truncateFrom(index);
+                    break;
+                }
+            } else {
+                break;
+            }
+            index++;
+            i++;
+        }
+        if (i < entries.size()) {
+            // Figure 2 AppendEntries receiver step 4: append new entries.
+            logStore.append(entries.subList(i, entries.size()));
+        }
+
+        // Figure 2 AppendEntries receiver step 5:
+        // commit up to min(leaderCommit, lastIndex), then apply in-order.
+        if (request.getLeaderCommit() > commitIndex) {
+            commitIndex = Math.min(request.getLeaderCommit(), logStore.lastIndex());
+            applyCommittedEntries();
+        }
+        return new AppendEntriesResponse(currentTerm, me.getId(), true, logStore.lastIndex());
+    }
+
+    public synchronized InstallSnapshotResponse handleInstallSnapshot(InstallSnapshotRequest request) {
+        long leaderTerm = request.getTerm();
+        String leaderId = request.getLeaderId();
+
+        // Same term gate as AppendEntries receiver step 1 (Figure 2 semantics).
+        if (leaderTerm < currentTerm) {
+            return new InstallSnapshotResponse(currentTerm, me.getId(), false, logStore.snapshotIndex());
+        }
+        if (leaderId == null || leaderId.equals(me.getId()) || !peers.containsKey(leaderId)) {
+            return new InstallSnapshotResponse(currentTerm, me.getId(), false, logStore.snapshotIndex());
+        }
+
+        // Figure 2 ("All Servers"): higher term from RPC forces follower transition.
+        if (leaderTerm > currentTerm) {
+            persistCurrentTerm(leaderTerm);
+            state = State.FOLLOWER;
+            persistVotedFor(null);
+            electionSequenceCounter = 0;
+        } else if (state != State.FOLLOWER) {
+            state = State.FOLLOWER;
+            persistVotedFor(null);
+            electionSequenceCounter = 0;
+        }
+
+        // Snapshot install replaces compacted prefix and restores state machine checkpoint.
+        // This is the mechanism that preserves catch-up when entries are no longer available.
+        logStore.installSnapshot(
+                request.getLastIncludedIndex(),
+                request.getLastIncludedTerm(),
+                request.getSnapshotData()
+        );
+        if (snapshotStateMachine != null) {
+            snapshotStateMachine.restore(request.getSnapshotData());
+        }
+        commitIndex = Math.max(commitIndex, request.getLastIncludedIndex());
+        lastApplied = Math.max(lastApplied, request.getLastIncludedIndex());
+        refreshTimeout();
+        return new InstallSnapshotResponse(currentTerm, me.getId(), true, logStore.snapshotIndex());
+    }
+
+    private boolean sameEntry(LogEntry left, LogEntry right) {
+        return left.getTerm() == right.getTerm()
+                && java.util.Objects.equals(left.getPeerId(), right.getPeerId())
+                && Arrays.equals(left.getData(), right.getData());
     }
 
     public void startTimers(EventLoopGroup eventLoopGroup) {
@@ -325,12 +533,14 @@ public class RaftNode {
     }
 
     private void newElection() {
-        log.debug("{} initiating new election...", me.getId());
+        log.debug("{}@{} initiating new election...", me.getId(), currentTerm);
 
         synchronized (this) {
+            // Figure 2 ("Candidates"): on conversion to candidate:
+            // increment term, vote for self, reset election timer.
             state = State.CANDIDATE;
-            currentTerm++;
-            votedFor = me;
+            persistCurrentTerm(currentTerm + 1);
+            persistVotedFor(me);
             electionSequenceCounter++;
             refreshTimeout();
         }
@@ -348,7 +558,7 @@ public class RaftNode {
                         handleVoteResponses(responses, voteReq.getTerm());
                     }
                     else {
-                        log.info("No vote response", f.cause());
+                        log.info("{}@{} no vote response", me.getId(), currentTerm, f.cause());
                     }
         });
     }
@@ -380,9 +590,9 @@ public class RaftNode {
                 if (maxTerm > currentTerm) {
                     log.info("{}@{} discovered higher term {} in vote responses, stepping down to FOLLOWER",
                             me.getId(), currentTerm, maxTerm);
-                    currentTerm = maxTerm;
+                    persistCurrentTerm(maxTerm);
                     state = State.FOLLOWER;
-                    votedFor = null;
+                    persistVotedFor(null);
                     electionSequenceCounter = 0;
                     refreshTimeout();
                     return;
@@ -402,9 +612,10 @@ public class RaftNode {
                             // d) discovers current leader or new term
                             //--------------------------------------------
                             log.info("{}@{} rejoining cluster as FOLLOWER", me.getId(), this.currentTerm);
-                            this.currentTerm = responderTerm;
+                            persistCurrentTerm(responderTerm);
                             state = State.FOLLOWER;
                             electionSequenceCounter = 0;
+                            persistVotedFor(null);
                             refreshTimeout();
                             return;
                         }
@@ -424,6 +635,8 @@ public class RaftNode {
                     }
                     state = State.LEADER;
                     electionSequenceCounter = 0;
+                    // Figure 2 ("Leaders"): initialize replication state and begin heartbeat/append flow.
+                    initializeLeaderReplicationState();
                 }
             }
         }
@@ -431,13 +644,190 @@ public class RaftNode {
 
     private synchronized void broadcastHeartbeat() {
         if (state == State.LEADER) {
-            if (log.isTraceEnabled()) {
-                log.trace("LEADER {}@{} broadcasting heartbeat", me.getId(), currentTerm);
+            // Figure 2 ("Leaders"):
+            // - send empty AppendEntries as heartbeat
+            // - send log entries starting at each follower's nextIndex
+            for (Peer peer : peers.values()) {
+                long configuredNext = nextIndex.getOrDefault(peer.getId(), logStore.lastIndex() + 1);
+                if (logStore.snapshotIndex() > 0 && configuredNext <= logStore.snapshotIndex()) {
+                    // Follower is behind compacted prefix; switch to InstallSnapshot.
+                    byte[] snapshotBytes = logStore.snapshotData();
+                    if (snapshotBytes.length == 0 && snapshotStateMachine != null) {
+                        snapshotBytes = snapshotStateMachine.snapshot();
+                    }
+                    InstallSnapshotRequest installSnapshotRequest = new InstallSnapshotRequest(
+                            currentTerm,
+                            me.getId(),
+                            logStore.snapshotIndex(),
+                            logStore.snapshotTerm(),
+                            snapshotBytes
+                    );
+                    raftClient.sendInstallSnapshot(peer, installSnapshotRequest).whenComplete((resp, error) -> {
+                        if (error != null || resp == null) {
+                            return;
+                        }
+                        handleInstallSnapshotResponse(peer, installSnapshotRequest, resp);
+                    });
+                    continue;
+                }
+                long minNext = logStore.snapshotIndex() + 1;
+                long next = Math.max(minNext, configuredNext);
+                long prev = Math.max(0, next - 1);
+                long prevTerm = prev == 0 ? 0 : logStore.termAt(prev);
+                List<LogEntry> entries = logStore.entriesFrom(next);
+
+                AppendEntriesRequest req = new AppendEntriesRequest(
+                        currentTerm,
+                        me.getId(),
+                        prev,
+                        prevTerm,
+                        commitIndex,
+                        entries
+                );
+                raftClient.sendAppendEntries(peer, req).whenComplete((resp, error) -> {
+                    if (error != null || resp == null) {
+                        return;
+                    }
+                    handleAppendEntriesResponse(peer, req, resp);
+                });
+            }
+        }
+    }
+
+    private synchronized void handleAppendEntriesResponse(Peer peer, AppendEntriesRequest request, AppendEntriesResponse response) {
+        if (state != State.LEADER) {
+            return;
+        }
+        if (response.getTerm() > currentTerm) {
+            persistCurrentTerm(response.getTerm());
+            state = State.FOLLOWER;
+            persistVotedFor(null);
+            electionSequenceCounter = 0;
+            refreshTimeout();
+            return;
+        }
+        if (!response.isSuccess()) {
+            // Figure 2 ("Leaders"): on inconsistency, decrement nextIndex and retry.
+            long currentNext = nextIndex.getOrDefault(peer.getId(), logStore.lastIndex() + 1);
+            if (logStore.snapshotIndex() > 0 && response.getMatchIndex() <= logStore.snapshotIndex()) {
+                nextIndex.put(peer.getId(), logStore.snapshotIndex());
+                return;
+            }
+            long floor = logStore.snapshotIndex() + 1;
+            nextIndex.put(peer.getId(), Math.max(floor, currentNext - 1));
+            return;
+        }
+
+        long advanced = request.getPrevLogIndex() + request.getEntries().size();
+        nextIndex.put(peer.getId(), advanced + 1);
+        matchIndex.put(peer.getId(), advanced);
+        // Figure 2 ("Leaders"): if replicated on majority and in current term, advance commitIndex.
+        advanceCommitIndexFromMajority();
+    }
+
+    private synchronized void handleInstallSnapshotResponse(Peer peer, InstallSnapshotRequest request, InstallSnapshotResponse response) {
+        if (state != State.LEADER) {
+            return;
+        }
+        if (response.getTerm() > currentTerm) {
+            persistCurrentTerm(response.getTerm());
+            state = State.FOLLOWER;
+            persistVotedFor(null);
+            electionSequenceCounter = 0;
+            refreshTimeout();
+            return;
+        }
+        if (!response.isSuccess()) {
+            return;
+        }
+
+        long index = request.getLastIncludedIndex();
+        nextIndex.put(peer.getId(), index + 1);
+        matchIndex.put(peer.getId(), index);
+        // After snapshot catch-up, follower contributes to majority replication accounting.
+        advanceCommitIndexFromMajority();
+    }
+
+    private synchronized void initializeLeaderReplicationState() {
+        long next = Math.max(logStore.snapshotIndex() + 1, logStore.lastIndex() + 1);
+        nextIndex.clear();
+        matchIndex.clear();
+        for (Peer peer : peers.values()) {
+            nextIndex.put(peer.getId(), next);
+            matchIndex.put(peer.getId(), logStore.snapshotIndex());
+        }
+    }
+
+    private synchronized void advanceCommitIndexFromMajority() {
+        int clusterSize = peers.size() + 1;
+        int majority = (clusterSize / 2) + 1;
+
+        long candidateCommit = commitIndex;
+        // Figure 2 ("Leaders"): commit only entries from current term once stored on a majority.
+        // This underpins Figure 3 safety (Leader Completeness + State Machine Safety).
+        for (long n = commitIndex + 1; n <= logStore.lastIndex(); n++) {
+            if (logStore.termAt(n) != currentTerm) {
+                continue;
             }
 
-            Heartbeat heartbeat = new Heartbeat(/* my term */ currentTerm, me.getId());
-            raftClient.broadcastHeartbeat(heartbeat);
+            int replicated = 1; // leader has it
+            for (Peer peer : peers.values()) {
+                if (matchIndex.getOrDefault(peer.getId(), 0L) >= n) {
+                    replicated++;
+                }
+            }
+            if (replicated >= majority) {
+                candidateCommit = n;
+            }
         }
+
+        if (candidateCommit > commitIndex) {
+            commitIndex = candidateCommit;
+            // Figure 2 ("All Servers"): apply entries in commit order.
+            applyCommittedEntries();
+        }
+    }
+
+    private synchronized void applyCommittedEntries() {
+        // Figure 2 ("All Servers"): if commitIndex > lastApplied, increment lastApplied and apply.
+        // Figure 3 State Machine Safety: this monotonic, in-order apply sequence prevents divergent applies.
+        while (lastApplied < commitIndex) {
+            lastApplied++;
+            if (snapshotStateMachine == null) {
+                continue;
+            }
+
+            LogEntry entry = logStore.entryAt(lastApplied);
+            byte[] data = entry.getData();
+            if (data.length == 0) {
+                continue;
+            }
+
+            String command = new String(data, StandardCharsets.UTF_8);
+            snapshotStateMachine.apply(entry.getTerm(), command);
+        }
+        maybeCompactLocalSnapshot();
+    }
+
+    private synchronized void maybeCompactLocalSnapshot() {
+        if (snapshotStateMachine == null || snapshotMinEntries <= 0) {
+            return;
+        }
+        if (commitIndex == 0 || commitIndex <= logStore.snapshotIndex()) {
+            return;
+        }
+
+        long uncompacted = commitIndex - logStore.snapshotIndex();
+        if (uncompacted < snapshotMinEntries) {
+            return;
+        }
+
+        // Local compaction checkpoint:
+        // snapshot state machine + compact log prefix up to commitIndex.
+        long lastIncludedIndex = commitIndex;
+        long lastIncludedTerm = logStore.termAt(lastIncludedIndex);
+        byte[] snapshotBytes = snapshotStateMachine.snapshot();
+        logStore.installSnapshot(lastIncludedIndex, lastIncludedTerm, snapshotBytes);
     }
 
     // ---------------------------
@@ -466,5 +856,13 @@ public class RaftNode {
 
     void handleVoteResponsesForTest(java.util.List<VoteResponse> r, long t) {
         handleVoteResponses(r, t);
+    }
+
+    long getCommitIndexForTest() {
+        return commitIndex;
+    }
+
+    long getLastAppliedForTest() {
+        return lastApplied;
     }
 }

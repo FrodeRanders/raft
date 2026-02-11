@@ -76,12 +76,31 @@ class RaftNodeElectionTest {
         }
 
         @Override
-        public void broadcastLogEntry(LogEntry entry) {
-            for (Map.Entry<String, RaftNode> e : nodesById.entrySet()) {
-                if (!e.getKey().equals(selfId)) {
-                    e.getValue().handleLogEntry(entry);
+        public java.util.concurrent.CompletableFuture<AppendEntriesResponse> sendAppendEntries(Peer peer, AppendEntriesRequest req) {
+            java.util.concurrent.CompletableFuture<AppendEntriesResponse> future = new java.util.concurrent.CompletableFuture<>();
+            queue.add(() -> {
+                RaftNode node = nodesById.get(peer.getId());
+                if (node == null) {
+                    future.complete(new AppendEntriesResponse(req.getTerm(), peer.getId(), false, -1));
+                    return;
                 }
-            }
+                future.complete(node.handleAppendEntries(req));
+            });
+            return future;
+        }
+
+        @Override
+        public java.util.concurrent.CompletableFuture<InstallSnapshotResponse> sendInstallSnapshot(Peer peer, InstallSnapshotRequest req) {
+            java.util.concurrent.CompletableFuture<InstallSnapshotResponse> future = new java.util.concurrent.CompletableFuture<>();
+            queue.add(() -> {
+                RaftNode node = nodesById.get(peer.getId());
+                if (node == null) {
+                    future.complete(new InstallSnapshotResponse(req.getTerm(), peer.getId(), false, req.getLastIncludedIndex()));
+                    return;
+                }
+                future.complete(node.handleInstallSnapshot(req));
+            });
+            return future;
         }
 
         void flush() {
@@ -113,12 +132,12 @@ class RaftNodeElectionTest {
         RaftNode n = new RaftNode(me, List.of(b), 1_000, null, new QueuedRaftClient("A", Map.of()), new InMemoryLogStore(), time, new Random(123));
 
         log.debug("Put node at term 5 with an old lastHeartbeat");
-        n.handleHeartbeat(new Heartbeat(5, "B"));
+        n.handleAppendEntries(new AppendEntriesRequest(5, "B", 0, 0, 0, List.of()));
         long old = time.nowMillis() - 5_000;
         n.setLastHeartbeatMillisForTest(old);
 
         log.info("Receive stale heartbeat (term 4) -> must NOT refresh");
-        n.handleHeartbeat(new Heartbeat(4, "B"));
+        n.handleAppendEntries(new AppendEntriesRequest(4, "B", 0, 0, 0, List.of()));
         assertEquals(old, n.getLastHeartbeatMillisForTest(), "stale heartbeat must not refresh lastHeartbeat");
         assertEquals(5, n.getTerm(), "stale heartbeat must not decrease term");
         log.info("Successful test!");
@@ -199,7 +218,7 @@ class RaftNodeElectionTest {
         assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
 
         // Move to a newer term before handling old responses.
-        nodeA.handleHeartbeat(new Heartbeat(2, "B"));
+        nodeA.handleAppendEntries(new AppendEntriesRequest(2, "B", 0, 0, 0, List.of()));
         assertEquals(2, nodeA.getTerm());
         assertEquals(RaftNode.State.FOLLOWER, nodeA.getStateForTest());
 
@@ -284,7 +303,7 @@ class RaftNodeElectionTest {
         // Using “heartbeat from B” as a stand-in for “some (other) leader exists”.
         // That leader would not have voted for A. This is a test of A's behaviour,
         // so this is sufficient to trigger the right behaviour in A.
-        nodeA.handleHeartbeat(new Heartbeat(1, "B"));
+        nodeA.handleAppendEntries(new AppendEntriesRequest(1, "B", 0, 0, 0, List.of()));
         assertEquals(RaftNode.State.FOLLOWER, nodeA.getStateForTest());
         log.info("Successful test!");
 
@@ -352,8 +371,8 @@ class RaftNodeElectionTest {
     }
 
     @Test
-    void unknownPeerHeartbeatIsIgnored() {
-        log.info("*** Testcase *** Unknown peer heartbeat is ignored");
+    void unknownPeerAppendEntriesIsRejected() {
+        log.info("*** Testcase *** Unknown peer AppendEntries is rejected");
 
         MutableTime time = new MutableTime(0);
 
@@ -369,7 +388,30 @@ class RaftNodeElectionTest {
         assertEquals(1, nodeA.getTerm());
 
         long before = nodeA.getLastHeartbeatMillisForTest();
-        nodeA.handleHeartbeat(new Heartbeat(99, "X"));
+        nodeA.handleAppendEntries(new AppendEntriesRequest(99, "X", 0, 0, 0, List.of()));
+
+        assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
+        assertEquals(1, nodeA.getTerm());
+        assertEquals(before, nodeA.getLastHeartbeatMillisForTest());
+    }
+
+    @Test
+    void selfAppendEntriesIsRejected() {
+        log.info("*** Testcase *** Self-origin AppendEntries is rejected");
+
+        MutableTime time = new MutableTime(0);
+        Peer a = peer("A");
+        Peer b = peer("B");
+
+        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, new QueuedRaftClient("A", Map.of()), new InMemoryLogStore(), time, new Random(1));
+        nodeA.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        nodeA.electionTickForTest();
+        assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
+        assertEquals(1, nodeA.getTerm());
+
+        long before = nodeA.getLastHeartbeatMillisForTest();
+        nodeA.handleAppendEntries(new AppendEntriesRequest(99, "A", 0, 0, 0, List.of()));
 
         assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
         assertEquals(1, nodeA.getTerm());

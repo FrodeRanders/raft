@@ -13,11 +13,6 @@ message Envelope {
   bytes payload = 3;
 }
 
-message Heartbeat {
-  int64 term = 1;
-  string peer_id = 2;
-}
-
 message VoteRequest {
   int64 term = 1;
   string candidate_id = 2;
@@ -36,6 +31,37 @@ message LogEntry {
   int64 term = 1;
   string peer_id = 2;
   bytes data = 3;
+}
+
+message AppendEntriesRequest {
+  int64 term = 1;
+  string leader_id = 2;
+  int64 prev_log_index = 3;
+  int64 prev_log_term = 4;
+  int64 leader_commit = 5;
+  repeated LogEntry entries = 6;
+}
+
+message AppendEntriesResponse {
+  int64 term = 1;
+  string peer_id = 2;
+  bool success = 3;
+  int64 match_index = 4;
+}
+
+message InstallSnapshotRequest {
+  int64 term = 1;
+  string leader_id = 2;
+  int64 last_included_index = 3;
+  int64 last_included_term = 4;
+  bytes snapshot_data = 5;
+}
+
+message InstallSnapshotResponse {
+  int64 term = 1;
+  string peer_id = 2;
+  bool success = 3;
+  int64 last_included_index = 4;
 }
 
 message ClusterMessage {

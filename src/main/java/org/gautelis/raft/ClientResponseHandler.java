@@ -2,6 +2,8 @@ package org.gautelis.raft;
 
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
+import org.gautelis.raft.model.AppendEntriesResponse;
+import org.gautelis.raft.model.InstallSnapshotResponse;
 import org.gautelis.raft.model.VoteResponse;
 import org.gautelis.raft.proto.Envelope;
 import org.gautelis.vopn.statistics.RunningStatistics;
@@ -21,18 +23,24 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
     // This map is shared with NettyRaftClient, so we can fulfill the waiting futures.
     // Key = correlationId, Value = future that awaits the response.
     private final Map<String, CompletableFuture<VoteResponse>> inFlightRequests;
+    private final Map<String, CompletableFuture<AppendEntriesResponse>> inFlightAppendEntries;
+    private final Map<String, CompletableFuture<InstallSnapshotResponse>> inFlightInstallSnapshot;
     private final Map<String, RequestTiming> requestTimings;
     private final Map<String, ScheduledFuture<?>> requestTimeouts;
     private final Map<String, RunningStatistics> peerResponseStats;
 
     public ClientResponseHandler(
             Map<String, CompletableFuture<VoteResponse>> inFlightRequests,
+            Map<String, CompletableFuture<AppendEntriesResponse>> inFlightAppendEntries,
+            Map<String, CompletableFuture<InstallSnapshotResponse>> inFlightInstallSnapshot,
             Map<String, RequestTiming> requestTimings,
             Map<String, ScheduledFuture<?>> requestTimeouts,
             Map<String, RunningStatistics> peerResponseStats,
             MessageHandler messageHandler
     ) {
         this.inFlightRequests = inFlightRequests;
+        this.inFlightAppendEntries = inFlightAppendEntries;
+        this.inFlightInstallSnapshot = inFlightInstallSnapshot;
         this.requestTimings = requestTimings;
         this.requestTimeouts = requestTimeouts;
         this.peerResponseStats = peerResponseStats;
@@ -102,6 +110,50 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                             stats.addSample(elapsedMillis);
                         }
                     }
+                }
+            }
+
+            case "AppendEntriesResponse" -> {
+                var response = ProtoMapper.parseAppendEntriesResponse(payload);
+                if (response.isEmpty()) {
+                    log.warn("Failed to parse AppendEntriesResponse payload");
+                    return;
+                }
+                AppendEntriesResponse appendEntriesResponse = ProtoMapper.fromProto(response.get());
+
+                CompletableFuture<AppendEntriesResponse> fut = inFlightAppendEntries.remove(correlationId);
+                requestTimings.remove(correlationId);
+                ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
+                if (timeoutTask != null) {
+                    timeoutTask.cancel(false);
+                }
+                if (fut != null) {
+                    fut.complete(appendEntriesResponse);
+                    log.trace("Received {} for correlationId={}", appendEntriesResponse.getPeerId(), correlationId);
+                } else {
+                    log.warn("No future found for AppendEntriesResponse correlationId={}", correlationId);
+                }
+            }
+
+            case "InstallSnapshotResponse" -> {
+                var response = ProtoMapper.parseInstallSnapshotResponse(payload);
+                if (response.isEmpty()) {
+                    log.warn("Failed to parse InstallSnapshotResponse payload");
+                    return;
+                }
+                InstallSnapshotResponse installSnapshotResponse = ProtoMapper.fromProto(response.get());
+
+                CompletableFuture<InstallSnapshotResponse> fut = inFlightInstallSnapshot.remove(correlationId);
+                requestTimings.remove(correlationId);
+                ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
+                if (timeoutTask != null) {
+                    timeoutTask.cancel(false);
+                }
+                if (fut != null) {
+                    fut.complete(installSnapshotResponse);
+                    log.trace("Received InstallSnapshotResponse from {} for correlationId={}", installSnapshotResponse.getPeerId(), correlationId);
+                } else {
+                    log.warn("No future found for InstallSnapshotResponse correlationId={}", correlationId);
                 }
             }
 
