@@ -366,6 +366,7 @@ public class RaftNode {
 
         LogEntry entry = new LogEntry(currentTerm, me.getId(), command.getBytes(StandardCharsets.UTF_8));
         logStore.append(Collections.singletonList(entry));
+
         // Figure 2 ("Leaders"): after local append, replicate to followers and eventually commit.
         advanceCommitIndexFromMajority();
         broadcastHeartbeat(); // replicate promptly instead of waiting for next tick
@@ -390,6 +391,7 @@ public class RaftNode {
             state = State.FOLLOWER;
             persistVotedFor(null);
             electionSequenceCounter = 0;
+
         } else if (state != State.FOLLOWER) {
             state = State.FOLLOWER;
             persistVotedFor(null);
@@ -399,11 +401,13 @@ public class RaftNode {
 
         long prevLogIndex = request.getPrevLogIndex();
         long prevLogTerm = request.getPrevLogTerm();
+
         // Snapshot boundary handling: if follower already compacted this prefix,
         // leader must switch to InstallSnapshot (instead of AppendEntries retry).
         if (prevLogIndex < logStore.snapshotIndex()) {
             return new AppendEntriesResponse(currentTerm, me.getId(), false, logStore.snapshotIndex());
         }
+
         // Figure 2 AppendEntries receiver step 2:
         // reject if no entry at prevLogIndex or term mismatch.
         if (prevLogIndex > logStore.lastIndex()) {
@@ -415,9 +419,10 @@ public class RaftNode {
 
         long index = prevLogIndex + 1;
         List<LogEntry> entries = request.getEntries();
-        int i = 0;
+
         // Figure 2 AppendEntries receiver step 3:
         // delete conflicting existing entry and all that follow.
+        int i = 0;
         while (i < entries.size()) {
             LogEntry incoming = entries.get(i);
             if (index <= logStore.lastIndex()) {
@@ -464,6 +469,7 @@ public class RaftNode {
             state = State.FOLLOWER;
             persistVotedFor(null);
             electionSequenceCounter = 0;
+
         } else if (state != State.FOLLOWER) {
             state = State.FOLLOWER;
             persistVotedFor(null);
@@ -576,28 +582,29 @@ public class RaftNode {
         log.trace(sb.toString());
 
         if (state == State.CANDIDATE) {
+            // Figure 2 ("All Servers"): seeing a higher term in any RPC response
+            // forces term update and follower transition immediately.
+            long maxTerm = currentTerm;
+            for (VoteResponse r : responses) {
+                if (r.getCurrentTerm() > maxTerm) {
+                    maxTerm = r.getCurrentTerm();
+                }
+            }
+            if (maxTerm > currentTerm) {
+                log.info("{}@{} discovered higher term {} in vote responses, stepping down to FOLLOWER",
+                        me.getId(), currentTerm, maxTerm);
+                persistCurrentTerm(maxTerm);
+                state = State.FOLLOWER;
+                persistVotedFor(null);
+                electionSequenceCounter = 0;
+                refreshTimeout();
+                return;
+            }
+
             // Ascertain that this response emanates from a request we sent in the
             // current term. We may receive responses from earlier election rounds
-            // and these should be discarded.
+            // and these should be discarded for vote-counting/leadership transition.
             if (currentTerm == electionTerm) {
-                // Step down immediately if any response reports a newer term, regardless of voteGranted.
-                long maxTerm = currentTerm;
-                for (VoteResponse r : responses) {
-                    if (r.getCurrentTerm() > maxTerm) {
-                        maxTerm = r.getCurrentTerm();
-                    }
-                }
-                if (maxTerm > currentTerm) {
-                    log.info("{}@{} discovered higher term {} in vote responses, stepping down to FOLLOWER",
-                            me.getId(), currentTerm, maxTerm);
-                    persistCurrentTerm(maxTerm);
-                    state = State.FOLLOWER;
-                    persistVotedFor(null);
-                    electionSequenceCounter = 0;
-                    refreshTimeout();
-                    return;
-                }
-
                 long votesGranted = 1; // since I voted for myself
                 for (VoteResponse response : responses) {
                     if (response.isVoteGranted()) {
