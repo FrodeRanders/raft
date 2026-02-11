@@ -5,11 +5,9 @@ public class VoteResponse {
     private long term;
     private boolean voteGranted;
     private long currentTerm;
-
-    // Default constructor needed for Jackson
-    protected VoteResponse() {}
-
     public VoteResponse(VoteRequest request, String peerId, boolean voteGranted, long currentTerm) {
+        // term: the election term from the corresponding VoteRequest.
+        // currentTerm: responder's local term at response time (used to detect newer terms).
         this.term = request.getTerm();
         this.peerId = peerId;
         this.voteGranted = voteGranted;

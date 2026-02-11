@@ -11,10 +11,6 @@ public class AppendEntriesRequest {
     private long prevLogTerm;
     private long leaderCommit;
     private List<LogEntry> entries;
-
-    // Default constructor needed for Jackson
-    protected AppendEntriesRequest() {}
-
     public AppendEntriesRequest(
             long term,
             String leaderId,
@@ -23,6 +19,10 @@ public class AppendEntriesRequest {
             long leaderCommit,
             List<LogEntry> entries
     ) {
+        // Raft AppendEntries semantics:
+        // - empty entries == heartbeat
+        // - prevLogIndex/prevLogTerm anchor consistency check on follower
+        // - leaderCommit advertises leader's committed index for follower apply progress
         this.term = term;
         this.leaderId = leaderId;
         this.prevLogIndex = prevLogIndex;

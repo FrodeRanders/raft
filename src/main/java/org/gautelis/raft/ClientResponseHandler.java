@@ -131,6 +131,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                     fut.complete(appendEntriesResponse);
                     log.trace("Received {} for correlationId={}", appendEntriesResponse.getPeerId(), correlationId);
                 } else {
+                    // Benign race: request timeout/cleanup can remove the future before a late response arrives.
                     log.warn("No future found for AppendEntriesResponse correlationId={}", correlationId);
                 }
             }
@@ -153,6 +154,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                     fut.complete(installSnapshotResponse);
                     log.trace("Received InstallSnapshotResponse from {} for correlationId={}", installSnapshotResponse.getPeerId(), correlationId);
                 } else {
+                    // Benign race: request timeout/cleanup can remove the future before a late response arrives.
                     log.warn("No future found for InstallSnapshotResponse correlationId={}", correlationId);
                 }
             }

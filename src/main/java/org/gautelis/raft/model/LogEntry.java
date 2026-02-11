@@ -6,10 +6,6 @@ public class LogEntry {
     private long term;
     private String peerId;
     private byte[] data;
-
-    // Default constructor needed for Jackson
-    protected LogEntry() {}
-
     public LogEntry(long term, String peerId) {
         this(term, peerId, new byte[0]);
     }

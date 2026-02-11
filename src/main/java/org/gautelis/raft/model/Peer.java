@@ -6,10 +6,6 @@ import java.util.Objects;
 public class Peer {
     private String id;
     private InetSocketAddress address;
-
-    // Default constructor needed for Jackson
-    protected Peer() {}
-
     public Peer(String id, InetSocketAddress address) {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("Peer id must be non-null and non-blank");

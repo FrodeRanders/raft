@@ -5,10 +5,6 @@ public class AppendEntriesResponse {
     private String peerId;
     private boolean success;
     private long matchIndex;
-
-    // Default constructor needed for Jackson
-    protected AppendEntriesResponse() {}
-
     public AppendEntriesResponse(long term, String peerId, boolean success, long matchIndex) {
         this.term = term;
         this.peerId = peerId;

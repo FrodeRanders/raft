@@ -7,9 +7,6 @@ public class VoteRequest {
     private long lastLogIndex;
     private long lastLogTerm;
 
-    // Default constructor needed for Jackson
-    protected VoteRequest() {}
-
     public VoteRequest(long term, String candidateId) {
         this(term, candidateId, 0L, 0L);
     }

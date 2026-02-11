@@ -5,11 +5,6 @@ public class ClusterMessage {
     private String peerId;  // for heartbeat messages
 
     private String message;
-
-    // Default constructor needed for Jackson
-    protected ClusterMessage() {
-    }
-
     public ClusterMessage(long term, String peerId, String message) {
         this.term = term;
         this.peerId = peerId;

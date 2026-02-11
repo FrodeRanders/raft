@@ -642,6 +642,7 @@ public class RaftNode {
                     }
                     state = State.LEADER;
                     electionSequenceCounter = 0;
+
                     // Figure 2 ("Leaders"): initialize replication state and begin heartbeat/append flow.
                     initializeLeaderReplicationState();
                 }
@@ -677,6 +678,7 @@ public class RaftNode {
                     });
                     continue;
                 }
+
                 long minNext = logStore.snapshotIndex() + 1;
                 long next = Math.max(minNext, configuredNext);
                 long prev = Math.max(0, next - 1);
@@ -705,6 +707,7 @@ public class RaftNode {
         if (state != State.LEADER) {
             return;
         }
+
         if (response.getTerm() > currentTerm) {
             persistCurrentTerm(response.getTerm());
             state = State.FOLLOWER;
@@ -713,6 +716,7 @@ public class RaftNode {
             refreshTimeout();
             return;
         }
+
         if (!response.isSuccess()) {
             // Figure 2 ("Leaders"): on inconsistency, decrement nextIndex and retry.
             long currentNext = nextIndex.getOrDefault(peer.getId(), logStore.lastIndex() + 1);
@@ -725,9 +729,12 @@ public class RaftNode {
             return;
         }
 
+        // Response success implies follower accepted the sent suffix;
+        // advance indexes based on exactly what this request carried.
         long advanced = request.getPrevLogIndex() + request.getEntries().size();
         nextIndex.put(peer.getId(), advanced + 1);
         matchIndex.put(peer.getId(), advanced);
+
         // Figure 2 ("Leaders"): if replicated on majority and in current term, advance commitIndex.
         advanceCommitIndexFromMajority();
     }
@@ -736,6 +743,7 @@ public class RaftNode {
         if (state != State.LEADER) {
             return;
         }
+
         if (response.getTerm() > currentTerm) {
             persistCurrentTerm(response.getTerm());
             state = State.FOLLOWER;
@@ -744,6 +752,7 @@ public class RaftNode {
             refreshTimeout();
             return;
         }
+
         if (!response.isSuccess()) {
             return;
         }
@@ -751,6 +760,7 @@ public class RaftNode {
         long index = request.getLastIncludedIndex();
         nextIndex.put(peer.getId(), index + 1);
         matchIndex.put(peer.getId(), index);
+
         // After snapshot catch-up, follower contributes to majority replication accounting.
         advanceCommitIndexFromMajority();
     }
@@ -770,6 +780,7 @@ public class RaftNode {
         int majority = (clusterSize / 2) + 1;
 
         long candidateCommit = commitIndex;
+
         // Figure 2 ("Leaders"): commit only entries from current term once stored on a majority.
         // This underpins Figure 3 safety (Leader Completeness + State Machine Safety).
         for (long n = commitIndex + 1; n <= logStore.lastIndex(); n++) {
@@ -790,6 +801,7 @@ public class RaftNode {
 
         if (candidateCommit > commitIndex) {
             commitIndex = candidateCommit;
+
             // Figure 2 ("All Servers"): apply entries in commit order.
             applyCommittedEntries();
         }
@@ -820,6 +832,7 @@ public class RaftNode {
         if (snapshotStateMachine == null || snapshotMinEntries <= 0) {
             return;
         }
+        
         if (commitIndex == 0 || commitIndex <= logStore.snapshotIndex()) {
             return;
         }

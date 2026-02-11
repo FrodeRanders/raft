@@ -8,10 +8,6 @@ public class InstallSnapshotRequest {
     private long lastIncludedIndex;
     private long lastIncludedTerm;
     private byte[] snapshotData;
-
-    // Default constructor needed for Jackson
-    protected InstallSnapshotRequest() {}
-
     public InstallSnapshotRequest(long term, String leaderId, long lastIncludedIndex, long lastIncludedTerm, byte[] snapshotData) {
         this.term = term;
         this.leaderId = leaderId;

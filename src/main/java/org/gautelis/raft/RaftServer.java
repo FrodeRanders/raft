@@ -55,6 +55,7 @@ public class RaftServer {
                     .childOption(ChannelOption.TCP_NODELAY, true);
 
             // Initialize RAFT timers (e.g., election + heartbeat scheduler)
+            // Timers run on workerGroup event loops, sharing execution resources with channel I/O.
             stateMachine.startTimers(workerGroup);
 
             // Bind and sync until ready
