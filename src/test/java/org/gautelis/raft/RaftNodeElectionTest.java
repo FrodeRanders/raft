@@ -1,10 +1,15 @@
 package org.gautelis.raft;
 
+import org.gautelis.raft.storage.*;
+import org.gautelis.raft.statemachine.*;
+import org.gautelis.raft.transport.netty.*;
+import org.gautelis.raft.serialization.ProtoMapper;
+
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.ImmediateEventExecutor;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.gautelis.raft.model.*;
+import org.gautelis.raft.protocol.*;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;

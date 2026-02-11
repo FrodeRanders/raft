@@ -1,9 +1,14 @@
 package org.gautelis.raft;
 
+import org.gautelis.raft.storage.*;
+import org.gautelis.raft.statemachine.*;
+import org.gautelis.raft.transport.netty.*;
+import org.gautelis.raft.serialization.ProtoMapper;
+
 import io.netty.channel.ChannelHandlerContext;
-import org.gautelis.raft.model.ClusterMessage;
-import org.gautelis.raft.model.Peer;
-import org.gautelis.raft.utilities.BasicAdapter;
+import org.gautelis.raft.protocol.ClusterMessage;
+import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.bootstrap.BasicAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

@@ -1,8 +1,13 @@
 package org.gautelis.raft;
 
+import org.gautelis.raft.storage.*;
+import org.gautelis.raft.statemachine.*;
+import org.gautelis.raft.transport.netty.*;
+import org.gautelis.raft.serialization.ProtoMapper;
+
 import io.netty.channel.embedded.EmbeddedChannel;
-import org.gautelis.raft.model.VoteRequest;
-import org.gautelis.raft.model.VoteResponse;
+import org.gautelis.raft.protocol.VoteRequest;
+import org.gautelis.raft.protocol.VoteResponse;
 import org.gautelis.raft.proto.Envelope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

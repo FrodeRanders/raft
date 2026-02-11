@@ -1,9 +1,14 @@
 package org.gautelis.raft;
 
-import org.gautelis.raft.model.AppendEntriesRequest;
-import org.gautelis.raft.model.InstallSnapshotRequest;
-import org.gautelis.raft.model.LogEntry;
-import org.gautelis.raft.model.Peer;
+import org.gautelis.raft.storage.*;
+import org.gautelis.raft.statemachine.*;
+import org.gautelis.raft.transport.netty.*;
+import org.gautelis.raft.serialization.ProtoMapper;
+
+import org.gautelis.raft.protocol.AppendEntriesRequest;
+import org.gautelis.raft.protocol.InstallSnapshotRequest;
+import org.gautelis.raft.protocol.LogEntry;
+import org.gautelis.raft.protocol.Peer;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

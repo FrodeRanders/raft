@@ -1,11 +1,16 @@
 package org.gautelis.raft;
 
+import org.gautelis.raft.storage.*;
+import org.gautelis.raft.statemachine.*;
+import org.gautelis.raft.transport.netty.*;
+import org.gautelis.raft.serialization.ProtoMapper;
+
 import io.netty.channel.embedded.EmbeddedChannel;
-import org.gautelis.raft.model.AppendEntriesRequest;
-import org.gautelis.raft.model.AppendEntriesResponse;
-import org.gautelis.raft.model.Peer;
-import org.gautelis.raft.model.VoteRequest;
-import org.gautelis.raft.model.VoteResponse;
+import org.gautelis.raft.protocol.AppendEntriesRequest;
+import org.gautelis.raft.protocol.AppendEntriesResponse;
+import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.protocol.VoteRequest;
+import org.gautelis.raft.protocol.VoteResponse;
 import org.gautelis.raft.proto.Envelope;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
