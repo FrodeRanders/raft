@@ -6,6 +6,10 @@ There are two different implementations:
 - On the `'json-on-the-wire'` branch, messages are exchanged using JSON envelopes (akin to MCP thinking) and sent through Netty.
 
 ## Demonstration
+Note: After implementing persistent storage of local term (and some), re-starting
+nodes will not start a re-election. This demo was captured before persisting this
+information, so re-introducing nodes in the cluster became noisy.
+
 Start
 ```
 ➜ ./scripts/start_raft.sh 
