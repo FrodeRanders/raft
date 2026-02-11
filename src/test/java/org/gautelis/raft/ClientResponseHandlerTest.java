@@ -46,6 +46,7 @@ class ClientResponseHandlerTest {
                 inFlight,
                 new java.util.HashMap<>(),
                 new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
                 null
         );
         EmbeddedChannel channel = new EmbeddedChannel(handler);
@@ -78,6 +79,7 @@ class ClientResponseHandlerTest {
                 inFlight,
                 new java.util.HashMap<>(),
                 new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
                 messageHandler
         );
         EmbeddedChannel channel = new EmbeddedChannel(handler);
@@ -100,6 +102,7 @@ class ClientResponseHandlerTest {
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
         ClientResponseHandler handler = new ClientResponseHandler(
                 inFlight,
+                new java.util.HashMap<>(),
                 new java.util.HashMap<>(),
                 new java.util.HashMap<>(),
                 null

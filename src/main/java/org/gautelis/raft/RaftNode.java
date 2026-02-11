@@ -56,6 +56,7 @@ public class RaftNode {
 
     // When was a heartbeat last received (timestamp in ms)
     private volatile long lastHeartbeat = 0L;
+    private volatile long nextElectionDeadlineMillis = 0L;
 
     // Keeps track of peers in cluster
     private final Map<String, Peer> peers = new HashMap<>();
@@ -223,11 +224,20 @@ public class RaftNode {
 
     public synchronized void handleHeartbeat(Heartbeat heartbeat) {
         long peerTerm = heartbeat.getTerm();
-        log.trace("{}@{} received heartbeat for term {} from {}", me.getId(), currentTerm, peerTerm, heartbeat.getPeerId());
+        String peerId = heartbeat.getPeerId();
+        log.trace("{}@{} received heartbeat for term {} from {}", me.getId(), currentTerm, peerTerm, peerId);
+
+        // Ignore heartbeats from nodes that are not members of this cluster.
+        if (peerId == null || (!peerId.equals(me.getId()) && !peers.containsKey(peerId))) {
+            if (log.isDebugEnabled()) {
+                log.debug("{}@{} ignoring heartbeat from unknown peer {}", me.getId(), currentTerm, peerId);
+            }
+            return;
+        }
 
         // Ignore stale heartbeats; do NOT refresh timeout on them.
         if (peerTerm < currentTerm) {
-            log.trace("{}@{} ignoring stale heartbeat from {}: peerTerm={} < currentTerm={}", me.getId(), currentTerm, heartbeat.getPeerId(), peerTerm, currentTerm);
+            log.trace("{}@{} ignoring stale heartbeat from {}: peerTerm={} < currentTerm={}", me.getId(), currentTerm, peerId, peerTerm, currentTerm);
             return;
         }
 
@@ -293,16 +303,25 @@ public class RaftNode {
     }
 
     private synchronized boolean hasTimedOut() {
-        // Includes some jitter (also for the first election) to avoid synchronized elections.
-        long jitter = (long) (timeoutMillis * rng.nextDouble()); // [0..timeoutMillis)
-        long backoffBase = (timeoutMillis / 10) * electionSequenceCounter;
-        long backoffJitter = (long) (backoffBase * rng.nextDouble()); // [0..backoffBase)
-        long extra = jitter + backoffBase + backoffJitter;
-        return (timeSource.nowMillis() - lastHeartbeat) > (timeoutMillis + extra);
+        long now = timeSource.nowMillis();
+        if (nextElectionDeadlineMillis == 0L) {
+            nextElectionDeadlineMillis = lastHeartbeat + timeoutMillis + sampleElectionExtraDelay();
+        }
+        return now > nextElectionDeadlineMillis;
     }
 
     private synchronized void refreshTimeout() {
-        lastHeartbeat = timeSource.nowMillis();
+        long now = timeSource.nowMillis();
+        lastHeartbeat = now;
+        nextElectionDeadlineMillis = now + timeoutMillis + sampleElectionExtraDelay();
+    }
+
+    private long sampleElectionExtraDelay() {
+        // Includes jitter and term-local backoff to avoid synchronized elections.
+        long jitter = (long) (timeoutMillis * rng.nextDouble()); // [0..timeoutMillis)
+        long backoffBase = (timeoutMillis / 10) * electionSequenceCounter;
+        long backoffJitter = (long) (backoffBase * rng.nextDouble()); // [0..backoffBase)
+        return jitter + backoffBase + backoffJitter;
     }
 
     private void newElection() {
@@ -377,13 +396,13 @@ public class RaftNode {
                         // This node rejected my vote, could be that I am trying to
                         // rejoin the cluster and have to get up to speed and update my term
 
-                        long currentTerm = response.getCurrentTerm();
-                        if (currentTerm > currentTerm) {
+                        long responderTerm = response.getCurrentTerm();
+                        if (responderTerm > this.currentTerm) {
                             //--------------------------------------------
                             // d) discovers current leader or new term
                             //--------------------------------------------
-                            log.info("{}@{} rejoining cluster as FOLLOWER", me.getId(), currentTerm);
-                            this.currentTerm = currentTerm;
+                            log.info("{}@{} rejoining cluster as FOLLOWER", me.getId(), this.currentTerm);
+                            this.currentTerm = responderTerm;
                             state = State.FOLLOWER;
                             electionSequenceCounter = 0;
                             refreshTimeout();
@@ -434,6 +453,7 @@ public class RaftNode {
 
     void setLastHeartbeatMillisForTest(long v) {
         lastHeartbeat = v;
+        nextElectionDeadlineMillis = 0L;
     }
 
     void electionTickForTest() {

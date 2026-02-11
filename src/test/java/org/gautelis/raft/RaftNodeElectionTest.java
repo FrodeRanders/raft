@@ -15,6 +15,25 @@ import static org.junit.jupiter.api.Assertions.*;
 class RaftNodeElectionTest {
     private static final Logger log = LogManager.getLogger(RaftNodeElectionTest.class);
 
+    static final class CountingRandom extends Random {
+        private int count;
+        private final double value;
+
+        CountingRandom(double value) {
+            this.value = value;
+        }
+
+        @Override
+        public double nextDouble() {
+            count++;
+            return value;
+        }
+
+        int getCount() {
+            return count;
+        }
+    }
+
     static final class MutableTime implements RaftNode.TimeSource {
         private long now;
         MutableTime(long startMillis) { this.now = startMillis; }
@@ -305,6 +324,85 @@ class RaftNodeElectionTest {
         assertEquals(RaftNode.State.FOLLOWER, nodeA.getStateForTest());
         assertEquals(2, nodeA.getTerm());
         log.info("Successful test!");
+    }
+
+    @Test
+    void higherTermInRejectedVoteResponseForcesStepDown() {
+        log.info("*** Testcase *** Higher term in rejected vote response forces stepdown");
+
+        MutableTime time = new MutableTime(0);
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+
+        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, new QueuedRaftClient("A", Map.of()), new InMemoryLogStore(), time, new Random(1));
+
+        nodeA.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        nodeA.electionTickForTest();
+        assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
+        assertEquals(1, nodeA.getTerm());
+
+        VoteRequest req = new VoteRequest(1, "A");
+        List<VoteResponse> responses = List.of(new VoteResponse(req, "B", false, 2));
+        nodeA.handleVoteResponsesForTest(responses, 1);
+
+        assertEquals(RaftNode.State.FOLLOWER, nodeA.getStateForTest());
+        assertEquals(2, nodeA.getTerm());
+    }
+
+    @Test
+    void unknownPeerHeartbeatIsIgnored() {
+        log.info("*** Testcase *** Unknown peer heartbeat is ignored");
+
+        MutableTime time = new MutableTime(0);
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+
+        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, new QueuedRaftClient("A", Map.of()), new InMemoryLogStore(), time, new Random(1));
+
+        nodeA.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        nodeA.electionTickForTest();
+        assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
+        assertEquals(1, nodeA.getTerm());
+
+        long before = nodeA.getLastHeartbeatMillisForTest();
+        nodeA.handleHeartbeat(new Heartbeat(99, "X"));
+
+        assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
+        assertEquals(1, nodeA.getTerm());
+        assertEquals(before, nodeA.getLastHeartbeatMillisForTest());
+    }
+
+    @Test
+    void electionTimeoutJitterIsSampledOncePerTimeoutWindow() {
+        log.info("*** Testcase *** Election timeout jitter sampled once per timeout window");
+
+        MutableTime time = new MutableTime(0);
+        CountingRandom rng = new CountingRandom(0.5);
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, new QueuedRaftClient("A", Map.of()), new InMemoryLogStore(), time, rng);
+
+        nodeA.setLastHeartbeatMillisForTest(0);
+
+        time.set(120);
+        nodeA.electionTickForTest();
+        assertEquals(RaftNode.State.FOLLOWER, nodeA.getStateForTest());
+        assertEquals(2, rng.getCount(), "first timeout window should sample jitter once");
+
+        time.set(130);
+        nodeA.electionTickForTest();
+        assertEquals(RaftNode.State.FOLLOWER, nodeA.getStateForTest());
+        assertEquals(2, rng.getCount(), "subsequent checks in same window must not re-sample jitter");
+
+        time.set(151);
+        nodeA.electionTickForTest();
+        assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
+        assertEquals(4, rng.getCount(), "new election should resample for next timeout window");
     }
 
     @Test

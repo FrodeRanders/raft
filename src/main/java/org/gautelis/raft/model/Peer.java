@@ -1,6 +1,7 @@
 package org.gautelis.raft.model;
 
 import java.net.InetSocketAddress;
+import java.util.Objects;
 
 public class Peer {
     private String id;
@@ -16,6 +17,18 @@ public class Peer {
 
     public String getId() { return id; }
     public InetSocketAddress getAddress() { return address; }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Peer peer)) return false;
+        return Objects.equals(id, peer.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id);
+    }
 
     @Override
     public String toString() {

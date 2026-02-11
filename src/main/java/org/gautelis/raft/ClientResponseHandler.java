@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledFuture;
 
 public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope> {
     private static final Logger log = LoggerFactory.getLogger(ClientResponseHandler.class);
@@ -21,16 +22,19 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
     // Key = correlationId, Value = future that awaits the response.
     private final Map<String, CompletableFuture<VoteResponse>> inFlightRequests;
     private final Map<String, RequestTiming> requestTimings;
+    private final Map<String, ScheduledFuture<?>> requestTimeouts;
     private final Map<String, RunningStatistics> peerResponseStats;
 
     public ClientResponseHandler(
             Map<String, CompletableFuture<VoteResponse>> inFlightRequests,
             Map<String, RequestTiming> requestTimings,
+            Map<String, ScheduledFuture<?>> requestTimeouts,
             Map<String, RunningStatistics> peerResponseStats,
             MessageHandler messageHandler
     ) {
         this.inFlightRequests = inFlightRequests;
         this.requestTimings = requestTimings;
+        this.requestTimeouts = requestTimeouts;
         this.peerResponseStats = peerResponseStats;
         this.messageHandler = messageHandler;
     }
@@ -63,6 +67,10 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 // Lookup the future for this correlationId
                 CompletableFuture<VoteResponse> fut = inFlightRequests.remove(correlationId);
                 RequestTiming timing = requestTimings.remove(correlationId);
+                ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
+                if (timeoutTask != null) {
+                    timeoutTask.cancel(false);
+                }
                 if (fut != null) {
                     fut.complete(voteResponse);
                     log.trace("Received {} for correlationId={}", voteResponse, correlationId);
