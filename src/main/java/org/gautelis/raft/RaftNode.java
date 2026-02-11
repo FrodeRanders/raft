@@ -2,7 +2,14 @@ package org.gautelis.raft;
 
 import io.netty.channel.EventLoopGroup;
 import io.netty.util.concurrent.Future;
-import org.gautelis.raft.model.*;
+import org.gautelis.raft.protocol.*;
+import org.gautelis.raft.statemachine.CommandHandler;
+import org.gautelis.raft.statemachine.CommandHandlerStateMachineAdapter;
+import org.gautelis.raft.statemachine.SnapshotStateMachine;
+import org.gautelis.raft.storage.InMemoryPersistentStateStore;
+import org.gautelis.raft.storage.LogStore;
+import org.gautelis.raft.storage.PersistentStateStore;
+import org.gautelis.raft.transport.netty.RaftClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -257,8 +264,7 @@ public class RaftNode {
         return state == State.LEADER;
     }
 
-    /* package private */
-    MessageHandler getMessageHandler() {
+    public MessageHandler getMessageHandler() {
         return messageHandler;
     }
 

@@ -5,6 +5,9 @@ import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import org.gautelis.raft.transport.netty.ProtobufLiteDecoder;
+import org.gautelis.raft.transport.netty.ProtobufLiteEncoder;
+import org.gautelis.raft.transport.netty.RaftMessageHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
