@@ -157,8 +157,8 @@ class RaftClientIntegrationTest {
     void requestVoteFromAllReceivesVoteResponse() throws Exception {
         log.info("*** Testcase *** requestVoteFromAll receives VoteResponse from server");
 
-        Assumptions.assumeTrue(Boolean.getBoolean("netty.it"),
-                "Set -Dnetty.it=true to enable this integration test.");
+        Assumptions.assumeTrue(Boolean.parseBoolean(System.getProperty("netty.it", "true")),
+                "Set -Dnetty.it=false to disable this integration test.");
 
         EventLoopGroup boss = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         EventLoopGroup worker = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
@@ -213,8 +213,8 @@ class RaftClientIntegrationTest {
     @Test
     void requestVoteFromAllCompletesWhenPeerIsUnreachable() throws Exception {
         log.info("*** Testcase *** Unreachable peer vote completion: verifies vote aggregation completes with synthetic negative vote when connect fails");
-        Assumptions.assumeTrue(Boolean.getBoolean("netty.it"),
-                "Set -Dnetty.it=true to enable this integration test.");
+        Assumptions.assumeTrue(Boolean.parseBoolean(System.getProperty("netty.it", "true")),
+                "Set -Dnetty.it=false to disable this integration test.");
 
         RaftClient client = new RaftClient("test", null);
         try {
@@ -238,8 +238,8 @@ class RaftClientIntegrationTest {
     @Test
     void requestVoteFromAllTimesOutWhenPeerDoesNotRespond() throws Exception {
         log.info("*** Testcase *** Vote request timeout fallback: verifies non-responding peer yields timeout-based synthetic negative vote");
-        Assumptions.assumeTrue(Boolean.getBoolean("netty.it"),
-                "Set -Dnetty.it=true to enable this integration test.");
+        Assumptions.assumeTrue(Boolean.parseBoolean(System.getProperty("netty.it", "true")),
+                "Set -Dnetty.it=false to disable this integration test.");
 
         System.setProperty("raft.vote.request.timeout.millis", "100");
 
@@ -293,8 +293,8 @@ class RaftClientIntegrationTest {
     @Test
     void sendAppendEntriesReconnectsToKnownPeerWithoutActiveChannel() throws Exception {
         log.info("*** Testcase *** AppendEntries reconnect send: verifies sendAppendEntries reconnects and delivers to a known peer without active channel");
-        Assumptions.assumeTrue(Boolean.getBoolean("netty.it"),
-                "Set -Dnetty.it=true to enable this integration test.");
+        Assumptions.assumeTrue(Boolean.parseBoolean(System.getProperty("netty.it", "true")),
+                "Set -Dnetty.it=false to disable this integration test.");
 
         int port;
         try (ServerSocket reserved = new ServerSocket(0)) {
@@ -358,8 +358,8 @@ class RaftClientIntegrationTest {
     @Test
     void broadcastReconnectsToKnownPeerWithoutActiveChannel() throws Exception {
         log.info("*** Testcase *** Generic reconnect broadcast: verifies generic broadcast reconnects and delivers to a known peer without active channel");
-        Assumptions.assumeTrue(Boolean.getBoolean("netty.it"),
-                "Set -Dnetty.it=true to enable this integration test.");
+        Assumptions.assumeTrue(Boolean.parseBoolean(System.getProperty("netty.it", "true")),
+                "Set -Dnetty.it=false to disable this integration test.");
 
         int port;
         try (ServerSocket reserved = new ServerSocket(0)) {

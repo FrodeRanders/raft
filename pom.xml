@@ -16,7 +16,7 @@
         <maven.compiler.release>21</maven.compiler.release>
         <log4j.version>2.25.3</log4j.version>
         <slf4j.version>2.0.17</slf4j.version>
-        <vopn.version>3.0-SNAPSHOT</vopn.version> <!-- sibling project -->
+        <vopn.version>3.0-SNAPSHOT</vopn.version> <!-- local sibling project dependency; install locally before building on a fresh machine -->
         <junit.version>6.0.2</junit.version>
         <netty.version>4.2.9.Final</netty.version> <!-- 5.0.0.Alpha2 is defunct! -->
         <protobuf.version>4.33.5</protobuf.version> <!-- MATCHES scripts/protoc-lite.sh: PROTOC_VERSION= -->
@@ -149,7 +149,6 @@
                     <execution>
                         <goals>
                             <goal>compile</goal>
-                            <goal>test-compile</goal>
                         </goals>
                     </execution>
                 </executions>
@@ -233,6 +232,9 @@
                 <version>3.3.0</version>
                 <configuration>
                     <useModulePath>false</useModulePath>
+                    <systemPropertyVariables>
+                        <netty.it>true</netty.it>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
             <plugin>
