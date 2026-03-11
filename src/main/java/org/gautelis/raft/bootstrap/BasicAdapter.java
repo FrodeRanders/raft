@@ -20,6 +20,7 @@ import io.netty.channel.ChannelHandlerContext;
 import org.gautelis.raft.MessageHandler;
 import org.gautelis.raft.RaftNode;
 import org.gautelis.raft.RaftServer;
+import org.gautelis.raft.protocol.AdminCommand;
 import org.gautelis.raft.protocol.ClusterMessage;
 import org.gautelis.raft.protocol.Peer;
 import org.gautelis.raft.serialization.ProtoMapper;
@@ -36,7 +37,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.net.InetSocketAddress;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class BasicAdapter {
     protected static final Logger log = LoggerFactory.getLogger(BasicAdapter.class);
@@ -74,8 +78,13 @@ public class BasicAdapter {
                 me, peers, timeoutMillis, messageHandler, snapshotStateMachine, new RaftClient(me.getId(), messageHandler), logStore, persistentStateStore
         );
 
+        RaftServer server = new RaftServer(stateMachine, me.getAddress().getPort());
+        stateMachine.setDecommissionListener(() -> {
+            log.info("Node {} is decommissioned; closing server", me.getId());
+            server.close();
+        });
+
         try {
-            RaftServer server = new RaftServer(stateMachine, me.getAddress().getPort());
             server.start();
         }
         catch (InterruptedException ie) {
@@ -105,11 +114,34 @@ public class BasicAdapter {
                 log.warn("Ignoring command while state machine is unavailable");
                 return;
             }
-            if (!stateMachine.submitCommand(command)) {
-                log.info("Rejected command at {}: node is not leader", me.getId());
+            if (!submitClusterCommand(command)) {
+                log.info("Rejected command at {}: node is not leader or command could not be applied", me.getId());
                 return;
             }
             log.info("Accepted cluster command: {}", command);
+            return;
+        }
+        if ("AdminCommand".equals(type)) {
+            var parsed = ProtoMapper.parseAdminCommand(payload);
+            if (parsed.isEmpty()) {
+                log.warn("Invalid AdminCommand payload");
+                return;
+            }
+            if (stateMachine == null) {
+                log.warn("Ignoring admin command while state machine is unavailable");
+                return;
+            }
+            AdminCommand adminCommand = ProtoMapper.fromProto(parsed.get());
+            String command = adminCommand.getCommand();
+            if (!isValidAdminCommand(command)) {
+                log.warn("Rejected invalid admin command: '{}'", command);
+                return;
+            }
+            if (!submitAdminCommand(command)) {
+                log.info("Rejected admin command at {}: node is not leader, decommissioned, or command could not be applied", me.getId());
+                return;
+            }
+            log.info("Accepted admin command: {}", command);
             return;
         }
 
@@ -133,5 +165,86 @@ public class BasicAdapter {
             case "clear" -> parts.length == 1;
             default -> false;
         };
+    }
+
+    private boolean submitClusterCommand(String command) {
+        return stateMachine.submitCommand(command);
+    }
+
+    static boolean isValidAdminCommand(String command) {
+        String[] parts = command.trim().split("\\s+", 3);
+        if (parts.length < 2) {
+            return false;
+        }
+        if (!"config".equals(parts[0].toLowerCase(Locale.ROOT))) {
+            return false;
+        }
+        String action = parts[1].toLowerCase(Locale.ROOT);
+        return switch (action) {
+            case "joint" -> parts.length == 3 && !parts[2].isBlank();
+            case "finalize" -> parts.length == 2;
+            default -> false;
+        };
+    }
+
+    private boolean submitAdminCommand(String command) {
+        String[] parts = command.trim().split("\\s+", 3);
+        String action = parts[1].toLowerCase(Locale.ROOT);
+        try {
+            return switch (action) {
+                // "joint" accepts either known ids or explicit id@host:port peer specs for new members.
+                case "joint" -> parts.length == 3 && stateMachine.submitJointConfigurationChange(parsePeers(parts[2]));
+                case "finalize" -> parts.length == 2 && stateMachine.submitFinalizeConfigurationChange();
+                default -> false;
+            };
+        } catch (IllegalArgumentException e) {
+            log.warn("Rejected invalid admin command '{}': {}", command, e.getMessage());
+            return false;
+        }
+    }
+
+    private List<Peer> parsePeers(String spec) {
+        List<Peer> result = new ArrayList<>();
+        for (String token : spec.split(",")) {
+            String entry = token.trim();
+            if (entry.isEmpty()) {
+                continue;
+            }
+            result.add(resolvePeer(entry));
+        }
+        return result;
+    }
+
+    private Peer resolvePeer(String spec) {
+        int at = spec.indexOf('@');
+        if (at < 0) {
+            // Bare ids are only valid for peers already known to the local adapter/node.
+            if (me.getId().equals(spec)) {
+                return me;
+            }
+            for (Peer peer : peers) {
+                if (peer.getId().equals(spec)) {
+                    return peer;
+                }
+            }
+            if (stateMachine != null) {
+                Peer peer = stateMachine.getPeerById(spec);
+                if (peer != null) {
+                    return peer;
+                }
+            }
+            throw new IllegalArgumentException("Unknown peer id '" + spec + "'; use id@host:port for new members");
+        }
+
+        String id = spec.substring(0, at).trim();
+        String addressSpec = spec.substring(at + 1).trim();
+        int colon = addressSpec.lastIndexOf(':');
+        if (id.isBlank() || colon <= 0 || colon == addressSpec.length() - 1) {
+            throw new IllegalArgumentException("Invalid peer specification '" + spec + "'");
+        }
+        // Allow introducing a brand-new member without first baking it into static startup config.
+        String host = addressSpec.substring(0, colon).trim();
+        int port = Integer.parseInt(addressSpec.substring(colon + 1).trim());
+        return new Peer(id, new InetSocketAddress(host, port));
     }
 }

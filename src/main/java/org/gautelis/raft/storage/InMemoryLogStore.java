@@ -161,6 +161,7 @@ public final class InMemoryLogStore implements LogStore {
         long previousSnapshotIndex = snapshotIndex;
         List<LogEntry> suffix = List.of();
         if (lastIncludedIndex < lastIndex()) {
+            // Retaining the suffix is only safe when leader and follower agree at the cutover index.
             if (lastIncludedIndex >= previousSnapshotIndex && termAt(lastIncludedIndex) == lastIncludedTerm) {
                 suffix = entriesFrom(lastIncludedIndex + 1);
             }

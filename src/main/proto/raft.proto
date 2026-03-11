@@ -54,7 +54,9 @@ message InstallSnapshotRequest {
   string leader_id = 2;
   int64 last_included_index = 3;
   int64 last_included_term = 4;
-  bytes snapshot_data = 5;
+  int64 offset = 5;
+  bytes snapshot_data = 6;
+  bool done = 7;
 }
 
 message InstallSnapshotResponse {
@@ -68,4 +70,10 @@ message ClusterMessage {
   int64 term = 1;
   string peer_id = 2;
   string message = 3;
+}
+
+message AdminCommand {
+  int64 term = 1;
+  string peer_id = 2;
+  string command = 3;
 }

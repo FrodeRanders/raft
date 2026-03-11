@@ -35,6 +35,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Random;
+import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -45,6 +46,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftSnapshotTransferTest {
     private static final Logger log = LoggerFactory.getLogger(RaftSnapshotTransferTest.class);
+    private static void announce(String message) {
+        System.out.println("*** Testcase *** " + message);
+    }
 
     static final class MutableTime implements RaftNode.TimeSource {
         private long now;
@@ -58,6 +62,7 @@ class RaftSnapshotTransferTest {
         private final AtomicInteger appendCalls = new AtomicInteger();
         private final AtomicInteger snapshotCalls = new AtomicInteger();
         private final AtomicReference<InstallSnapshotRequest> lastSnapshotRequest = new AtomicReference<>();
+        private final List<InstallSnapshotRequest> snapshotRequests = new ArrayList<>();
 
         SnapshotAwareClient() {
             super("test", null);
@@ -85,6 +90,7 @@ class RaftSnapshotTransferTest {
         public CompletableFuture<InstallSnapshotResponse> sendInstallSnapshot(Peer peer, InstallSnapshotRequest req) {
             snapshotCalls.incrementAndGet();
             lastSnapshotRequest.set(req);
+            snapshotRequests.add(req);
             return CompletableFuture.completedFuture(new InstallSnapshotResponse(req.getTerm(), peer.getId(), true, req.getLastIncludedIndex()));
         }
 
@@ -129,5 +135,45 @@ class RaftSnapshotTransferTest {
         assertNotNull(snapshotRequest);
         assertEquals(1, snapshotRequest.getLastIncludedIndex());
         assertEquals(1, snapshotRequest.getLastIncludedTerm());
+    }
+
+    @Test
+    void leaderStreamsSnapshotInMultipleChunks() {
+        announce("InstallSnapshot chunk streaming: leader sends snapshot in multiple offset-based chunks");
+        String previous = System.getProperty("raft.snapshot.chunk.bytes");
+        System.setProperty("raft.snapshot.chunk.bytes", "2");
+        try {
+            Peer a = new Peer("A", null);
+            Peer b = new Peer("B", null);
+            MutableTime time = new MutableTime(0);
+            SnapshotAwareClient client = new SnapshotAwareClient();
+
+            InMemoryLogStore store = new InMemoryLogStore();
+            store.installSnapshot(3, 2, "abcdef".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            RaftNode leader = new RaftNode(a, List.of(b), 100, null, client, store, time, new Random(1));
+            leader.setLastHeartbeatMillisForTest(0);
+            time.set(10_000);
+            leader.electionTickForTest();
+            VoteRequest req = new VoteRequest(1, "A");
+            leader.handleVoteResponsesForTest(List.of(new VoteResponse(req, "B", true, 1)), 1);
+            assertTrue(leader.isLeader());
+
+            leader.heartbeatTickForTest();
+            assertEquals(1, client.appendCalls.get());
+            leader.heartbeatTickForTest();
+
+            assertEquals(3, client.snapshotCalls.get());
+            assertEquals(0, client.snapshotRequests.get(0).getOffset());
+            assertEquals(2, client.snapshotRequests.get(1).getOffset());
+            assertEquals(4, client.snapshotRequests.get(2).getOffset());
+            assertTrue(client.snapshotRequests.get(2).isDone());
+        } finally {
+            if (previous == null) {
+                System.clearProperty("raft.snapshot.chunk.bytes");
+            } else {
+                System.setProperty("raft.snapshot.chunk.bytes", previous);
+            }
+        }
     }
 }

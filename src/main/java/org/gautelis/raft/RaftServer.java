@@ -32,6 +32,9 @@ public class RaftServer {
 
     private final RaftNode stateMachine;  // your state machine
     private final int port;
+    private volatile EventLoopGroup bossGroup;
+    private volatile EventLoopGroup workerGroup;
+    private volatile Channel serverChannel;
 
     public RaftServer(RaftNode stateMachine, int port) {
         this.stateMachine = stateMachine;
@@ -60,10 +63,10 @@ public class RaftServer {
 
     public void start() throws InterruptedException {
         // Boss group: accepts connections
-        EventLoopGroup bossGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+        bossGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
 
         // Worker group: handles I/O for established connections
-        EventLoopGroup workerGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+        workerGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
 
         try {
             ServerBootstrap bootstrap = new ServerBootstrap();
@@ -81,6 +84,7 @@ public class RaftServer {
             ChannelFuture bindFuture = bootstrap.bind(port).sync();
 
             if (bindFuture.isSuccess()) {
+                serverChannel = bindFuture.channel();
                 log.info("Raft server started on port {}", port);
             } else {
                 log.error("Failed to bind to port {}: {}", port, bindFuture.cause().getMessage(), bindFuture.cause());
@@ -88,12 +92,26 @@ public class RaftServer {
             }
 
             // Wait until the server socket is closed.
-            bindFuture.channel().closeFuture().sync();
+            serverChannel.closeFuture().sync();
         }
         finally {
             log.info("Shutting down server on port {}", port);
-            bossGroup.shutdownGracefully();
-            workerGroup.shutdownGracefully();
+            serverChannel = null;
+            if (bossGroup != null) {
+                bossGroup.shutdownGracefully();
+                bossGroup = null;
+            }
+            if (workerGroup != null) {
+                workerGroup.shutdownGracefully();
+                workerGroup = null;
+            }
+        }
+    }
+
+    public void close() {
+        Channel channel = serverChannel;
+        if (channel != null) {
+            channel.close();
         }
     }
 }

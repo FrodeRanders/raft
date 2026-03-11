@@ -22,18 +22,26 @@ import org.gautelis.raft.transport.netty.*;
 import org.gautelis.raft.serialization.ProtoMapper;
 
 import org.gautelis.raft.protocol.Peer;
+import org.gautelis.vopn.statistics.RunningStatistics;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
+import java.lang.reflect.Field;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftClientKnownPeersTest {
     private static final Logger log = LoggerFactory.getLogger(RaftClientKnownPeersTest.class);
+    private static void announce(String message) {
+        System.out.println("*** Testcase *** " + message);
+    }
 
     @Test
     void broadcastReturnsKnownPeerAsUnreachableAfterExplicitRegistration() throws Exception {
@@ -48,6 +56,58 @@ class RaftClientKnownPeersTest {
             // connect attempt callback is async; allow event loop to update unreachable set
             Thread.sleep(150);
             assertTrue(unreachable.contains(peer));
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    @Test
+    void replacingKnownPeersDropsRemovedBroadcastTargets() throws Exception {
+        announce("Known peers replacement: removed peers are no longer broadcast targets");
+        RaftClient client = new RaftClient("test", null);
+        try {
+            Peer peerB = new Peer("B", new InetSocketAddress("127.0.0.1", 1));
+            Peer peerC = new Peer("C", new InetSocketAddress("127.0.0.1", 2));
+
+            client.setKnownPeers(List.of(peerB, peerC));
+            assertEquals(2, client.getKnownPeersForTest().size());
+
+            client.setKnownPeers(List.of(peerC));
+
+            assertEquals(1, client.getKnownPeersForTest().size());
+            assertTrue(client.getKnownPeersForTest().contains(peerC));
+            assertFalse(client.getKnownPeersForTest().contains(peerB));
+
+            Collection<Peer> unreachable = client.broadcast("CustomType", 1, "hello".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Thread.sleep(150);
+            assertFalse(unreachable.contains(peerB));
+            assertTrue(unreachable.contains(peerC));
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void replacingKnownPeersDropsRemovedPeerStatistics() throws Exception {
+        announce("Known peers replacement stats: removed peers lose response-time statistics");
+        RaftClient client = new RaftClient("test", null);
+        try {
+            Peer peerB = new Peer("B", new InetSocketAddress("127.0.0.1", 1));
+            Peer peerC = new Peer("C", new InetSocketAddress("127.0.0.1", 2));
+            client.setKnownPeers(List.of(peerB, peerC));
+
+            Field statsField = RaftClient.class.getDeclaredField("peerResponseStats");
+            statsField.setAccessible(true);
+            Map<String, RunningStatistics> stats = (Map<String, RunningStatistics>) statsField.get(client);
+            stats.put("B", new RunningStatistics());
+            stats.put("C", new RunningStatistics());
+
+            client.setKnownPeers(List.of(peerC));
+
+            assertEquals(1, stats.size());
+            assertFalse(stats.containsKey("B"));
+            assertTrue(stats.containsKey("C"));
         } finally {
             client.shutdown();
         }

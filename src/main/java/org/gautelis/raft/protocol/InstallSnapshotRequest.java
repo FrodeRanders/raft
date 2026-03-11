@@ -23,18 +23,29 @@ public class InstallSnapshotRequest {
     private String leaderId;
     private long lastIncludedIndex;
     private long lastIncludedTerm;
+    private long offset;
     private byte[] snapshotData;
+    private boolean done;
+
     public InstallSnapshotRequest(long term, String leaderId, long lastIncludedIndex, long lastIncludedTerm, byte[] snapshotData) {
+        this(term, leaderId, lastIncludedIndex, lastIncludedTerm, 0L, snapshotData, true);
+    }
+
+    public InstallSnapshotRequest(long term, String leaderId, long lastIncludedIndex, long lastIncludedTerm, long offset, byte[] snapshotData, boolean done) {
         this.term = term;
         this.leaderId = leaderId;
         this.lastIncludedIndex = lastIncludedIndex;
         this.lastIncludedTerm = lastIncludedTerm;
+        this.offset = offset;
         this.snapshotData = snapshotData == null ? new byte[0] : Arrays.copyOf(snapshotData, snapshotData.length);
+        this.done = done;
     }
 
     public long getTerm() { return term; }
     public String getLeaderId() { return leaderId; }
     public long getLastIncludedIndex() { return lastIncludedIndex; }
     public long getLastIncludedTerm() { return lastIncludedTerm; }
+    public long getOffset() { return offset; }
     public byte[] getSnapshotData() { return Arrays.copyOf(snapshotData, snapshotData.length); }
+    public boolean isDone() { return done; }
 }

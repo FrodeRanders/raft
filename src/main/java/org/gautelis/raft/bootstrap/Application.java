@@ -42,6 +42,8 @@ public class Application {
             peers.add(new Peer("server-" + peerPort, new InetSocketAddress("localhost", peerPort)));
         }
 
+        log.info("Starting Raft cluster with {} initial members; runtime configuration changes are supported through replicated config commands", peers.size() + 1);
+
         long timeoutMillis = 2000;
 
         BasicAdapter adapter = new BasicAdapter(timeoutMillis, me, peers);

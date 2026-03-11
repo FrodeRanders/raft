@@ -29,6 +29,7 @@ import org.gautelis.raft.transport.netty.RaftClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +39,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.Arrays;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.NavigableMap;
+import java.util.TreeMap;
 
 /**
  *                                     ┌───────────────────────────┐
@@ -68,6 +71,9 @@ import java.util.Collections;
  * - Figure 2 is treated as executable guidance: most state transitions and RPC receiver logic below
  *   are annotated with the exact rule/step they implement.
  * - Figure 3 properties are called out where this implementation enforces them directly.
+ * - Cluster membership changes are replicated through the log. This implementation supports
+ *   stable and joint-consensus transitions, along with configuration-aware elections, commits,
+ *   and snapshots.
  */
 public class RaftNode {
     private static final Logger log = LoggerFactory.getLogger(RaftNode.class);
@@ -96,6 +102,14 @@ public class RaftNode {
     private final Map<String, Long> nextIndex = new HashMap<>();
     private final Map<String, Long> matchIndex = new HashMap<>();
     private final Peer me;
+    private ClusterConfiguration clusterConfiguration;
+    private ClusterConfiguration snapshotConfiguration;
+    private final NavigableMap<Long, ClusterConfiguration> committedConfigurations = new TreeMap<>();
+    private boolean decommissioned;
+    private Runnable decommissionListener = () -> {};
+    // Leader-side chunk progress and follower-side partial assembly for InstallSnapshot streaming.
+    private final Map<String, Long> snapshotOffsets = new HashMap<>();
+    private PendingSnapshot pendingSnapshot;
 
     //
     private final LogStore logStore;
@@ -120,6 +134,7 @@ public class RaftNode {
     private long lastApplied = 0L;
     private final PersistentStateStore persistentState;
     private final int snapshotMinEntries;
+    private final int snapshotChunkBytes;
 
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, RaftClient raftClient, LogStore logStore) {
         this(me, peers, timeoutMillis, messageHandler, (SnapshotStateMachine) null, raftClient, logStore, new InMemoryPersistentStateStore(), System::currentTimeMillis, new Random());
@@ -200,21 +215,7 @@ public class RaftNode {
             throw new IllegalArgumentException("Local peer must have non-null, non-blank id");
         }
         for (Peer peer : peers) {
-            if (peer == null) continue;
-            if (peer.getId() == null || peer.getId().isBlank()) {
-                throw new IllegalArgumentException("Cluster peer must have non-null, non-blank id");
-            }
-            if (me.getId().equals(peer.getId())) {
-                if (!Objects.equals(me.getAddress(), peer.getAddress())) {
-                    throw new IllegalArgumentException("Conflicting peer configuration for id " + peer.getId() + ": " + me.getAddress() + " vs " + peer.getAddress());
-                }
-                continue; // do not include self in peers
-            }
-            Peer existing = this.peers.get(peer.getId());
-            if (existing != null && !Objects.equals(existing.getAddress(), peer.getAddress())) {
-                throw new IllegalArgumentException("Conflicting peer configuration for id " + peer.getId() + ": " + existing.getAddress() + " vs " + peer.getAddress());
-            }
-            this.peers.putIfAbsent(peer.getId(), peer);
+            registerPeer(peer);
         }
         this.timeoutMillis = timeoutMillis;
         this.messageHandler = messageHandler;
@@ -225,7 +226,18 @@ public class RaftNode {
         this.timeSource = timeSource;
         this.rng = rng;
         this.snapshotMinEntries = Integer.getInteger("raft.snapshot.min.entries", 1_000);
-        this.raftClient.setKnownPeers(this.peers.values());
+        this.snapshotChunkBytes = Integer.getInteger("raft.snapshot.chunk.bytes", 64 * 1024);
+        this.clusterConfiguration = ClusterConfiguration.stable(allConfiguredMembers());
+        this.snapshotConfiguration = clusterConfiguration;
+        var decodedSnapshot = ClusterConfigurationSnapshotCodec.decode(logStore.snapshotData());
+        if (decodedSnapshot.isPresent()) {
+            this.snapshotConfiguration = decodedSnapshot.get().configuration();
+            this.clusterConfiguration = snapshotConfiguration;
+        }
+        this.clusterConfiguration = configurationAt(logStore.lastIndex());
+        this.decommissioned = !this.clusterConfiguration.contains(me.getId());
+        this.committedConfigurations.put(logStore.snapshotIndex(), clusterConfiguration);
+        this.raftClient.setKnownPeers(remoteVotingPeersFor(configurationAt(logStore.lastIndex())));
 
         this.currentTerm = persistentState.currentTerm();
         this.votedFor = persistentState.votedFor()
@@ -246,6 +258,77 @@ public class RaftNode {
         return peers.get(peerId);
     }
 
+    private void registerPeer(Peer peer) {
+        if (peer == null) {
+            return;
+        }
+        if (peer.getId() == null || peer.getId().isBlank()) {
+            throw new IllegalArgumentException("Cluster peer must have non-null, non-blank id");
+        }
+        if (me.getId().equals(peer.getId())) {
+            if (!Objects.equals(me.getAddress(), peer.getAddress())) {
+                throw new IllegalArgumentException("Conflicting peer configuration for id " + peer.getId() + ": " + me.getAddress() + " vs " + peer.getAddress());
+            }
+            return;
+        }
+        Peer existing = peers.get(peer.getId());
+        if (existing != null && !Objects.equals(existing.getAddress(), peer.getAddress())) {
+            throw new IllegalArgumentException("Conflicting peer configuration for id " + peer.getId() + ": " + existing.getAddress() + " vs " + peer.getAddress());
+        }
+        peers.putIfAbsent(peer.getId(), peer);
+    }
+
+    private List<Peer> allConfiguredMembers() {
+        List<Peer> members = new java.util.ArrayList<>();
+        members.add(me);
+        members.addAll(peers.values());
+        return members;
+    }
+
+    private List<Peer> remoteVotingPeers() {
+        return remoteVotingPeersFor(clusterConfiguration);
+    }
+
+    private List<Peer> remoteVotingPeersFor(ClusterConfiguration configuration) {
+        return configuration.allMembers().stream()
+                .filter(peer -> !me.getId().equals(peer.getId()))
+                .toList();
+    }
+
+    private ClusterConfiguration latestKnownConfiguration() {
+        return configurationAt(logStore.lastIndex());
+    }
+
+    private ClusterConfiguration activeConfiguration() {
+        // Runtime admission decisions use committed configuration, not speculative
+        // configuration entries that may already exist in the local uncommitted log.
+        return clusterConfiguration;
+    }
+
+    private ClusterConfiguration configurationAt(long index) {
+        if (index <= logStore.snapshotIndex()) {
+            return snapshotConfiguration;
+        }
+        // Reconstruct membership at an arbitrary log index so leader commit checks
+        // can use the configuration that was actually in force for that entry.
+        ClusterConfiguration configuration = snapshotConfiguration;
+        long start = Math.max(logStore.snapshotIndex() + 1, 1);
+        long end = Math.min(index, logStore.lastIndex());
+        for (long i = start; i <= end; i++) {
+            LogEntry entry = logStore.entryAt(i);
+            configuration = applyConfigurationCommand(configuration, decodeCommand(entry), false);
+        }
+        return configuration;
+    }
+
+    private String decodeCommand(LogEntry entry) {
+        byte[] data = entry.getData();
+        if (data.length == 0) {
+            return "";
+        }
+        return new String(data, StandardCharsets.UTF_8);
+    }
+
     private void persistCurrentTerm(long term) {
         // Figure 2 ("All Servers"): if an RPC has higher term, node updates currentTerm before continuing.
         // Persisting here preserves election safety across restart (Figure 3: Election Safety).
@@ -260,8 +343,26 @@ public class RaftNode {
         persistentState.setVotedFor(peer == null ? null : peer.getId());
     }
 
+    private static final class PendingSnapshot {
+        private final String leaderId;
+        private final long lastIncludedIndex;
+        private final long lastIncludedTerm;
+        // Buffer grows chunk-by-chunk until the sender marks the final InstallSnapshot RPC.
+        private final ByteArrayOutputStream data = new ByteArrayOutputStream();
+
+        private PendingSnapshot(String leaderId, long lastIncludedIndex, long lastIncludedTerm) {
+            this.leaderId = leaderId;
+            this.lastIncludedIndex = lastIncludedIndex;
+            this.lastIncludedTerm = lastIncludedTerm;
+        }
+    }
+
     public void shutdown() {
         raftClient.shutdown();
+    }
+
+    public void setDecommissionListener(Runnable decommissionListener) {
+        this.decommissionListener = decommissionListener == null ? () -> {} : decommissionListener;
     }
 
     public RaftClient getRaftClient() {
@@ -298,6 +399,7 @@ public class RaftNode {
 
     public synchronized VoteResponse handleVoteRequest(VoteRequest req) {
         log.debug("{}@{} received vote request for term {} from {}", me.getId(), currentTerm, req.getTerm(), req.getCandidateId());
+        ClusterConfiguration effectiveConfiguration = activeConfiguration();
 
         // Figure 2 RequestVote receiver step 1:
         // reject stale terms immediately.
@@ -333,6 +435,12 @@ public class RaftNode {
             refreshTimeout();
         }
 
+        if (!effectiveConfiguration.contains(req.getCandidateId())) {
+            log.debug("{}@{} rejects vote for {}: candidate is not part of active configuration",
+                    me.getId(), currentTerm, req.getCandidateId());
+            return new VoteResponse(req, me.getId(), false, currentTerm);
+        }
+
         //
         if (!isCandidateLogUpToDate(req)) {
             log.debug("{}@{} rejects vote for {}: candidate log is not up-to-date (cand term/index={}/{}, mine={}/{})",
@@ -345,7 +453,7 @@ public class RaftNode {
         // Figure 2 RequestVote receiver step 2:
         // grant vote iff not voted (or same candidate) and candidate log is up-to-date.
         if (votedFor == null || votedFor.getId().equals(req.getCandidateId())) {
-            Peer peer = peers.get(req.getCandidateId());
+            Peer peer = resolvePeerById(req.getCandidateId());
             if (peer != null) {
                 if (log.isDebugEnabled()) {
                     String info = "remains FOLLOWER";
@@ -379,7 +487,7 @@ public class RaftNode {
 
     public synchronized boolean submitCommand(String command) {
         // Figure 2 ("Leaders"): only the leader accepts client commands into the log.
-        if (state != State.LEADER) {
+        if (state != State.LEADER || decommissioned) {
             return false;
         }
         if (command == null || command.isBlank()) {
@@ -395,6 +503,40 @@ public class RaftNode {
         return true;
     }
 
+    public synchronized boolean submitJointConfigurationChange(List<Peer> proposedMembers) {
+        if (state != State.LEADER || decommissioned || proposedMembers == null || proposedMembers.isEmpty()) {
+            return false;
+        }
+        if (clusterConfiguration.isJointConsensus()) {
+            return false;
+        }
+
+        List<Peer> normalized = new java.util.ArrayList<>();
+        for (Peer peer : proposedMembers) {
+            if (peer == null) {
+                continue;
+            }
+            registerPeer(peer);
+            normalized.add(resolvePeerById(peer.getId()));
+        }
+        return submitInternalCommand(ClusterConfigurationCommand.joint(normalized));
+    }
+
+    public synchronized boolean submitFinalizeConfigurationChange() {
+        if (state != State.LEADER || decommissioned || !clusterConfiguration.isJointConsensus()) {
+            return false;
+        }
+        return submitInternalCommand(ClusterConfigurationCommand.finalizeTransition());
+    }
+
+    private boolean submitInternalCommand(String command) {
+        LogEntry entry = new LogEntry(currentTerm, me.getId(), command.getBytes(StandardCharsets.UTF_8));
+        logStore.append(Collections.singletonList(entry));
+        advanceCommitIndexFromMajority();
+        broadcastHeartbeat();
+        return true;
+    }
+
     public synchronized AppendEntriesResponse handleAppendEntries(AppendEntriesRequest request) {
         long leaderTerm = request.getTerm();
         String leaderId = request.getLeaderId();
@@ -403,7 +545,8 @@ public class RaftNode {
         if (leaderTerm < currentTerm) {
             return new AppendEntriesResponse(currentTerm, me.getId(), false, logStore.lastIndex());
         }
-        if (leaderId == null || leaderId.equals(me.getId()) || !peers.containsKey(leaderId)) {
+        ClusterConfiguration effectiveConfiguration = activeConfiguration();
+        if (leaderId == null || leaderId.equals(me.getId()) || !effectiveConfiguration.contains(leaderId)) {
             return new AppendEntriesResponse(currentTerm, me.getId(), false, logStore.lastIndex());
         }
 
@@ -481,7 +624,8 @@ public class RaftNode {
         if (leaderTerm < currentTerm) {
             return new InstallSnapshotResponse(currentTerm, me.getId(), false, logStore.snapshotIndex());
         }
-        if (leaderId == null || leaderId.equals(me.getId()) || !peers.containsKey(leaderId)) {
+        ClusterConfiguration effectiveConfiguration = activeConfiguration();
+        if (leaderId == null || leaderId.equals(me.getId()) || !effectiveConfiguration.contains(leaderId)) {
             return new InstallSnapshotResponse(currentTerm, me.getId(), false, logStore.snapshotIndex());
         }
 
@@ -498,20 +642,67 @@ public class RaftNode {
             electionSequenceCounter = 0;
         }
 
+        if (!acceptSnapshotChunk(request)) {
+            return new InstallSnapshotResponse(currentTerm, me.getId(), false, logStore.snapshotIndex());
+        }
+        if (!request.isDone()) {
+            // Followers acknowledge each chunk so the leader can continue streaming at the next offset.
+            refreshTimeout();
+            return new InstallSnapshotResponse(currentTerm, me.getId(), true, request.getLastIncludedIndex());
+        }
+
+        byte[] snapshotBytes = pendingSnapshot == null ? request.getSnapshotData() : pendingSnapshot.data.toByteArray();
+        pendingSnapshot = null;
+
         // Snapshot install replaces compacted prefix and restores state machine checkpoint.
         // This is the mechanism that preserves catch-up when entries are no longer available.
         logStore.installSnapshot(
                 request.getLastIncludedIndex(),
                 request.getLastIncludedTerm(),
-                request.getSnapshotData()
+                snapshotBytes
         );
+        byte[] stateMachineSnapshot = snapshotBytes;
+        var decodedSnapshot = ClusterConfigurationSnapshotCodec.decode(snapshotBytes);
+        if (decodedSnapshot.isPresent()) {
+            snapshotConfiguration = decodedSnapshot.get().configuration();
+            clusterConfiguration = snapshotConfiguration;
+            if (clusterConfiguration.contains(me.getId())) {
+                updateDecommissioned(true);
+            } else {
+                markDecommissioned();
+            }
+            committedConfigurations.headMap(request.getLastIncludedIndex(), true).clear();
+            committedConfigurations.put(request.getLastIncludedIndex(), snapshotConfiguration);
+            stateMachineSnapshot = decodedSnapshot.get().stateMachineSnapshot();
+            raftClient.setKnownPeers(remoteVotingPeersFor(latestKnownConfiguration()));
+        }
         if (snapshotStateMachine != null) {
-            snapshotStateMachine.restore(request.getSnapshotData());
+            snapshotStateMachine.restore(stateMachineSnapshot);
         }
         commitIndex = Math.max(commitIndex, request.getLastIncludedIndex());
         lastApplied = Math.max(lastApplied, request.getLastIncludedIndex());
         refreshTimeout();
         return new InstallSnapshotResponse(currentTerm, me.getId(), true, logStore.snapshotIndex());
+    }
+
+    private boolean acceptSnapshotChunk(InstallSnapshotRequest request) {
+        if (request.getOffset() == 0
+                || pendingSnapshot == null
+                || !Objects.equals(pendingSnapshot.leaderId, request.getLeaderId())
+                || pendingSnapshot.lastIncludedIndex != request.getLastIncludedIndex()
+                || pendingSnapshot.lastIncludedTerm != request.getLastIncludedTerm()) {
+            // A new stream starts at offset 0 or whenever the sender/metadata changes.
+            pendingSnapshot = new PendingSnapshot(request.getLeaderId(), request.getLastIncludedIndex(), request.getLastIncludedTerm());
+        }
+
+        if (request.getOffset() != pendingSnapshot.data.size()) {
+            // Reject out-of-order or overlapping chunks so followers never install a corrupted snapshot.
+            log.warn("{}@{} rejected snapshot chunk from {}: expected offset {}, got {}",
+                    me.getId(), currentTerm, request.getLeaderId(), pendingSnapshot.data.size(), request.getOffset());
+            return false;
+        }
+        pendingSnapshot.data.writeBytes(request.getSnapshotData());
+        return true;
     }
 
     private boolean sameEntry(LogEntry left, LogEntry right) {
@@ -529,6 +720,16 @@ public class RaftNode {
     }
 
     private synchronized void checkTimeout() {
+        if (!activeConfiguration().contains(me.getId())) {
+            markDecommissioned();
+            if (state != State.FOLLOWER) {
+                state = State.FOLLOWER;
+                persistVotedFor(null);
+            }
+            refreshTimeout();
+            return;
+        }
+        updateDecommissioned(true);
         if (state != State.LEADER && hasTimedOut()) {
             //---------------------------------
             // a) times out, starts election
@@ -563,6 +764,13 @@ public class RaftNode {
     private void newElection() {
         log.debug("{}@{} initiating new election...", me.getId(), currentTerm);
 
+        if (!activeConfiguration().contains(me.getId())) {
+            markDecommissioned();
+            log.debug("{}@{} will not start election because it is not part of the active configuration", me.getId(), currentTerm);
+            return;
+        }
+        updateDecommissioned(true);
+
         synchronized (this) {
             // Figure 2 ("Candidates"): on conversion to candidate:
             // increment term, vote for self, reset election timer.
@@ -578,7 +786,7 @@ public class RaftNode {
 
         VoteRequest voteReq = new VoteRequest(currentTerm, me.getId(), lastIndex, lastTerm);
         log.trace("{}@{} ({}) voting for myself for term {}", me.getId(), currentTerm, state.name(), voteReq.getTerm());
-        raftClient.requestVoteFromAll(peers.values(), voteReq)
+        raftClient.requestVoteFromAll(remoteVotingPeersFor(activeConfiguration()), voteReq)
                 .addListener((Future<List<VoteResponse>> f) -> {
                     if (f.isSuccess()) {
                         log.trace("{}@{} received responses for term {}", me.getId(), currentTerm, voteReq.getTerm());
@@ -652,21 +860,30 @@ public class RaftNode {
                 }
 
                 // Let's see if we got a majority
-                int clusterSize = peers.size() + 1; // peers excludes me
-                int majority = (clusterSize / 2) + 1;
+                java.util.LinkedHashSet<String> voters = new java.util.LinkedHashSet<>();
+                voters.add(me.getId());
+                for (VoteResponse response : responses) {
+                    if (response.isVoteGranted()) {
+                        voters.add(response.getPeerId());
+                    }
+                }
 
-                if (votesGranted >= majority) {
+                ClusterConfiguration electionConfiguration = activeConfiguration();
+                if (electionConfiguration.hasJointMajority(voters)) {
                     //--------------------------------------------
                     // b) receives votes from majority of nodes
                     //--------------------------------------------
                     if (log.isInfoEnabled()) {
-                        log.info("{}@{} elected LEADER ({} votes granted >= majority {})", me.getId(), currentTerm, votesGranted, majority);
+                        log.info("{}@{} elected LEADER after quorum from {}", me.getId(), currentTerm, voters);
                     }
                     state = State.LEADER;
                     electionSequenceCounter = 0;
 
                     // Figure 2 ("Leaders"): initialize replication state and begin heartbeat/append flow.
                     initializeLeaderReplicationState();
+                    appendLeaderNoopEntry();
+                    advanceCommitIndexFromMajority();
+                    broadcastHeartbeat();
                 }
             }
         }
@@ -677,27 +894,11 @@ public class RaftNode {
             // Figure 2 ("Leaders"):
             // - send empty AppendEntries as heartbeat
             // - send log entries starting at each follower's nextIndex
-            for (Peer peer : peers.values()) {
+            for (Peer peer : remoteVotingPeersFor(latestKnownConfiguration())) {
                 long configuredNext = nextIndex.getOrDefault(peer.getId(), logStore.lastIndex() + 1);
                 if (logStore.snapshotIndex() > 0 && configuredNext <= logStore.snapshotIndex()) {
-                    // Follower is behind compacted prefix; switch to InstallSnapshot.
-                    byte[] snapshotBytes = logStore.snapshotData();
-                    if (snapshotBytes.length == 0 && snapshotStateMachine != null) {
-                        snapshotBytes = snapshotStateMachine.snapshot();
-                    }
-                    InstallSnapshotRequest installSnapshotRequest = new InstallSnapshotRequest(
-                            currentTerm,
-                            me.getId(),
-                            logStore.snapshotIndex(),
-                            logStore.snapshotTerm(),
-                            snapshotBytes
-                    );
-                    raftClient.sendInstallSnapshot(peer, installSnapshotRequest).whenComplete((resp, error) -> {
-                        if (error != null || resp == null) {
-                            return;
-                        }
-                        handleInstallSnapshotResponse(peer, installSnapshotRequest, resp);
-                    });
+                    // Follower is behind compacted prefix; switch to InstallSnapshot streaming.
+                    sendInstallSnapshotChunk(peer);
                     continue;
                 }
 
@@ -779,7 +980,15 @@ public class RaftNode {
             return;
         }
 
+        if (!request.isDone()) {
+            // Successful chunk ack advances the sender-side cursor for this follower.
+            snapshotOffsets.put(peer.getId(), request.getOffset() + request.getSnapshotData().length);
+            sendInstallSnapshotChunk(peer);
+            return;
+        }
+
         long index = request.getLastIncludedIndex();
+        snapshotOffsets.remove(peer.getId());
         nextIndex.put(peer.getId(), index + 1);
         matchIndex.put(peer.getId(), index);
 
@@ -787,20 +996,59 @@ public class RaftNode {
         advanceCommitIndexFromMajority();
     }
 
+    private synchronized void sendInstallSnapshotChunk(Peer peer) {
+        byte[] snapshotBytes = logStore.snapshotData();
+        if (snapshotBytes.length == 0 && snapshotStateMachine != null) {
+            snapshotBytes = snapshotStateMachine.snapshot();
+        }
+
+        // Each follower can be at a different snapshot offset while catching up.
+        long offset = snapshotOffsets.getOrDefault(peer.getId(), 0L);
+        if (offset > snapshotBytes.length) {
+            offset = 0L;
+            snapshotOffsets.put(peer.getId(), 0L);
+        }
+
+        int chunkSize = Math.max(1, snapshotChunkBytes);
+        int start = (int) offset;
+        int end = Math.min(snapshotBytes.length, start + chunkSize);
+        boolean done = end >= snapshotBytes.length;
+        byte[] chunk = Arrays.copyOfRange(snapshotBytes, start, end);
+
+        InstallSnapshotRequest installSnapshotRequest = new InstallSnapshotRequest(
+                currentTerm,
+                me.getId(),
+                logStore.snapshotIndex(),
+                logStore.snapshotTerm(),
+                offset,
+                chunk,
+                done
+        );
+        raftClient.sendInstallSnapshot(peer, installSnapshotRequest).whenComplete((resp, error) -> {
+            if (error != null || resp == null) {
+                return;
+            }
+            handleInstallSnapshotResponse(peer, installSnapshotRequest, resp);
+        });
+    }
+
     private synchronized void initializeLeaderReplicationState() {
         long next = Math.max(logStore.snapshotIndex() + 1, logStore.lastIndex() + 1);
         nextIndex.clear();
         matchIndex.clear();
-        for (Peer peer : peers.values()) {
+        for (Peer peer : remoteVotingPeersFor(latestKnownConfiguration())) {
             nextIndex.put(peer.getId(), next);
             matchIndex.put(peer.getId(), logStore.snapshotIndex());
         }
     }
 
-    private synchronized void advanceCommitIndexFromMajority() {
-        int clusterSize = peers.size() + 1;
-        int majority = (clusterSize / 2) + 1;
+    private synchronized void appendLeaderNoopEntry() {
+        // New leaders append a no-op entry in their own term so previously replicated
+        // old-term entries can become committed once this term is established on a majority.
+        logStore.append(Collections.singletonList(new LogEntry(currentTerm, me.getId(), new byte[0])));
+    }
 
+    private synchronized void advanceCommitIndexFromMajority() {
         long candidateCommit = commitIndex;
 
         // Figure 2 ("Leaders"): commit only entries from current term once stored on a majority.
@@ -810,13 +1058,15 @@ public class RaftNode {
                 continue;
             }
 
-            int replicated = 1; // leader has it
-            for (Peer peer : peers.values()) {
+            java.util.LinkedHashSet<String> replicated = new java.util.LinkedHashSet<>();
+            replicated.add(me.getId()); // leader has it
+            for (Peer peer : remoteVotingPeers()) {
                 if (matchIndex.getOrDefault(peer.getId(), 0L) >= n) {
-                    replicated++;
+                    replicated.add(peer.getId());
                 }
             }
-            if (replicated >= majority) {
+            ClusterConfiguration effectiveConfiguration = configurationAt(n);
+            if (effectiveConfiguration.hasJointMajority(replicated)) {
                 candidateCommit = n;
             }
         }
@@ -834,10 +1084,6 @@ public class RaftNode {
         // Figure 3 State Machine Safety: this monotonic, in-order apply sequence prevents divergent applies.
         while (lastApplied < commitIndex) {
             lastApplied++;
-            if (snapshotStateMachine == null) {
-                continue;
-            }
-
             LogEntry entry = logStore.entryAt(lastApplied);
             byte[] data = entry.getData();
             if (data.length == 0) {
@@ -845,9 +1091,87 @@ public class RaftNode {
             }
 
             String command = new String(data, StandardCharsets.UTF_8);
+            if (applyConfigurationCommand(command)) {
+                continue;
+            }
+            if (snapshotStateMachine == null) {
+                continue;
+            }
             snapshotStateMachine.apply(entry.getTerm(), command);
         }
         maybeCompactLocalSnapshot();
+    }
+
+    private synchronized boolean applyConfigurationCommand(String command) {
+        var parsed = ClusterConfigurationCommand.parse(command);
+        if (parsed.isEmpty()) {
+            return false;
+        }
+
+        clusterConfiguration = applyConfigurationCommand(clusterConfiguration, command, true);
+        committedConfigurations.put(lastApplied, clusterConfiguration);
+        return true;
+    }
+
+    private ClusterConfiguration applyConfigurationCommand(ClusterConfiguration baseConfiguration, String command, boolean updateTransport) {
+        var parsed = ClusterConfigurationCommand.parse(command);
+        if (parsed.isEmpty()) {
+            return baseConfiguration;
+        }
+        ClusterConfigurationCommand.Parsed configurationCommand = parsed.get();
+        ClusterConfiguration updated;
+        switch (configurationCommand.type()) {
+            case JOINT -> updated = applyJointConfiguration(baseConfiguration, configurationCommand.members(), updateTransport);
+            case FINALIZE -> updated = applyFinalizedConfiguration(baseConfiguration, updateTransport);
+            default -> throw new IllegalStateException("Unhandled configuration command " + configurationCommand.type());
+        }
+        return updated;
+    }
+
+    private ClusterConfiguration applyJointConfiguration(ClusterConfiguration baseConfiguration, List<Peer> proposedMembers, boolean updateTransport) {
+        for (Peer peer : proposedMembers) {
+            registerPeer(peer);
+        }
+        ClusterConfiguration updated = baseConfiguration.transitionTo(proposedMembers);
+        if (updateTransport) {
+            raftClient.setKnownPeers(remoteVotingPeersFor(updated));
+        }
+        if (updateTransport && state == State.LEADER) {
+            long next = Math.max(logStore.snapshotIndex() + 1, logStore.lastIndex() + 1);
+            for (Peer peer : remoteVotingPeersFor(updated)) {
+                nextIndex.putIfAbsent(peer.getId(), next);
+                matchIndex.putIfAbsent(peer.getId(), logStore.snapshotIndex());
+            }
+        }
+        return updated;
+    }
+
+    private ClusterConfiguration applyFinalizedConfiguration(ClusterConfiguration baseConfiguration, boolean updateTransport) {
+        ClusterConfiguration updated = baseConfiguration.finalizeTransition();
+        java.util.Set<String> activePeerIds = remoteVotingPeersFor(updated).stream()
+                .map(Peer::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        if (updateTransport) {
+            // Once finalized, replication and transport state must forget removed members immediately.
+            nextIndex.keySet().retainAll(activePeerIds);
+            matchIndex.keySet().retainAll(activePeerIds);
+            raftClient.setKnownPeers(remoteVotingPeersFor(updated));
+            boolean localMember = updated.contains(me.getId());
+            updateDecommissioned(localMember);
+            if (!updated.contains(me.getId()) && state == State.LEADER) {
+                // Commit of the finalized config is local at this point; send one final
+                // AppendEntries round carrying the new leaderCommit before stepping down.
+                broadcastHeartbeat();
+                state = State.FOLLOWER;
+                persistVotedFor(null);
+                electionSequenceCounter = 0;
+                refreshTimeout();
+            }
+            if (!localMember) {
+                notifyDecommissionListener();
+            }
+        }
+        return updated;
     }
 
     private synchronized void maybeCompactLocalSnapshot() {
@@ -865,11 +1189,14 @@ public class RaftNode {
         }
 
         // Local compaction checkpoint:
-        // snapshot state machine + compact log prefix up to commitIndex.
+        // snapshot state machine + committed cluster configuration + compacted log prefix.
         long lastIncludedIndex = commitIndex;
         long lastIncludedTerm = logStore.termAt(lastIncludedIndex);
-        byte[] snapshotBytes = snapshotStateMachine.snapshot();
+        snapshotConfiguration = configurationAt(lastIncludedIndex);
+        byte[] snapshotBytes = ClusterConfigurationSnapshotCodec.encode(snapshotConfiguration, snapshotStateMachine.snapshot());
         logStore.installSnapshot(lastIncludedIndex, lastIncludedTerm, snapshotBytes);
+        committedConfigurations.headMap(lastIncludedIndex, false).clear();
+        committedConfigurations.put(lastIncludedIndex, snapshotConfiguration);
     }
 
     // ---------------------------
@@ -906,5 +1233,49 @@ public class RaftNode {
 
     long getLastAppliedForTest() {
         return lastApplied;
+    }
+
+    ClusterConfiguration getClusterConfigurationForTest() {
+        return clusterConfiguration;
+    }
+
+    boolean isDecommissionedForTest() {
+        return decommissioned;
+    }
+
+    public Peer getPeerById(String peerId) {
+        return resolvePeerById(peerId);
+    }
+
+    ClusterConfiguration getConfigurationAtIndexForTest(long index) {
+        return configurationAt(index);
+    }
+
+    void transitionToJointConfigurationForTest(List<Peer> proposedMembers) {
+        clusterConfiguration = applyJointConfiguration(clusterConfiguration, proposedMembers, true);
+    }
+
+    void finalizeConfigurationTransitionForTest() {
+        clusterConfiguration = applyFinalizedConfiguration(clusterConfiguration, true);
+    }
+
+    private void updateDecommissioned(boolean localMember) {
+        decommissioned = !localMember;
+    }
+
+    private void markDecommissioned() {
+        boolean alreadyDecommissioned = decommissioned;
+        decommissioned = true;
+        if (!alreadyDecommissioned) {
+            notifyDecommissionListener();
+        }
+    }
+
+    private void notifyDecommissionListener() {
+        try {
+            decommissionListener.run();
+        } catch (RuntimeException e) {
+            log.warn("{}@{} failed to run decommission callback", me.getId(), currentTerm, e);
+        }
     }
 }

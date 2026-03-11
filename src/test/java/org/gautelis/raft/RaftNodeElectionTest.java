@@ -292,6 +292,62 @@ class RaftNodeElectionTest {
     }
 
     @Test
+    void leaderElectionAppendsAndCommitsNoopEntry() {
+        log.info("*** Testcase *** Leader election appends and commits a no-op entry");
+
+        MutableTime time = new MutableTime(0);
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+        Peer c = peer("C");
+
+        Map<String, RaftNode> nodes = new HashMap<>();
+
+        QueuedRaftClient clientA = new QueuedRaftClient("A", nodes);
+        QueuedRaftClient clientB = new QueuedRaftClient("B", nodes);
+        QueuedRaftClient clientC = new QueuedRaftClient("C", nodes);
+
+        InMemoryLogStore storeA = new InMemoryLogStore();
+        InMemoryLogStore storeB = new InMemoryLogStore();
+        InMemoryLogStore storeC = new InMemoryLogStore();
+
+        RaftNode nodeA = new RaftNode(a, List.of(b, c), 100, null, clientA, storeA, time, new Random(1));
+        RaftNode nodeB = new RaftNode(b, List.of(a, c), 100, null, clientB, storeB, time, new Random(2));
+        RaftNode nodeC = new RaftNode(c, List.of(a, b), 100, null, clientC, storeC, time, new Random(3));
+
+        nodes.put("A", nodeA);
+        nodes.put("B", nodeB);
+        nodes.put("C", nodeC);
+
+        nodeA.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        nodeA.electionTickForTest();
+        assertEquals(RaftNode.State.CANDIDATE, nodeA.getStateForTest());
+        assertEquals(1, nodeA.getTerm());
+
+        clientA.flush();
+
+        assertEquals(RaftNode.State.LEADER, nodeA.getStateForTest());
+        assertEquals(1, storeA.lastIndex());
+        assertEquals(1, storeA.lastTerm());
+        assertEquals(0, storeA.entryAt(1).getData().length, "leader should append a no-op entry on election");
+        assertEquals(1, nodeA.getCommitIndexForTest(), "leader should commit its no-op once replicated to a majority");
+
+        assertEquals(1, storeB.lastIndex());
+        assertEquals(1, storeC.lastIndex());
+        assertEquals(0, storeB.entryAt(1).getData().length);
+        assertEquals(0, storeC.entryAt(1).getData().length);
+
+        nodeA.heartbeatTickForTest();
+        clientA.flush();
+
+        assertEquals(1, nodeB.getCommitIndexForTest());
+        assertEquals(1, nodeC.getCommitIndexForTest());
+        assertEquals(1, nodeB.getLastAppliedForTest());
+        assertEquals(1, nodeC.getLastAppliedForTest());
+    }
+
+    @Test
     void candidateStepsDownOnSameTermHeartbeat() {
         log.info("*** Testcase *** Candidate steps down on same term heartbeat");
 

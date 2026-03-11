@@ -41,6 +41,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftAppendEntriesTest {
     private static final Logger log = LoggerFactory.getLogger(RaftAppendEntriesTest.class);
+    private static void announce(String message) {
+        System.out.println("*** Testcase *** " + message);
+    }
 
     static class NoopRaftClient extends RaftClient {
         NoopRaftClient() {
@@ -160,6 +163,31 @@ class RaftAppendEntriesTest {
         assertEquals(3, nodeB.getTerm());
         assertEquals(2, store.snapshotIndex());
         assertEquals(2, store.snapshotTerm());
+        assertArrayEquals("snap".getBytes(java.nio.charset.StandardCharsets.UTF_8), store.snapshotData());
+        assertEquals(2, nodeB.getCommitIndexForTest());
+        assertEquals(2, nodeB.getLastAppliedForTest());
+    }
+
+    @Test
+    void installSnapshotAppliesOnlyAfterFinalChunk() {
+        announce("InstallSnapshot chunk assembly: follower installs snapshot only after final chunk");
+        Peer a = peer("A");
+        Peer b = peer("B");
+        InMemoryLogStore store = new InMemoryLogStore();
+
+        RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new NoopRaftClient(), store, System::currentTimeMillis, new Random(1));
+        InstallSnapshotRequest first = new InstallSnapshotRequest(3, "A", 2, 2, 0, "sn".getBytes(java.nio.charset.StandardCharsets.UTF_8), false);
+        InstallSnapshotResponse firstResponse = nodeB.handleInstallSnapshot(first);
+
+        assertTrue(firstResponse.isSuccess());
+        assertEquals(0, store.snapshotIndex());
+        assertEquals(0, nodeB.getCommitIndexForTest());
+
+        InstallSnapshotRequest second = new InstallSnapshotRequest(3, "A", 2, 2, 2, "ap".getBytes(java.nio.charset.StandardCharsets.UTF_8), true);
+        InstallSnapshotResponse secondResponse = nodeB.handleInstallSnapshot(second);
+
+        assertTrue(secondResponse.isSuccess());
+        assertEquals(2, store.snapshotIndex());
         assertArrayEquals("snap".getBytes(java.nio.charset.StandardCharsets.UTF_8), store.snapshotData());
         assertEquals(2, nodeB.getCommitIndexForTest());
         assertEquals(2, nodeB.getLastAppliedForTest());

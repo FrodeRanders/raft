@@ -16,6 +16,8 @@
  */
 package org.gautelis.raft;
 
+import org.gautelis.raft.protocol.VoteRequest;
+import org.gautelis.raft.protocol.VoteResponse;
 import org.gautelis.raft.storage.*;
 import org.gautelis.raft.statemachine.*;
 import org.gautelis.raft.transport.netty.*;
@@ -30,7 +32,9 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -39,6 +43,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftCompactionPolicyTest {
     private static final Logger log = LoggerFactory.getLogger(RaftCompactionPolicyTest.class);
+    private static void announce(String message) {
+        System.out.println("*** Testcase *** " + message);
+    }
 
     static class NoopRaftClient extends RaftClient {
         NoopRaftClient() {
@@ -107,7 +114,128 @@ class RaftCompactionPolicyTest {
             assertEquals(1, store.snapshotIndex());
             assertEquals(2, store.snapshotTerm());
             assertFalse(store.snapshotData().length == 0);
-            assertTrue(new String(store.snapshotData(), StandardCharsets.UTF_8).contains("set x 10"));
+            var decoded = ClusterConfigurationSnapshotCodec.decode(store.snapshotData());
+            assertTrue(decoded.isPresent());
+            assertTrue(new String(decoded.get().stateMachineSnapshot(), StandardCharsets.UTF_8).contains("set x 10"));
+        } finally {
+            if (prev == null) {
+                System.clearProperty("raft.snapshot.min.entries");
+            } else {
+                System.setProperty("raft.snapshot.min.entries", prev);
+            }
+        }
+    }
+
+    @Test
+    void snapshotCarriesClusterConfigurationMetadata() {
+        announce("Compaction snapshot metadata: local snapshot carries cluster configuration");
+        String prev = System.getProperty("raft.snapshot.min.entries");
+        System.setProperty("raft.snapshot.min.entries", "1");
+
+        try {
+            Peer a = new Peer("A", null);
+            Peer b = new Peer("B", null);
+            Peer c = new Peer("C", null);
+            Peer d = new Peer("D", null);
+
+            RaftNodeElectionTest.MutableTime time = new RaftNodeElectionTest.MutableTime(0);
+            Map<String, RaftNode> nodes = new HashMap<>();
+
+            RaftNodeElectionTest.QueuedRaftClient clientA = new RaftNodeElectionTest.QueuedRaftClient("A", nodes);
+            RaftNodeElectionTest.QueuedRaftClient clientB = new RaftNodeElectionTest.QueuedRaftClient("B", nodes);
+            RaftNodeElectionTest.QueuedRaftClient clientC = new RaftNodeElectionTest.QueuedRaftClient("C", nodes);
+
+            InMemoryLogStore storeA = new InMemoryLogStore();
+            SnapshottingStateMachine sm = new SnapshottingStateMachine();
+
+            RaftNode nodeA = new RaftNode(a, List.of(b, c), 100, null, sm, clientA, storeA, new InMemoryPersistentStateStore(), time, new Random(1));
+            RaftNode nodeB = new RaftNode(b, List.of(a, c), 100, null, new SnapshottingStateMachine(), clientB, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(2));
+            RaftNode nodeC = new RaftNode(c, List.of(a, b), 100, null, new SnapshottingStateMachine(), clientC, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(3));
+
+            nodes.put("A", nodeA);
+            nodes.put("B", nodeB);
+            nodes.put("C", nodeC);
+
+            nodeA.setLastHeartbeatMillisForTest(0);
+            time.set(10_000);
+            nodeA.electionTickForTest();
+            clientA.flush();
+            assertTrue(nodeA.isLeader());
+
+            assertTrue(nodeA.submitJointConfigurationChange(List.of(a, b, d)));
+            clientA.flush();
+            nodeA.heartbeatTickForTest();
+            clientA.flush();
+
+            var decoded = ClusterConfigurationSnapshotCodec.decode(storeA.snapshotData());
+            assertTrue(decoded.isPresent());
+            assertTrue(decoded.get().configuration().isJointConsensus());
+            assertTrue(decoded.get().configuration().contains("D"));
+        } finally {
+            if (prev == null) {
+                System.clearProperty("raft.snapshot.min.entries");
+            } else {
+                System.setProperty("raft.snapshot.min.entries", prev);
+            }
+        }
+    }
+
+    @Test
+    void finalizedConfigurationSurvivesCompactionSnapshot() {
+        announce("Compaction finalized configuration: finalized membership survives compaction snapshot");
+        String prev = System.getProperty("raft.snapshot.min.entries");
+        System.setProperty("raft.snapshot.min.entries", "1");
+
+        try {
+            Peer a = new Peer("A", null);
+            Peer b = new Peer("B", null);
+            Peer c = new Peer("C", null);
+            Peer d = new Peer("D", null);
+
+            RaftNodeElectionTest.MutableTime time = new RaftNodeElectionTest.MutableTime(0);
+            Map<String, RaftNode> nodes = new HashMap<>();
+
+            RaftNodeElectionTest.QueuedRaftClient clientA = new RaftNodeElectionTest.QueuedRaftClient("A", nodes);
+            RaftNodeElectionTest.QueuedRaftClient clientB = new RaftNodeElectionTest.QueuedRaftClient("B", nodes);
+            RaftNodeElectionTest.QueuedRaftClient clientC = new RaftNodeElectionTest.QueuedRaftClient("C", nodes);
+            RaftNodeElectionTest.QueuedRaftClient clientD = new RaftNodeElectionTest.QueuedRaftClient("D", nodes);
+
+            InMemoryLogStore storeA = new InMemoryLogStore();
+            SnapshottingStateMachine sm = new SnapshottingStateMachine();
+
+            RaftNode nodeA = new RaftNode(a, List.of(b, c), 100, null, sm, clientA, storeA, new InMemoryPersistentStateStore(), time, new Random(1));
+            RaftNode nodeB = new RaftNode(b, List.of(a, c), 100, null, new SnapshottingStateMachine(), clientB, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(2));
+            RaftNode nodeC = new RaftNode(c, List.of(a, b), 100, null, new SnapshottingStateMachine(), clientC, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(3));
+            RaftNode nodeD = new RaftNode(d, List.of(a, b), 100, null, new SnapshottingStateMachine(), clientD, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(4));
+
+            nodes.put("A", nodeA);
+            nodes.put("B", nodeB);
+            nodes.put("C", nodeC);
+            nodes.put("D", nodeD);
+
+            nodeA.setLastHeartbeatMillisForTest(0);
+            time.set(10_000);
+            nodeA.electionTickForTest();
+            clientA.flush();
+            assertTrue(nodeA.isLeader());
+
+            assertTrue(nodeA.submitJointConfigurationChange(List.of(b, c, d)));
+            clientA.flush();
+            nodeA.heartbeatTickForTest();
+            clientA.flush();
+            nodeA.heartbeatTickForTest();
+            clientA.flush();
+
+            assertTrue(nodeA.submitFinalizeConfigurationChange());
+            clientA.flush();
+            nodeA.heartbeatTickForTest();
+            clientA.flush();
+
+            var decoded = ClusterConfigurationSnapshotCodec.decode(storeA.snapshotData());
+            assertTrue(decoded.isPresent());
+            assertFalse(decoded.get().configuration().isJointConsensus());
+            assertFalse(decoded.get().configuration().contains("A"));
+            assertTrue(decoded.get().configuration().contains("D"));
         } finally {
             if (prev == null) {
                 System.clearProperty("raft.snapshot.min.entries");

@@ -230,6 +230,8 @@ public final class FileLogStore implements LogStore {
             props.load(in);
             snapshotIndex = Long.parseLong(props.getProperty("snapshotIndex", "0"));
             snapshotTerm = Long.parseLong(props.getProperty("snapshotTerm", "0"));
+            // Snapshot payload is opaque to the store; higher layers decide whether it wraps
+            // raw state-machine bytes or the JSON config/state snapshot envelope.
             snapshotData = Base64.getDecoder().decode(props.getProperty("snapshotData", ""));
         } catch (IOException | NumberFormatException e) {
             throw new IllegalStateException("Failed loading log metadata from " + metaFile, e);
@@ -243,6 +245,8 @@ public final class FileLogStore implements LogStore {
         if (parent != null) {
             Files.createDirectories(parent);
         }
+        // Metadata persists the compaction boundary alongside the opaque snapshot bytes
+        // so restart can reconstruct global indices before replaying any suffix entries.
         Properties props = new Properties();
         props.setProperty("snapshotIndex", Long.toString(snapshotIndex));
         props.setProperty("snapshotTerm", Long.toString(snapshotTerm));

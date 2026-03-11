@@ -33,13 +33,18 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class RaftSnapshotStateMachineTest {
     private static final Logger log = LoggerFactory.getLogger(RaftSnapshotStateMachineTest.class);
+    private static void announce(String message) {
+        System.out.println("*** Testcase *** " + message);
+    }
 
     static class NoopRaftClient extends RaftClient {
         NoopRaftClient() {
@@ -131,5 +136,101 @@ class RaftSnapshotStateMachineTest {
 
         assertEquals(1, sm.applied.size());
         assertEquals("4:set x=7", sm.applied.getFirst());
+    }
+
+    @Test
+    void installSnapshotRestoresJointConfigurationState() {
+        announce("InstallSnapshot joint configuration: restores joint membership state from wrapped snapshot");
+        Peer a = peer("A");
+        Peer b = peer("B");
+        Peer c = peer("C");
+        Peer d = new Peer("D", new java.net.InetSocketAddress("127.0.0.1", 10083));
+
+        InMemoryLogStore store = new InMemoryLogStore();
+        CapturingStateMachine sm = new CapturingStateMachine();
+        RaftNode nodeB = new RaftNode(
+                b,
+                List.of(a, c),
+                100,
+                null,
+                sm,
+                new NoopRaftClient(),
+                store,
+                new InMemoryPersistentStateStore(),
+                System::currentTimeMillis,
+                new Random(1)
+        );
+
+        ClusterConfiguration configuration = ClusterConfiguration
+                .stable(List.of(a, b, c))
+                .transitionTo(List.of(a, b, d));
+        byte[] payload = ClusterConfigurationSnapshotCodec.encode(configuration, "snapshot-joint".getBytes(StandardCharsets.UTF_8));
+
+        InstallSnapshotRequest snapshotRequest = new InstallSnapshotRequest(
+                4,
+                "A",
+                5,
+                4,
+                payload
+        );
+        var snapshotResponse = nodeB.handleInstallSnapshot(snapshotRequest);
+        assertTrue(snapshotResponse.isSuccess());
+        assertArrayEquals("snapshot-joint".getBytes(StandardCharsets.UTF_8), sm.restored);
+        assertTrue(nodeB.getClusterConfigurationForTest().isJointConsensus());
+        assertTrue(nodeB.getClusterConfigurationForTest().contains("D"));
+        assertTrue(nodeB.getClusterConfigurationForTest().contains("C"));
+        assertFalse(nodeB.isLeader());
+    }
+
+    @Test
+    void installSnapshotWithFinalizedRemovalDecommissionsRecipient() {
+        announce("InstallSnapshot finalized removal: removed recipient decommissions after final snapshot");
+        Peer a = peer("A");
+        Peer b = peer("B");
+        Peer c = peer("C");
+
+        InMemoryLogStore store = new InMemoryLogStore();
+        CapturingStateMachine sm = new CapturingStateMachine();
+        RaftNodeElectionTest.MutableTime time = new RaftNodeElectionTest.MutableTime(0);
+        RaftNode nodeA = new RaftNode(
+                a,
+                List.of(b, c),
+                100,
+                null,
+                sm,
+                new NoopRaftClient(),
+                store,
+                new InMemoryPersistentStateStore(),
+                time,
+                new Random(1)
+        );
+        AtomicInteger decommissionCalls = new AtomicInteger();
+        nodeA.setDecommissionListener(decommissionCalls::incrementAndGet);
+
+        ClusterConfiguration configuration = ClusterConfiguration
+                .stable(List.of(a, b, c))
+                .transitionTo(List.of(b, c))
+                .finalizeTransition();
+        byte[] payload = ClusterConfigurationSnapshotCodec.encode(configuration, "snapshot-final".getBytes(StandardCharsets.UTF_8));
+
+        InstallSnapshotRequest snapshotRequest = new InstallSnapshotRequest(
+                4,
+                "B",
+                5,
+                4,
+                payload
+        );
+        var snapshotResponse = nodeA.handleInstallSnapshot(snapshotRequest);
+        assertTrue(snapshotResponse.isSuccess());
+        assertArrayEquals("snapshot-final".getBytes(StandardCharsets.UTF_8), sm.restored);
+        assertFalse(nodeA.getClusterConfigurationForTest().contains("A"));
+        assertFalse(nodeA.getClusterConfigurationForTest().isJointConsensus());
+        assertTrue(nodeA.isDecommissionedForTest());
+        assertEquals(1, decommissionCalls.get());
+
+        nodeA.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        nodeA.electionTickForTest();
+        assertEquals(RaftNode.State.FOLLOWER, nodeA.getStateForTest());
     }
 }

@@ -19,6 +19,7 @@ package org.gautelis.raft.serialization;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import org.gautelis.raft.protocol.ClusterMessage;
+import org.gautelis.raft.protocol.AdminCommand;
 import org.gautelis.raft.protocol.LogEntry;
 import org.gautelis.raft.protocol.AppendEntriesRequest;
 import org.gautelis.raft.protocol.AppendEntriesResponse;
@@ -144,12 +145,15 @@ public final class ProtoMapper {
     }
 
     public static org.gautelis.raft.proto.InstallSnapshotRequest toProto(InstallSnapshotRequest request) {
+        // Chunked snapshot streaming uses offset/done; one-shot callers still map to offset=0, done=true.
         return org.gautelis.raft.proto.InstallSnapshotRequest.newBuilder()
                 .setTerm(request.getTerm())
                 .setLeaderId(request.getLeaderId())
                 .setLastIncludedIndex(request.getLastIncludedIndex())
                 .setLastIncludedTerm(request.getLastIncludedTerm())
+                .setOffset(request.getOffset())
                 .setSnapshotData(ByteString.copyFrom(request.getSnapshotData()))
+                .setDone(request.isDone())
                 .build();
     }
 
@@ -159,7 +163,9 @@ public final class ProtoMapper {
                 request.getLeaderId(),
                 request.getLastIncludedIndex(),
                 request.getLastIncludedTerm(),
-                request.getSnapshotData().toByteArray()
+                request.getOffset(),
+                request.getSnapshotData().toByteArray(),
+                request.getDone()
         );
     }
 
@@ -193,6 +199,18 @@ public final class ProtoMapper {
         return new ClusterMessage(message.getTerm(), message.getPeerId(), message.getMessage());
     }
 
+    public static org.gautelis.raft.proto.AdminCommand toProto(AdminCommand command) {
+        return org.gautelis.raft.proto.AdminCommand.newBuilder()
+                .setTerm(command.getTerm())
+                .setPeerId(command.getPeerId())
+                .setCommand(command.getCommand())
+                .build();
+    }
+
+    public static AdminCommand fromProto(org.gautelis.raft.proto.AdminCommand command) {
+        return new AdminCommand(command.getTerm(), command.getPeerId(), command.getCommand());
+    }
+
     public static Optional<org.gautelis.raft.proto.VoteRequest> parseVoteRequest(byte[] payload) {
         try {
             return Optional.of(org.gautelis.raft.proto.VoteRequest.parseFrom(payload));
@@ -217,6 +235,14 @@ public final class ProtoMapper {
         }
     }
 
+    public static Optional<org.gautelis.raft.proto.AdminCommand> parseAdminCommand(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.AdminCommand.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
     public static Optional<org.gautelis.raft.proto.AppendEntriesRequest> parseAppendEntriesRequest(byte[] payload) {
         try {
             return Optional.of(org.gautelis.raft.proto.AppendEntriesRequest.parseFrom(payload));
@@ -235,6 +261,8 @@ public final class ProtoMapper {
 
     public static Optional<org.gautelis.raft.proto.InstallSnapshotRequest> parseInstallSnapshotRequest(byte[] payload) {
         try {
+            // Parsing stays explicit here so transport callers can reject malformed payloads
+            // without letting protobuf exceptions escape the handler path.
             return Optional.of(org.gautelis.raft.proto.InstallSnapshotRequest.parseFrom(payload));
         } catch (InvalidProtocolBufferException e) {
             return Optional.empty();

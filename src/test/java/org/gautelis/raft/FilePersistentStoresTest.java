@@ -35,10 +35,14 @@ import java.util.List;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FilePersistentStoresTest {
     private static final Logger log = LoggerFactory.getLogger(FilePersistentStoresTest.class);
+    private static void announce(String message) {
+        System.out.println("*** Testcase *** " + message);
+    }
 
     static class NoopRaftClient extends RaftClient {
         NoopRaftClient() {
@@ -159,5 +163,211 @@ class FilePersistentStoresTest {
         assertEquals(5, restarted.getTerm());
         assertEquals(1, reloadedLog.lastIndex());
         assertEquals(5, reloadedLog.lastTerm());
+    }
+
+    @Test
+    void raftNodeRestoresJointConfigurationAfterRestart(@TempDir Path tmp) {
+        announce("Node restart joint configuration: restores replicated joint config from persisted log");
+        Path stateFile = tmp.resolve("node.state");
+        Path logFile = tmp.resolve("node.log");
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+        Peer c = peer("C");
+        Peer d = new Peer("D", null);
+
+        FilePersistentStateStore persistentState = new FilePersistentStateStore(stateFile);
+        FileLogStore logStore = new FileLogStore(logFile);
+        RaftNode first = new RaftNode(
+                a,
+                List.of(b, c),
+                100,
+                null,
+                new NoopRaftClient(),
+                logStore,
+                persistentState,
+                System::currentTimeMillis,
+                new Random(1)
+        );
+
+        persistentState.setCurrentTerm(7);
+        logStore.append(List.of(
+                new LogEntry(7, "A", "noop".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                new LogEntry(7, "A", ClusterConfigurationCommand.joint(List.of(a, b, d)).getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        ));
+
+        FilePersistentStateStore reloadedState = new FilePersistentStateStore(stateFile);
+        FileLogStore reloadedLog = new FileLogStore(logFile);
+        RaftNode restarted = new RaftNode(
+                a,
+                List.of(b, c, d),
+                100,
+                null,
+                new NoopRaftClient(),
+                reloadedLog,
+                reloadedState,
+                System::currentTimeMillis,
+                new Random(1)
+        );
+
+        assertTrue(restarted.getClusterConfigurationForTest().isJointConsensus());
+        assertTrue(restarted.getClusterConfigurationForTest().contains("D"));
+        assertTrue(restarted.getClusterConfigurationForTest().contains("C"));
+    }
+
+    @Test
+    void restartedNodeUsesFinalizedConfigurationForElections(@TempDir Path tmp) {
+        announce("Node restart finalized configuration: surviving members elect leader using persisted finalized config");
+        Path stateB = tmp.resolve("b.state");
+        Path logB = tmp.resolve("b.log");
+        Path stateC = tmp.resolve("c.state");
+        Path logC = tmp.resolve("c.log");
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+        Peer c = peer("C");
+
+        FilePersistentStateStore persistentStateB = new FilePersistentStateStore(stateB);
+        FilePersistentStateStore persistentStateC = new FilePersistentStateStore(stateC);
+        FileLogStore logStoreB = new FileLogStore(logB);
+        FileLogStore logStoreC = new FileLogStore(logC);
+
+        byte[] finalize = ClusterConfigurationCommand.finalizeTransition().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        logStoreB.append(List.of(
+                new LogEntry(7, "A", new byte[0]),
+                new LogEntry(7, "A", ClusterConfigurationCommand.joint(List.of(b, c)).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                new LogEntry(7, "A", finalize)
+        ));
+        logStoreC.append(List.of(
+                new LogEntry(7, "A", new byte[0]),
+                new LogEntry(7, "A", ClusterConfigurationCommand.joint(List.of(b, c)).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                new LogEntry(7, "A", finalize)
+        ));
+        persistentStateB.setCurrentTerm(7);
+        persistentStateC.setCurrentTerm(7);
+
+        RaftNodeElectionTest.MutableTime time = new RaftNodeElectionTest.MutableTime(0);
+        java.util.Map<String, RaftNode> nodes = new java.util.HashMap<>();
+        RaftNodeElectionTest.QueuedRaftClient clientB = new RaftNodeElectionTest.QueuedRaftClient("B", nodes);
+        RaftNodeElectionTest.QueuedRaftClient clientC = new RaftNodeElectionTest.QueuedRaftClient("C", nodes);
+
+        RaftNode restartedB = new RaftNode(
+                b,
+                List.of(a, c),
+                100,
+                null,
+                clientB,
+                new FileLogStore(logB),
+                new FilePersistentStateStore(stateB),
+                time,
+                new Random(2)
+        );
+        RaftNode restartedC = new RaftNode(
+                c,
+                List.of(a, b),
+                100,
+                null,
+                clientC,
+                new FileLogStore(logC),
+                new FilePersistentStateStore(stateC),
+                time,
+                new Random(3)
+        );
+
+        nodes.put("B", restartedB);
+        nodes.put("C", restartedC);
+
+        assertFalse(restartedB.getClusterConfigurationForTest().isJointConsensus());
+        assertFalse(restartedB.getClusterConfigurationForTest().contains("A"));
+        assertTrue(restartedB.getClusterConfigurationForTest().contains("B"));
+        assertTrue(restartedB.getClusterConfigurationForTest().contains("C"));
+
+        restartedB.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        restartedB.electionTickForTest();
+        clientB.flush();
+
+        assertTrue(restartedB.isLeader());
+        assertEquals(8, restartedB.getTerm());
+        assertEquals(8, restartedC.getTerm());
+    }
+
+    @Test
+    void removedNodeRestartsAsDecommissioned(@TempDir Path tmp) {
+        announce("Node restart removed member: restarted removed node remains decommissioned");
+        Path stateFile = tmp.resolve("removed.state");
+        Path logFile = tmp.resolve("removed.log");
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+        Peer c = peer("C");
+
+        FilePersistentStateStore persistentState = new FilePersistentStateStore(stateFile);
+        FileLogStore logStore = new FileLogStore(logFile);
+        logStore.append(List.of(
+                new LogEntry(9, "A", new byte[0]),
+                new LogEntry(9, "A", ClusterConfigurationCommand.joint(List.of(b, c)).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                new LogEntry(9, "A", ClusterConfigurationCommand.finalizeTransition().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        ));
+        persistentState.setCurrentTerm(9);
+
+        RaftNode restarted = new RaftNode(
+                a,
+                List.of(b, c),
+                100,
+                null,
+                new NoopRaftClient(),
+                new FileLogStore(logFile),
+                new FilePersistentStateStore(stateFile),
+                System::currentTimeMillis,
+                new Random(1)
+        );
+
+        assertTrue(restarted.isDecommissionedForTest());
+        assertFalse(restarted.getClusterConfigurationForTest().contains("A"));
+        assertEquals(RaftNode.State.FOLLOWER, restarted.getStateForTest());
+    }
+
+    @Test
+    void finalizedConfigurationSnapshotSurvivesRestart(@TempDir Path tmp) {
+        announce("Node restart finalized snapshot: finalized membership survives snapshot-backed restart");
+        Path stateFile = tmp.resolve("survivor.state");
+        Path logFile = tmp.resolve("survivor.log");
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+        Peer c = peer("C");
+
+        FilePersistentStateStore persistentState = new FilePersistentStateStore(stateFile);
+        FileLogStore logStore = new FileLogStore(logFile);
+        ClusterConfiguration finalized = ClusterConfiguration
+                .stable(List.of(a, b, c))
+                .transitionTo(List.of(b, c))
+                .finalizeTransition();
+
+        logStore.installSnapshot(
+                12,
+                9,
+                ClusterConfigurationSnapshotCodec.encode(finalized, "snapshot-final".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        );
+        persistentState.setCurrentTerm(9);
+
+        RaftNode restarted = new RaftNode(
+                b,
+                List.of(a, c),
+                100,
+                null,
+                new NoopRaftClient(),
+                new FileLogStore(logFile),
+                new FilePersistentStateStore(stateFile),
+                System::currentTimeMillis,
+                new Random(2)
+        );
+
+        assertFalse(restarted.getClusterConfigurationForTest().isJointConsensus());
+        assertFalse(restarted.getClusterConfigurationForTest().contains("A"));
+        assertTrue(restarted.getClusterConfigurationForTest().contains("B"));
+        assertTrue(restarted.getClusterConfigurationForTest().contains("C"));
+        assertFalse(restarted.isDecommissionedForTest());
     }
 }

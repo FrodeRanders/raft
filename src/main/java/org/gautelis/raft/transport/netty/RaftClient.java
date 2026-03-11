@@ -124,14 +124,28 @@ public class RaftClient {
     }
 
     public void setKnownPeers(Collection<Peer> peers) {
-        if (peers == null) {
-            return;
-        }
-        for (Peer peer : peers) {
-            if (peer != null) {
-                knownPeers.add(peer);
+        // Replace, do not merge: membership changes should prune removed peers from
+        // broadcast targets, channels, and response-time bookkeeping.
+        Set<Peer> replacement = ConcurrentHashMap.newKeySet();
+        if (peers != null) {
+            for (Peer peer : peers) {
+                if (peer != null) {
+                    replacement.add(peer);
+                }
             }
         }
+
+        for (Peer existing : new ArrayList<>(knownPeers)) {
+            if (!replacement.contains(existing)) {
+                knownPeers.remove(existing);
+                Channel removed = channels.remove(existing);
+                if (removed != null) {
+                    removed.close();
+                }
+                peerResponseStats.remove(existing.getId());
+            }
+        }
+        knownPeers.addAll(replacement);
     }
 
     public Future<List<VoteResponse>> requestVoteFromAll(
@@ -467,7 +481,8 @@ public class RaftClient {
 
     public Collection<Peer> broadcast(String type, long term, byte[] payload) {
         // Generic best-effort broadcast utility for non-Raft control messages.
-        Collection<Peer> unreachablePeers = new HashSet<>();
+        // The set is updated from async connect callbacks, so it must be concurrent.
+        Collection<Peer> unreachablePeers = ConcurrentHashMap.newKeySet();
 
         for (Peer peer : knownPeers) {
             Channel channel = channels.get(peer);
@@ -519,6 +534,10 @@ public class RaftClient {
 
     public RunningStatistics getResponseTimeStats(String peerId) {
         return peerResponseStats.get(peerId);
+    }
+
+    public Collection<Peer> getKnownPeersForTest() {
+        return Set.copyOf(knownPeers);
     }
 
     private void logResponseTimeStatistics() {
