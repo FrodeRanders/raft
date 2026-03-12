@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.statemachine;
 
+/**
+ * Defines the state-machine contract RaftNode uses for applying commands and snapshots.
+ */
 public interface SnapshotStateMachine {
     void apply(long term, byte[] command);
     byte[] snapshot();

@@ -18,6 +18,9 @@ package org.gautelis.raft.protocol;
 
 import java.util.List;
 
+/**
+ * Returns a focused status view for cluster membership changes and their blockers.
+ */
 public final class ReconfigurationStatusResponse {
     private final long observedAtMillis;
     private final long term;

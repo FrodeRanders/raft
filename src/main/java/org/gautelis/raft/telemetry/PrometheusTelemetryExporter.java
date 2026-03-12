@@ -35,6 +35,9 @@ import java.util.Locale;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * Exposes the latest telemetry snapshot through a local Prometheus scrape endpoint.
+ */
 public final class PrometheusTelemetryExporter implements TelemetryExporter {
     private static final Logger log = LoggerFactory.getLogger(PrometheusTelemetryExporter.class);
 

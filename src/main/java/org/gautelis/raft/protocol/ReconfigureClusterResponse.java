@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Reports the immediate outcome of an explicit cluster membership change request.
+ */
 public class ReconfigureClusterResponse {
     private final long term;
     private final String peerId;

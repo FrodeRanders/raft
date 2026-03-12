@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Summarizes the leader's replication state and recent contact history for one follower.
+ */
 public record TelemetryReplicationStatus(
         String peerId,
         long nextIndex,

@@ -20,6 +20,9 @@ import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.util.Optional;
 
+/**
+ * Encodes and decodes the typed write commands understood by the demo state machine.
+ */
 public final class StateMachineCommand {
     public enum Type {
         PUT,

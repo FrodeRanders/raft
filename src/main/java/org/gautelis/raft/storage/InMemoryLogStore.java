@@ -22,6 +22,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * Keeps the Raft log and snapshot metadata in memory for tests and ephemeral runs.
+ */
 public final class InMemoryLogStore implements LogStore {
     // Simple, test-friendly storage backend.
     // Global indices remain stable across compaction through snapshotIndex offset.

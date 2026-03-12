@@ -18,6 +18,9 @@ package org.gautelis.raft.protocol;
 
 import java.util.Arrays;
 
+/**
+ * Reports the outcome of a typed client query, including redirect or retry status.
+ */
 public final class ClientQueryResponse {
     private final long term;
     private final String peerId;

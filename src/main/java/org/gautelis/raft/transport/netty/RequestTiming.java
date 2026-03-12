@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.transport.netty;
 
+/**
+ * Captures enough context to attribute one outbound RPC latency sample when the response arrives.
+ */
 final class RequestTiming {
     private final String peerId;
     // Keep the RPC type so transport stats can distinguish elections from

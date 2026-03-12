@@ -18,6 +18,9 @@ package org.gautelis.raft.storage;
 
 import java.util.Optional;
 
+/**
+ * Keeps the current term and voted-for state in memory only.
+ */
 public final class InMemoryPersistentStateStore implements PersistentStateStore {
     private long currentTerm;
     private String votedFor;

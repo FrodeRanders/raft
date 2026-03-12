@@ -19,6 +19,9 @@ import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.util.Optional;
 
+/**
+ * Encodes and decodes the typed read queries understood by the demo state machine.
+ */
 public final class StateMachineQuery {
     public enum Type {
         GET

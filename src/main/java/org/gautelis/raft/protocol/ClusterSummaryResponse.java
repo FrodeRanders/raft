@@ -18,6 +18,9 @@ package org.gautelis.raft.protocol;
 
 import java.util.List;
 
+/**
+ * Returns the leader's cluster-wide health, quorum, and per-member summary view.
+ */
 public final class ClusterSummaryResponse {
     private final long observedAtMillis;
     private final long term;

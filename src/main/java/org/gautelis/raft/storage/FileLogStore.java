@@ -34,6 +34,9 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Properties;
 
+/**
+ * Persists the Raft log and snapshot metadata to files on disk.
+ */
 public final class FileLogStore implements LogStore {
     private static final Logger log = LoggerFactory.getLogger(FileLogStore.class);
 

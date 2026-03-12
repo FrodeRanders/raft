@@ -20,6 +20,9 @@ import org.gautelis.raft.protocol.LogEntry;
 
 import java.util.List;
 
+/**
+ * Abstracts the append-only Raft log plus snapshot compaction metadata.
+ */
 public interface LogStore {
     // Storage contract used by Raft paper Figure 2 log replication rules:
     // - term/index queries for prevLog checks

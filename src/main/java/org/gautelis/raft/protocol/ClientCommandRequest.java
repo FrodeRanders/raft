@@ -18,6 +18,9 @@ package org.gautelis.raft.protocol;
 
 import java.util.Arrays;
 
+/**
+ * Submits one typed client write command to the cluster leader.
+ */
 public final class ClientCommandRequest {
     private final long term;
     private final String peerId;

@@ -18,6 +18,9 @@ package org.gautelis.raft.protocol;
 
 import java.util.Arrays;
 
+/**
+ * Streams a snapshot chunk from the leader to a follower that is too far behind for log replay.
+ */
 public class InstallSnapshotRequest {
     private long term;
     private String leaderId;

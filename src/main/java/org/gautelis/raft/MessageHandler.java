@@ -18,6 +18,9 @@ package org.gautelis.raft;
 
 import io.netty.channel.ChannelHandlerContext;
 
+/**
+ * Receives decoded envelopes after the transport layer has identified their message type.
+ */
 public interface MessageHandler {
     /**
      * Handles reception of requests/messages for both server and

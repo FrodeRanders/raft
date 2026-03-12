@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Requests admission of a new member into the cluster configuration.
+ */
 public class JoinClusterRequest {
     private final long term;
     private final String peerId;

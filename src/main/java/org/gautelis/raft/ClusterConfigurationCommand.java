@@ -24,6 +24,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Encodes and decodes the internal log entries used for membership changes.
+ */
 final class ClusterConfigurationCommand {
     enum Type {
         JOINT,

@@ -20,6 +20,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * Carries heartbeats and log replication batches from a leader to a follower.
+ */
 public class AppendEntriesRequest {
     private long term;
     private String leaderId;

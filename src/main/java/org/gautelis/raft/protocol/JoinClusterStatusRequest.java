@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Queries the lifecycle state of an earlier join request.
+ */
 public class JoinClusterStatusRequest {
     private final long term;
     private final String peerId;

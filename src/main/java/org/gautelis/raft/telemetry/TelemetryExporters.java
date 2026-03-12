@@ -21,6 +21,9 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Locale;
 
+/**
+ * Selects and builds the configured telemetry exporter implementation.
+ */
 public final class TelemetryExporters {
     private static final Logger log = LoggerFactory.getLogger(TelemetryExporters.class);
 

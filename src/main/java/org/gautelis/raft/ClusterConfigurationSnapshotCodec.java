@@ -27,6 +27,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * Wraps state-machine snapshots with Raft configuration metadata for persistence and install.
+ */
 final class ClusterConfigurationSnapshotCodec {
     private static final int VERSION = 1;
 

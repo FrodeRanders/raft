@@ -21,6 +21,9 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToByteEncoder;
 import org.gautelis.raft.proto.Envelope;
 
+/**
+ * Encodes protobuf envelopes onto the Netty byte stream.
+ */
 public class ProtobufLiteEncoder extends MessageToByteEncoder<Envelope> {
     @Override
     protected void encode(ChannelHandlerContext ctx, Envelope msg, ByteBuf out) {

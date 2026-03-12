@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Requests the leader's cluster-wide health and membership summary.
+ */
 public final class ClusterSummaryRequest {
     private final long term;
     private final String peerId;

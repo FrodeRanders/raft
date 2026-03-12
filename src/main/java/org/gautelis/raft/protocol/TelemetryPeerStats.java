@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Summarizes transport latency statistics for one remote peer and one RPC type.
+ */
 public record TelemetryPeerStats(
         String peerId,
         String rpcType,

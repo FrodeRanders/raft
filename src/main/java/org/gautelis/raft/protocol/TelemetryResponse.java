@@ -18,6 +18,9 @@ package org.gautelis.raft.protocol;
 
 import java.util.List;
 
+/**
+ * Returns a node telemetry snapshot, optionally enriched with cluster and transport details.
+ */
 public final class TelemetryResponse {
     private final long observedAtMillis;
     private final long term;

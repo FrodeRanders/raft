@@ -27,6 +27,9 @@ import org.gautelis.raft.transport.netty.RaftMessageHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Hosts a Netty server endpoint for one Raft node instance.
+ */
 public class RaftServer {
     private static final Logger log = LoggerFactory.getLogger(RaftServer.class);
 

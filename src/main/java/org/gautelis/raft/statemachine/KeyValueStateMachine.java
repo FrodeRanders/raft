@@ -30,6 +30,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
 
+/**
+ * Implements the demo key-value store used by the runnable application and tests.
+ */
 public final class KeyValueStateMachine implements QueryableStateMachine {
     // Reference implementation of a deterministic state machine used by the Raft log:
     // - apply() mutates authoritative state from committed commands

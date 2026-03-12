@@ -18,6 +18,9 @@ package org.gautelis.raft.protocol;
 
 import java.util.List;
 
+/**
+ * Submits an explicit cluster membership change such as joint, finalize, promote, or demote.
+ */
 public class ReconfigureClusterRequest {
     public enum Action {
         JOINT,

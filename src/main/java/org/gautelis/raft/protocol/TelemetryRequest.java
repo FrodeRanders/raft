@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Requests a node or leader-oriented telemetry snapshot.
+ */
 public final class TelemetryRequest {
     private final long term;
     private final String peerId;

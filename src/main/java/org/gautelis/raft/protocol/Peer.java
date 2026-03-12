@@ -19,6 +19,9 @@ package org.gautelis.raft.protocol;
 import java.net.InetSocketAddress;
 import java.util.Objects;
 
+/**
+ * Identifies one cluster member together with its network address and voting role.
+ */
 public class Peer {
     public enum Role {
         VOTER,

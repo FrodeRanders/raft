@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Describes one member in the leader's cluster-health and reconfiguration view.
+ */
 public record ClusterMemberSummary(
         String peerId,
         boolean local,

@@ -20,6 +20,9 @@ import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.util.Optional;
 
+/**
+ * Encodes and decodes typed query results returned by a queryable state machine.
+ */
 public final class StateMachineQueryResult {
     public enum Type {
         GET

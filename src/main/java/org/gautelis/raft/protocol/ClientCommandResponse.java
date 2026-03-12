@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Reports the outcome of a typed client write, including redirect information when needed.
+ */
 public final class ClientCommandResponse {
     private final long term;
     private final String peerId;

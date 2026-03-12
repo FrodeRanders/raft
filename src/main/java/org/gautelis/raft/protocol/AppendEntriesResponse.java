@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Reports whether a follower accepted a leader's AppendEntries request.
+ */
 public class AppendEntriesResponse {
     private long term;
     private String peerId;

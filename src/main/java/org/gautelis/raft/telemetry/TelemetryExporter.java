@@ -21,6 +21,9 @@ import org.gautelis.raft.protocol.TelemetryPeerStats;
 
 import java.util.List;
 
+/**
+ * Publishes Raft telemetry snapshots to an external sink such as logs or metrics endpoints.
+ */
 public interface TelemetryExporter {
     default boolean isEnabled() {
         return true;

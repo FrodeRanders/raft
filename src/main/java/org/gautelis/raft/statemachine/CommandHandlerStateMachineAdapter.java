@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.statemachine;
 
+/**
+ * Adapts a simple command handler to the snapshot-capable state-machine interface used by RaftNode.
+ */
 public final class CommandHandlerStateMachineAdapter implements SnapshotStateMachine {
     private final CommandHandler delegate;
 

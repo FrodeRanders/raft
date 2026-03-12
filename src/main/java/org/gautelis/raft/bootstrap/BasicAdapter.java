@@ -65,6 +65,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Wires protocol messages, storage, telemetry, and the state machine into a runnable Raft node.
+ */
 public class BasicAdapter {
     protected static final Logger log = LoggerFactory.getLogger(BasicAdapter.class);
 

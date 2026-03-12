@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.statemachine;
 
+/**
+ * Extends a snapshot state machine with typed read/query support.
+ */
 public interface QueryableStateMachine extends SnapshotStateMachine {
     byte[] query(byte[] request);
 }

@@ -26,6 +26,9 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
+/**
+ * Decodes framed protobuf envelopes from the Netty byte stream.
+ */
 public class ProtobufLiteDecoder extends ByteToMessageDecoder {
     private static final Logger log = LoggerFactory.getLogger(ProtobufLiteDecoder.class);
 

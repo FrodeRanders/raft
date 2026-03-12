@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Reports follower progress while receiving snapshot chunks from the leader.
+ */
 public class InstallSnapshotResponse {
     private long term;
     private String peerId;

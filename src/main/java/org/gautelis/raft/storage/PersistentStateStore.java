@@ -18,6 +18,9 @@ package org.gautelis.raft.storage;
 
 import java.util.Optional;
 
+/**
+ * Abstracts the small durable state Raft requires outside the replicated log.
+ */
 public interface PersistentStateStore {
     long currentTerm();
     void setCurrentTerm(long term);

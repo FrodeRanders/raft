@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Requests a focused status view for any in-flight cluster reconfiguration.
+ */
 public final class ReconfigurationStatusRequest {
     private final long term;
     private final String peerId;

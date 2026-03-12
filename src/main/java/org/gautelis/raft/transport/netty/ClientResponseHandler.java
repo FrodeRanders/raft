@@ -40,6 +40,9 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
 
+/**
+ * Matches inbound RPC responses to waiting client futures and updates transport timing statistics.
+ */
 public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope> {
     private static final Logger log = LoggerFactory.getLogger(ClientResponseHandler.class);
 

@@ -18,6 +18,9 @@ package org.gautelis.raft.protocol;
 
 import java.util.Arrays;
 
+/**
+ * Represents one replicated log entry in the Raft log.
+ */
 public class LogEntry {
     private long term;
     private String peerId;

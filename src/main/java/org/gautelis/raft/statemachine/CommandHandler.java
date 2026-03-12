@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.statemachine;
 
+/**
+ * Handles committed write commands for simple state machines that do not need snapshots directly.
+ */
 public interface CommandHandler {
     void handle(long myTerm, byte[] command);
 }

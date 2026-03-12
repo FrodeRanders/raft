@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Requests a vote from another server during a leader election.
+ */
 public class VoteRequest {
     private long term;
     private String candidateId;

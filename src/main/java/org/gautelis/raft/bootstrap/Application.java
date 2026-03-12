@@ -47,6 +47,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Provides the runnable demo node process and the small CLI for admin, query, and telemetry actions.
+ */
 public class Application {
     private static final Logger log = LogManager.getLogger(Application.class);
     private static final Logger telemetryLog = LogManager.getLogger("TELEMETRY");

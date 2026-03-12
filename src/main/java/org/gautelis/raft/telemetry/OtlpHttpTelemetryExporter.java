@@ -35,6 +35,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+/**
+ * Pushes telemetry snapshots as OTLP-style HTTP metrics payloads.
+ */
 final class OtlpHttpTelemetryExporter implements TelemetryExporter {
     private static final Logger log = LoggerFactory.getLogger(OtlpHttpTelemetryExporter.class);
     private static final String DEFAULT_ENDPOINT = "http://127.0.0.1:4318/v1/metrics";

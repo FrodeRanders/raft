@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Reports whether a joining member is pending, in joint consensus, completed, or unknown.
+ */
 public class JoinClusterStatusResponse {
     private final long term;
     private final String peerId;

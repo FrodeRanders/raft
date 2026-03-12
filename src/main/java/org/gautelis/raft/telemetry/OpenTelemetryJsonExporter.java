@@ -23,6 +23,9 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
+/**
+ * Emits telemetry snapshots as structured JSON log records for OTEL-style ingestion without a collector.
+ */
 final class OpenTelemetryJsonExporter implements TelemetryExporter {
     private static final Logger otelLog = LoggerFactory.getLogger("OTEL");
 

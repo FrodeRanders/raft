@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Reports the immediate outcome of a join request, including redirect or pending status.
+ */
 public class JoinClusterResponse {
     private final long term;
     private final String peerId;

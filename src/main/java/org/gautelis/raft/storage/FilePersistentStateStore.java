@@ -28,6 +28,9 @@ import java.nio.file.StandardCopyOption;
 import java.util.Optional;
 import java.util.Properties;
 
+/**
+ * Persists the current term and voted-for state to disk across restarts.
+ */
 public final class FilePersistentStateStore implements PersistentStateStore {
     private static final Logger log = LoggerFactory.getLogger(FilePersistentStateStore.class);
 

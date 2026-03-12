@@ -18,6 +18,9 @@ package org.gautelis.raft.protocol;
 
 import java.util.Arrays;
 
+/**
+ * Submits one typed client read/query to the cluster leader.
+ */
 public final class ClientQueryRequest {
     private final long term;
     private final String peerId;

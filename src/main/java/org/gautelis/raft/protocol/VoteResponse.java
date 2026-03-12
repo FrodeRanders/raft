@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft.protocol;
 
+/**
+ * Reports whether a server granted a vote in a given election term.
+ */
 public class VoteResponse {
     private String peerId;
     private long term;

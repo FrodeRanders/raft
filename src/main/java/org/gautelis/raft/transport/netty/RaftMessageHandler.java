@@ -28,6 +28,9 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
 
 @ChannelHandler.Sharable
+/**
+ * Dispatches inbound server-side envelopes into the message handler used by a Raft node.
+ */
 public class RaftMessageHandler extends SimpleChannelInboundHandler<Envelope> {
     // Netty transport adapter for Raft RPCs.
     // Figure 2 receiver rules are implemented in RaftNode; this class only parses, dispatches, and replies.

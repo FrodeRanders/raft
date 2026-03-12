@@ -48,6 +48,9 @@ import org.gautelis.raft.proto.Envelope;
 
 import java.util.Optional;
 
+/**
+ * Converts between protobuf wire messages and the internal protocol/domain objects.
+ */
 public final class ProtoMapper {
     // Serialization boundary between in-memory Raft model objects and protobuf transport/storage messages.
     // Keeping mappings explicit makes protocol evolution safer and easier to review.

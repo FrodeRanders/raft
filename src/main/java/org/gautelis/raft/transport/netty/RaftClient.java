@@ -42,6 +42,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 
+/**
+ * Sends outbound Raft, admin, query, and telemetry RPCs over Netty channels.
+ */
 public class RaftClient {
     // Outbound RPC helper used by RaftNode.
     // Figure 2 mapping:
