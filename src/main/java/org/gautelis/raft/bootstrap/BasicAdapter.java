@@ -33,6 +33,8 @@ import org.gautelis.raft.protocol.JoinClusterResponse;
 import org.gautelis.raft.protocol.JoinClusterStatusRequest;
 import org.gautelis.raft.protocol.JoinClusterStatusResponse;
 import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.protocol.ReconfigurationStatusRequest;
+import org.gautelis.raft.protocol.ReconfigurationStatusResponse;
 import org.gautelis.raft.protocol.ReconfigureClusterRequest;
 import org.gautelis.raft.protocol.ReconfigureClusterResponse;
 import org.gautelis.raft.protocol.StateMachineCommand;
@@ -73,6 +75,7 @@ public class BasicAdapter {
     protected final TelemetryExporter telemetryExporter = TelemetryExporters.createFromProperties();
     private final int telemetryExportIntervalSeconds = Integer.getInteger("raft.telemetry.export.interval.seconds", 15);
     private final int telemetryRateLimitPerMinute = Integer.getInteger("raft.telemetry.rate.limit.per.minute", 30);
+    private final long telemetryReconfigurationStuckMillis = Long.getLong("raft.telemetry.reconfiguration.stuck.millis", 60_000L);
     private final Map<String, Deque<Long>> telemetryRequestHistory = new HashMap<>();
 
     protected RaftNode stateMachine;
@@ -258,6 +261,16 @@ public class BasicAdapter {
             writeClusterSummaryResponse(ctx, correlationId, response);
             return;
         }
+        if ("ReconfigurationStatusRequest".equals(type)) {
+            var parsed = ProtoMapper.parseReconfigurationStatusRequest(payload);
+            if (parsed.isEmpty()) {
+                writeReconfigurationStatusResponse(ctx, correlationId, emptyReconfigurationStatus("INVALID"));
+                return;
+            }
+            ReconfigurationStatusResponse response = handleReconfigurationStatusRequest(ProtoMapper.fromProto(parsed.get()));
+            writeReconfigurationStatusResponse(ctx, correlationId, response);
+            return;
+        }
 
         log.debug("Received '{}' message ({} bytes)", type, payload == null ? 0 : payload.length);
     }
@@ -318,6 +331,10 @@ public class BasicAdapter {
             return new ClientQueryResponse(stateMachine.getTerm(), me.getId(), false, "INVALID", "Query payload is invalid", leaderId(leader), leaderHost(leader), leaderPort(leader), new byte[0]);
         }
         if (stateMachine.isLeader()) {
+            if (!stateMachine.canServeLinearizableRead() && !stateMachine.awaitLinearizableRead()) {
+                Peer leader = knownLeader();
+                return new ClientQueryResponse(stateMachine.getTerm(), me.getId(), false, "RETRY", "Leader cannot currently guarantee a linearizable read", leaderId(leader), leaderHost(leader), leaderPort(leader), new byte[0]);
+            }
             byte[] result = stateMachine.queryStateMachine(query);
             if (result.length == 0) {
                 Peer leader = knownLeader();
@@ -510,6 +527,17 @@ public class BasicAdapter {
         ));
     }
 
+    private void writeReconfigurationStatusResponse(ChannelHandlerContext ctx, String correlationId, ReconfigurationStatusResponse response) {
+        if (ctx == null || correlationId == null || correlationId.isBlank() || response == null) {
+            return;
+        }
+        ctx.writeAndFlush(ProtoMapper.wrap(
+                correlationId,
+                "ReconfigurationStatusResponse",
+                ProtoMapper.toProto(response).toByteString()
+        ));
+    }
+
     private void registerPeerReference(Peer peer) {
         if (peer == null) {
             throw new IllegalArgumentException("Peer must not be null");
@@ -581,6 +609,7 @@ public class BasicAdapter {
                     0,
                     0,
                     0,
+                    0L,
                     "",
                     List.of(),
                     List.of(),
@@ -626,6 +655,7 @@ public class BasicAdapter {
                 clusterSummary.votingMembers(),
                 clusterSummary.healthyVotingMembers(),
                 clusterSummary.reachableVotingMembers(),
+                clusterSummary.reconfigurationAgeMillis(),
                 clusterSummary.clusterStatusReason(),
                 clusterSummary.blockingCurrentQuorumPeerIds(),
                 clusterSummary.blockingNextQuorumPeerIds(),
@@ -663,6 +693,7 @@ public class BasicAdapter {
                     0,
                     0,
                     0,
+                    0L,
                     List.of(),
                     List.of(),
                     List.of()
@@ -689,8 +720,84 @@ public class BasicAdapter {
                 clusterSummary.votingMembers(),
                 clusterSummary.healthyVotingMembers(),
                 clusterSummary.reachableVotingMembers(),
+                clusterSummary.reconfigurationAgeMillis(),
                 clusterSummary.blockingCurrentQuorumPeerIds(),
                 clusterSummary.blockingNextQuorumPeerIds(),
+                clusterSummary.members()
+        );
+    }
+
+    protected ReconfigurationStatusResponse handleReconfigurationStatusRequest(ReconfigurationStatusRequest request) {
+        if (stateMachine == null || request == null) {
+            return emptyReconfigurationStatus("INVALID");
+        }
+        if (!allowTelemetryRequest(request.getPeerId())) {
+            return emptyReconfigurationStatus("RATE_LIMITED");
+        }
+        RaftNode.TelemetrySnapshot snapshot = stateMachine.telemetrySnapshot();
+        if (!stateMachine.isLeader()) {
+            Peer leader = stateMachine.getKnownLeaderPeer();
+            return new ReconfigurationStatusResponse(
+                    snapshot.observedAtMillis(),
+                    snapshot.term(),
+                    snapshot.peerId(),
+                    false,
+                    leader == null ? "NO_LEADER" : "REDIRECT",
+                    leaderId(leader),
+                    leaderHost(leader),
+                    leaderPort(leader),
+                    snapshot.state(),
+                    snapshot.leaderId(),
+                    false,
+                    snapshot.configuration().isJointConsensus(),
+                    0L,
+                    "",
+                    "",
+                    false,
+                    false,
+                    false,
+                    List.of(),
+                    List.of(),
+                    List.of()
+            );
+        }
+        ClusterTelemetrySummary clusterSummary = summarizeCluster(snapshot);
+        boolean jointConsensus = snapshot.latestKnownConfiguration().isJointConsensus();
+        boolean reconfigurationActive = jointConsensus
+                || clusterSummary.reconfigurationAgeMillis() > 0L;
+        List<String> blockingCurrentQuorumPeerIds = clusterSummary.blockingCurrentQuorumPeerIds().isEmpty()
+                ? clusterSummary.members().stream()
+                .filter(member -> member.blockingQuorums() != null && member.blockingQuorums().contains("current"))
+                .map(ClusterMemberSummary::peerId)
+                .toList()
+                : clusterSummary.blockingCurrentQuorumPeerIds();
+        List<String> blockingNextQuorumPeerIds = clusterSummary.blockingNextQuorumPeerIds().isEmpty()
+                ? clusterSummary.members().stream()
+                .filter(member -> member.blockingQuorums() != null && member.blockingQuorums().contains("next"))
+                .map(ClusterMemberSummary::peerId)
+                .toList()
+                : clusterSummary.blockingNextQuorumPeerIds();
+        return new ReconfigurationStatusResponse(
+                snapshot.observedAtMillis(),
+                snapshot.term(),
+                snapshot.peerId(),
+                true,
+                "OK",
+                "",
+                "",
+                0,
+                snapshot.state(),
+                snapshot.leaderId(),
+                reconfigurationActive,
+                jointConsensus,
+                clusterSummary.reconfigurationAgeMillis(),
+                clusterSummary.clusterHealth(),
+                clusterSummary.clusterStatusReason(),
+                clusterSummary.quorumAvailable(),
+                clusterSummary.currentQuorumAvailable(),
+                clusterSummary.nextQuorumAvailable(),
+                blockingCurrentQuorumPeerIds,
+                blockingNextQuorumPeerIds,
                 clusterSummary.members()
         );
     }
@@ -714,16 +821,20 @@ public class BasicAdapter {
     }
 
     private TelemetryResponse emptyTelemetry(String status) {
-        return new TelemetryResponse(0L, 0L, me.getId(), false, status, "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, "", List.of(), List.of(), List.of());
+        return new TelemetryResponse(0L, 0L, me.getId(), false, status, "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, 0L, "", List.of(), List.of(), List.of());
     }
 
     private ClusterSummaryResponse emptyClusterSummary(String status) {
-        return new ClusterSummaryResponse(0L, 0L, me.getId(), false, status, "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, List.of(), List.of(), List.of());
+        return new ClusterSummaryResponse(0L, 0L, me.getId(), false, status, "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, 0L, List.of(), List.of(), List.of());
+    }
+
+    private ReconfigurationStatusResponse emptyReconfigurationStatus(String status) {
+        return new ReconfigurationStatusResponse(0L, 0L, me.getId(), false, status, "", "", 0, "", "", false, false, 0L, "", "", false, false, false, List.of(), List.of(), List.of());
     }
 
     private ClusterTelemetrySummary summarizeCluster(RaftNode.TelemetrySnapshot snapshot) {
         if (snapshot == null || !"LEADER".equals(snapshot.state())) {
-            return new ClusterTelemetrySummary("", false, false, false, 0, 0, 0, "", List.of(), List.of(), List.of());
+            return new ClusterTelemetrySummary("", false, false, false, 0, 0, 0, 0L, "", List.of(), List.of(), List.of());
         }
 
         Map<String, org.gautelis.raft.protocol.TelemetryReplicationStatus> replicationByPeer = new HashMap<>();
@@ -750,6 +861,8 @@ public class BasicAdapter {
         List<String> blockingNextQuorumPeerIds = snapshot.configuration().isJointConsensus()
                 ? blockingPeers(snapshot.configuration().nextVotingMembers(), snapshot.peerId(), replicationByPeer, snapshot.observedAtMillis())
                 : List.of();
+        java.util.Set<String> blockingCurrentPeerSet = new java.util.LinkedHashSet<>(blockingCurrentQuorumPeerIds);
+        java.util.Set<String> blockingNextPeerSet = new java.util.LinkedHashSet<>(blockingNextQuorumPeerIds);
         boolean currentQuorumAvailable = hasHealthyQuorum(snapshot.configuration().currentVotingMembers(), snapshot.peerId(), replicationByPeer, snapshot.observedAtMillis());
         boolean nextQuorumAvailable = snapshot.configuration().isJointConsensus()
                 ? hasHealthyQuorum(snapshot.configuration().nextVotingMembers(), snapshot.peerId(), replicationByPeer, snapshot.observedAtMillis())
@@ -757,12 +870,24 @@ public class BasicAdapter {
         boolean quorumAvailable = snapshot.configuration().isJointConsensus()
                 ? currentQuorumAvailable && nextQuorumAvailable
                 : currentQuorumAvailable;
-        List<ClusterMemberSummary> members = buildClusterMemberSummaries(snapshot, replicationByPeer);
+        List<ClusterMemberSummary> members = buildClusterMemberSummaries(snapshot, replicationByPeer, blockingCurrentPeerSet, blockingNextPeerSet);
 
+        long reconfigurationAgeMillis = transitionAgeMillis(snapshot);
+        boolean reconfigurationStuck = telemetryReconfigurationStuckMillis > 0L
+                && reconfigurationAgeMillis >= telemetryReconfigurationStuckMillis;
         String clusterHealth = quorumAvailable
                 ? (healthyVotingMembers == snapshot.configuration().allVotingMembers().size() ? "healthy" : "degraded")
                 : "at-risk";
-        String clusterStatusReason = describeClusterStatusReason(clusterHealth, snapshot.configuration().isJointConsensus(), currentQuorumAvailable, nextQuorumAvailable);
+        if (reconfigurationStuck && "healthy".equals(clusterHealth)) {
+            clusterHealth = "degraded";
+        }
+        String clusterStatusReason = describeClusterStatusReason(
+                clusterHealth,
+                snapshot.configuration().isJointConsensus(),
+                currentQuorumAvailable,
+                nextQuorumAvailable,
+                reconfigurationStuck
+        );
         return new ClusterTelemetrySummary(
                 clusterHealth,
                 quorumAvailable,
@@ -771,6 +896,7 @@ public class BasicAdapter {
                 snapshot.configuration().allVotingMembers().size(),
                 healthyVotingMembers,
                 reachableVotingMembers,
+                reconfigurationAgeMillis,
                 clusterStatusReason,
                 List.copyOf(blockingCurrentQuorumPeerIds),
                 List.copyOf(blockingNextQuorumPeerIds),
@@ -780,7 +906,9 @@ public class BasicAdapter {
 
     private List<ClusterMemberSummary> buildClusterMemberSummaries(
             RaftNode.TelemetrySnapshot snapshot,
-            Map<String, org.gautelis.raft.protocol.TelemetryReplicationStatus> replicationByPeer
+            Map<String, org.gautelis.raft.protocol.TelemetryReplicationStatus> replicationByPeer,
+            java.util.Set<String> blockingCurrentPeerSet,
+            java.util.Set<String> blockingNextPeerSet
     ) {
         List<ClusterMemberSummary> members = new ArrayList<>();
         List<Peer> clusterPeers = new ArrayList<>();
@@ -802,6 +930,8 @@ public class BasicAdapter {
             Peer effectiveMember = targetMember != null ? targetMember : (nextMember != null ? nextMember : (currentMember != null ? currentMember : peer));
             String currentRole = currentMember == null ? "" : currentMember.getRole().name();
             String nextRole = targetMember == null ? "" : targetMember.getRole().name();
+            String roleTransition = describeRoleTransition(currentMember, targetMember);
+            long transitionAgeMillis = ("steady".equals(roleTransition) || "known".equals(roleTransition)) ? 0L : transitionAgeMillis(snapshot);
             var replication = replicationByPeer.get(peer.getId());
             long matchIndex = local ? snapshot.lastLogIndex() : (replication == null ? 0L : replication.matchIndex());
             long nextIndex = local ? snapshot.lastLogIndex() + 1 : (replication == null ? 0L : replication.nextIndex());
@@ -812,6 +942,10 @@ public class BasicAdapter {
             int consecutiveFailures = local ? 0 : (replication == null ? 0 : replication.consecutiveFailures());
             String freshness = describeFreshness(snapshot.observedAtMillis(), lastSuccessfulContactMillis);
             String health = describeHealth(local, reachable, freshness, consecutiveFailures);
+            String blockingQuorums = describeBlockingQuorums(peer.getId(), blockingCurrentPeerSet, blockingNextPeerSet);
+            String blockingReason = blockingQuorums.isBlank()
+                    ? ""
+                    : describeBlockingReason(local, reachable, freshness, lag, consecutiveFailures, roleTransition);
             members.add(new ClusterMemberSummary(
                     peer.getId(),
                     local,
@@ -821,7 +955,10 @@ public class BasicAdapter {
                     effectiveMember.getRole().name(),
                     currentRole,
                     nextRole,
-                    describeRoleTransition(currentMember, targetMember),
+                    roleTransition,
+                    transitionAgeMillis,
+                    blockingQuorums,
+                    blockingReason,
                     reachable,
                     freshness,
                     health,
@@ -834,6 +971,44 @@ public class BasicAdapter {
             ));
         }
         return List.copyOf(members);
+    }
+
+    private String describeBlockingQuorums(String peerId, java.util.Set<String> blockingCurrentPeerSet, java.util.Set<String> blockingNextPeerSet) {
+        boolean current = blockingCurrentPeerSet.contains(peerId);
+        boolean next = blockingNextPeerSet.contains(peerId);
+        if (current && next) {
+            return "current,next";
+        }
+        if (current) {
+            return "current";
+        }
+        if (next) {
+            return "next";
+        }
+        return "";
+    }
+
+    private String describeBlockingReason(boolean local, boolean reachable, String freshness, long lag,
+                                          int consecutiveFailures, String roleTransition) {
+        if (local) {
+            return "";
+        }
+        if (!reachable) {
+            return "unreachable";
+        }
+        if (consecutiveFailures >= 3) {
+            return "replication-failures";
+        }
+        if (lag > 0L) {
+            return "lagging";
+        }
+        if ("stale".equals(freshness) || "unknown".equals(freshness)) {
+            return "stale";
+        }
+        if (!"steady".equals(roleTransition) && !"known".equals(roleTransition)) {
+            return "role-transition";
+        }
+        return "unknown";
     }
 
     private String describeRoleTransition(Peer currentMember, Peer nextMember) {
@@ -850,6 +1025,14 @@ public class BasicAdapter {
             return "steady";
         }
         return nextMember.isVoter() ? "promoting" : "demoting";
+    }
+
+    private long transitionAgeMillis(RaftNode.TelemetrySnapshot snapshot) {
+        long startedAt = snapshot.configurationTransitionStartedMillis();
+        if (startedAt <= 0L) {
+            return 0L;
+        }
+        return Math.max(0L, snapshot.observedAtMillis() - startedAt);
     }
 
     private Peer targetConfigurationMember(ClusterConfiguration configuration, String peerId) {
@@ -915,9 +1098,13 @@ public class BasicAdapter {
     }
 
     private String describeClusterStatusReason(String clusterHealth, boolean jointConsensus,
-                                               boolean currentQuorumAvailable, boolean nextQuorumAvailable) {
+                                               boolean currentQuorumAvailable, boolean nextQuorumAvailable,
+                                               boolean reconfigurationStuck) {
         if ("healthy".equals(clusterHealth)) {
             return "all-voters-healthy";
+        }
+        if (reconfigurationStuck && !"at-risk".equals(clusterHealth)) {
+            return "reconfiguration-stuck";
         }
         if ("degraded".equals(clusterHealth)) {
             return "followers-unhealthy";
@@ -969,6 +1156,7 @@ public class BasicAdapter {
             int votingMembers,
             int healthyVotingMembers,
             int reachableVotingMembers,
+            long reconfigurationAgeMillis,
             String clusterStatusReason,
             List<String> blockingCurrentQuorumPeerIds,
             List<String> blockingNextQuorumPeerIds,

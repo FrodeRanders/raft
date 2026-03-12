@@ -130,6 +130,7 @@ java -jar target/raft.jar command delete 127.0.0.1:10080 demo-key
 java -jar target/raft.jar command clear 127.0.0.1:10080
 java -jar target/raft.jar query get 127.0.0.1:10080 demo-key
 java -jar target/raft.jar cluster-summary --json 127.0.0.1:10080
+java -jar target/raft.jar reconfiguration-status --json 127.0.0.1:10080
 java -jar target/raft.jar join-request 127.0.0.1:10080 127.0.0.1:10085/learner
 java -jar target/raft.jar join-status 127.0.0.1:10080 server-10085
 java -jar target/raft.jar reconfigure joint 127.0.0.1:10080 10081 10082 10083 10085/learner
@@ -140,6 +141,13 @@ java -jar target/raft.jar reconfigure demote 127.0.0.1:10080 server-10085
 
 Any peer spec in the CLI can use `/learner` or `/voter`. If omitted, `voter` is the default.
 `promote` turns a learner into a voter through a joint-consensus transition, and `demote` keeps the member replicating while removing it from quorum and elections.
+
+Ordinary typed queries are served as linearizable leader reads. The leader will only answer them when it has:
+
+- applied through its current `commitIndex`
+- a fresh quorum-backed leader lease based on recent follower acknowledgements
+
+If that lease is stale, the leader first attempts a short quorum heartbeat barrier to refresh it. If it still cannot re-establish a linearizable read window, the query returns `status=RETRY` instead of serving a potentially stale read.
 
 For machine-readable inspection:
 
@@ -162,12 +170,34 @@ That emits a leader summary with:
 - blocking current/next quorum peers
 - per-member cluster view including reachability, freshness, health, lag, failure counts, and role-transition state
 
+For a narrower view focused only on membership change progress:
+
+```text
+java -jar target/raft.jar reconfiguration-status --json 127.0.0.1:10080
+```
+
+That emits:
+
+- whether a reconfiguration is active
+- whether the leader’s latest known configuration is in joint consensus
+- reconfiguration age
+- cluster health and quorum status as they relate to the transition
+- blocking current/next quorum peers
+- per-member transition detail for members involved in the change
+
 Per-member cluster summaries now expose:
 
 - `role`: the effective role currently presented by the leader view
 - `currentRole`: the role in the active committed configuration
 - `nextRole`: the role in the latest log-known target configuration
 - `roleTransition`: one of `steady`, `promoting`, `demoting`, `joining`, or `removing`
+- `transitionAgeMillis`: how long that peer has been in the current transition state
+- `blockingQuorums`: which quorum set the peer is currently blocking, if any (`current`, `next`, or `current,next`)
+- `blockingReason`: the primary reason the peer is blocking progress (`unreachable`, `replication-failures`, `lagging`, `stale`, or `role-transition`)
+
+Cluster summaries and telemetry summaries also expose:
+
+- `reconfigurationAgeMillis`: how long the current in-flight configuration change has been active on the leader
 
 That makes in-flight role changes visible before a learner promotion or voter demotion has fully finalized.
 
@@ -184,6 +214,7 @@ Rate limiting:
 - telemetry requests are rate-limited per requester id
 - default limit is `30` requests per minute per requester
 - configure with `-Draft.telemetry.rate.limit.per.minute=<n>`
+- long-running in-flight reconfiguration is flagged as `reconfiguration-stuck` once it exceeds `-Draft.telemetry.reconfiguration.stuck.millis=<n>` (default `60000`)
 
 Exporter scaffold:
 
@@ -206,13 +237,15 @@ Current exporter metrics include the usual Raft term/index/replication gauges pl
   `raft_members_demoting`
   `raft_members_joining`
   `raft_members_removing`
+  `raft_reconfiguration_age_millis`
 - OTLP:
   `raft.members.promoting`
   `raft.members.demoting`
   `raft.members.joining`
   `raft.members.removing`
+  `raft.reconfiguration.age.millis`
 
-Those counters are intended for alerting on long-running role changes or membership transitions that do not converge.
+Those counters and age gauges are intended for alerting on long-running role changes or membership transitions that do not converge. The leader summary will also surface `clusterStatusReason=reconfiguration-stuck` once the configured threshold is crossed.
 
 ## Next Steps
 There are no committed follow-up items at the moment.

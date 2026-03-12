@@ -113,6 +113,7 @@ public class RaftNode {
     private Runnable decommissionListener = () -> {};
     private List<String> pendingAutoFinalizeMembers = List.of();
     private long pendingAutoFinalizeFenceIndex;
+    private long configurationTransitionStartedMillis;
     private final java.util.Set<String> pendingJoinIds = new java.util.LinkedHashSet<>();
     // Leader-side chunk progress and follower-side partial assembly for InstallSnapshot streaming.
     private final Map<String, Long> snapshotOffsets = new HashMap<>();
@@ -142,6 +143,8 @@ public class RaftNode {
     private final PersistentStateStore persistentState;
     private final int snapshotMinEntries;
     private final int snapshotChunkBytes;
+    private final long linearizableReadLeaseMillis;
+    private final long linearizableReadTimeoutMillis;
 
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, RaftClient raftClient, LogStore logStore) {
         this(me, peers, timeoutMillis, messageHandler, (SnapshotStateMachine) null, raftClient, logStore, new InMemoryPersistentStateStore(), System::currentTimeMillis, new Random());
@@ -234,6 +237,8 @@ public class RaftNode {
         this.rng = rng;
         this.snapshotMinEntries = Integer.getInteger("raft.snapshot.min.entries", 1_000);
         this.snapshotChunkBytes = Integer.getInteger("raft.snapshot.chunk.bytes", 64 * 1024);
+        this.linearizableReadLeaseMillis = Long.getLong("raft.linearizable.read.lease.millis", Math.max(1L, timeoutMillis / 2L));
+        this.linearizableReadTimeoutMillis = Long.getLong("raft.linearizable.read.timeout.millis", Math.max(50L, Math.min(500L, timeoutMillis)));
         this.clusterConfiguration = ClusterConfiguration.stable(allConfiguredMembers());
         this.snapshotConfiguration = clusterConfiguration;
         var decodedSnapshot = ClusterConfigurationSnapshotCodec.decode(logStore.snapshotData());
@@ -382,6 +387,7 @@ public class RaftNode {
             long nextElectionDeadlineMillis,
             ClusterConfiguration configuration,
             ClusterConfiguration latestKnownConfiguration,
+            long configurationTransitionStartedMillis,
             List<Peer> knownPeers,
             List<String> pendingJoinIds,
             List<TelemetryReplicationStatus> replication
@@ -554,6 +560,11 @@ public class RaftNode {
             registerPeer(peer);
             normalized.add(canonicalPeer(peer));
         }
+        ClusterConfiguration proposedConfiguration = clusterConfiguration.transitionTo(normalized);
+        if (clusterConfiguration.sameMembershipAs(proposedConfiguration)) {
+            return true;
+        }
+        configurationTransitionStartedMillis = timeSource.nowMillis();
         return submitInternalCommand(ClusterConfigurationCommand.joint(normalized));
     }
 
@@ -1274,6 +1285,9 @@ public class RaftNode {
             registerPeer(peer);
         }
         ClusterConfiguration updated = baseConfiguration.transitionTo(proposedMembers);
+        if (updated.isJointConsensus() && !baseConfiguration.isJointConsensus() && configurationTransitionStartedMillis <= 0L) {
+            configurationTransitionStartedMillis = timeSource.nowMillis();
+        }
         if (updated.contains(me.getId())) {
             joining = false;
         }
@@ -1295,6 +1309,7 @@ public class RaftNode {
 
     private ClusterConfiguration applyFinalizedConfiguration(ClusterConfiguration baseConfiguration, boolean updateTransport) {
         ClusterConfiguration updated = baseConfiguration.finalizeTransition();
+        configurationTransitionStartedMillis = 0L;
         if (updated.contains(me.getId())) {
             joining = false;
         }
@@ -1432,6 +1447,105 @@ public class RaftNode {
         return queryableStateMachine.query(request);
     }
 
+    public synchronized boolean canServeLinearizableRead() {
+        if (state != State.LEADER || decommissioned) {
+            return false;
+        }
+        if (lastApplied < commitIndex) {
+            return false;
+        }
+
+        java.util.LinkedHashSet<String> freshVoters = new java.util.LinkedHashSet<>();
+        freshVoters.add(me.getId());
+        long now = timeSource.nowMillis();
+        long freshnessCutoff = Math.max(0L, now - linearizableReadLeaseMillis);
+        for (Peer peer : activeConfiguration().allVotingMembers()) {
+            if (me.getId().equals(peer.getId())) {
+                continue;
+            }
+            if (lastFollowerContactMillis.getOrDefault(peer.getId(), 0L) >= freshnessCutoff) {
+                freshVoters.add(peer.getId());
+            }
+        }
+        return activeConfiguration().hasJointMajority(freshVoters);
+    }
+
+    public boolean awaitLinearizableRead() {
+        if (canServeLinearizableRead()) {
+            return true;
+        }
+
+        final long termSnapshot;
+        final long commitSnapshot;
+        final long lastIndexSnapshot;
+        final List<Peer> targets;
+        synchronized (this) {
+            if (state != State.LEADER || decommissioned) {
+                return false;
+            }
+            termSnapshot = currentTerm;
+            commitSnapshot = commitIndex;
+            lastIndexSnapshot = logStore.lastIndex();
+            targets = List.copyOf(remoteVotingPeers());
+            if (targets.isEmpty()) {
+                return lastApplied >= commitIndex;
+            }
+        }
+
+        java.util.concurrent.ConcurrentHashMap.KeySetView<String, Boolean> acknowledgements = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        acknowledgements.add(me.getId());
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(targets.size());
+
+        for (Peer peer : targets) {
+            AppendEntriesRequest req = new AppendEntriesRequest(
+                    termSnapshot,
+                    me.getId(),
+                    lastIndexSnapshot,
+                    logStore.termAt(lastIndexSnapshot),
+                    commitSnapshot,
+                    List.of()
+            );
+            raftClient.sendAppendEntries(peer, req).whenComplete((resp, error) -> {
+                try {
+                    synchronized (RaftNode.this) {
+                        if (error == null && resp != null) {
+                            handleAppendEntriesResponse(peer, req, resp);
+                            if (state == State.LEADER && currentTerm == termSnapshot && resp.isSuccess()) {
+                                acknowledgements.add(peer.getId());
+                            }
+                        } else {
+                            recordFollowerReplicationFailure(peer.getId());
+                        }
+                    }
+                } finally {
+                    done.countDown();
+                }
+            });
+        }
+
+        long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(linearizableReadTimeoutMillis);
+        while (System.nanoTime() <= deadlineNanos) {
+            synchronized (this) {
+                if (activeConfiguration().hasJointMajority(acknowledgements) && canServeLinearizableRead()) {
+                    return true;
+                }
+            }
+            try {
+                if (done.await(10L, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    synchronized (this) {
+                        return activeConfiguration().hasJointMajority(acknowledgements) && canServeLinearizableRead();
+                    }
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        synchronized (this) {
+            return activeConfiguration().hasJointMajority(acknowledgements) && canServeLinearizableRead();
+        }
+    }
+
     public synchronized JoinStatus getJoinStatus(String peerId) {
         if (peerId == null || peerId.isBlank()) {
             return new JoinStatus(false, "INVALID", "Peer id must not be blank");
@@ -1489,6 +1603,7 @@ public class RaftNode {
                 nextElectionDeadlineMillis,
                 clusterConfiguration,
                 latestKnownConfiguration(),
+                configurationTransitionStartedMillis,
                 List.copyOf(knownPeers),
                 List.copyOf(pendingJoins),
                 List.copyOf(replication)

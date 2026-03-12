@@ -27,6 +27,9 @@ import org.gautelis.raft.protocol.ClientQueryResponse;
 import org.gautelis.raft.protocol.ClusterMemberSummary;
 import org.gautelis.raft.protocol.ClusterSummaryResponse;
 import org.gautelis.raft.protocol.JoinClusterResponse;
+import org.gautelis.raft.protocol.JoinClusterStatusResponse;
+import org.gautelis.raft.protocol.ReconfigureClusterResponse;
+import org.gautelis.raft.protocol.ReconfigurationStatusResponse;
 import org.gautelis.raft.protocol.TelemetryResponse;
 import org.gautelis.raft.protocol.VoteRequest;
 import org.gautelis.raft.protocol.VoteResponse;
@@ -36,8 +39,10 @@ import org.slf4j.LoggerFactory;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -47,6 +52,41 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientResponseHandlerTest {
     private static final Logger log = LoggerFactory.getLogger(ClientResponseHandlerTest.class);
+
+    private static ClientResponseHandler newHandler(
+            Map<String, CompletableFuture<VoteResponse>> inFlightVotes,
+            Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands,
+            Map<String, CompletableFuture<ClientQueryResponse>> inFlightClientQueries,
+            Map<String, CompletableFuture<ClusterSummaryResponse>> inFlightClusterSummary,
+            Map<String, CompletableFuture<ReconfigurationStatusResponse>> inFlightReconfigurationStatus,
+            Map<String, CompletableFuture<JoinClusterResponse>> inFlightJoinCluster,
+            Map<String, CompletableFuture<JoinClusterStatusResponse>> inFlightJoinStatus,
+            Map<String, CompletableFuture<ReconfigureClusterResponse>> inFlightReconfigureCluster,
+            Map<String, CompletableFuture<TelemetryResponse>> inFlightTelemetry,
+            MessageHandler messageHandler
+    ) {
+        return new ClientResponseHandler(
+                new java.util.HashMap<>(inFlightVotes),
+                new java.util.HashMap<String, CompletableFuture<org.gautelis.raft.protocol.AppendEntriesResponse>>(),
+                new java.util.HashMap<String, CompletableFuture<org.gautelis.raft.protocol.InstallSnapshotResponse>>(),
+                new java.util.HashMap<>(inFlightClientCommands),
+                new java.util.HashMap<>(inFlightClientQueries),
+                new java.util.HashMap<>(inFlightClusterSummary),
+                new java.util.HashMap<>(inFlightReconfigurationStatus),
+                new java.util.HashMap<>(inFlightJoinCluster),
+                new java.util.HashMap<>(inFlightJoinStatus),
+                new java.util.HashMap<>(inFlightReconfigureCluster),
+                new java.util.HashMap<>(inFlightTelemetry),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<String, ScheduledFuture<?>>(),
+                new java.util.HashMap<String, org.gautelis.vopn.statistics.RunningStatistics>(),
+                messageHandler
+        );
+    }
+
+    private static ClientResponseHandler newHandler(MessageHandler messageHandler) {
+        return newHandler(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), messageHandler);
+    }
 
     static class CapturingMessageHandler implements MessageHandler {
         String correlationId;
@@ -69,21 +109,7 @@ class ClientResponseHandlerTest {
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
         inFlight.put("corr-1", future);
 
-        ClientResponseHandler handler = new ClientResponseHandler(
-                inFlight,
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                null
-        );
+        ClientResponseHandler handler = newHandler(inFlight, Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
         VoteRequest req = new VoteRequest(2, "A");
@@ -108,22 +134,9 @@ class ClientResponseHandlerTest {
         log.info("*** Testcase *** JoinClusterResponse completes waiting future");
 
         CompletableFuture<JoinClusterResponse> future = new CompletableFuture<>();
+        Map<String, CompletableFuture<JoinClusterResponse>> inFlightJoinCluster = new java.util.HashMap<>(Map.of("corr-admin-1", future));
 
-        ClientResponseHandler handler = new ClientResponseHandler(
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(Map.of("corr-admin-1", future)),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                null
-        );
+        ClientResponseHandler handler = newHandler(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), inFlightJoinCluster, Map.of(), Map.of(), Map.of(), null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
         JoinClusterResponse resp = new JoinClusterResponse(5, "A", true, "PENDING", "Join request accepted", "A");
@@ -146,22 +159,9 @@ class ClientResponseHandlerTest {
         log.info("*** Testcase *** ClientCommandResponse completes waiting future");
 
         CompletableFuture<ClientCommandResponse> future = new CompletableFuture<>();
+        Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands = new java.util.HashMap<>(Map.of("corr-command-1", future));
 
-        ClientResponseHandler handler = new ClientResponseHandler(
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(Map.of("corr-command-1", future)),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                null
-        );
+        ClientResponseHandler handler = newHandler(Map.of(), inFlightClientCommands, Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
         ClientCommandResponse resp = new ClientCommandResponse(5, "A", true, "ACCEPTED", "Command accepted for replication", "A", "127.0.0.1", 10080);
@@ -187,21 +187,7 @@ class ClientResponseHandlerTest {
 
         CompletableFuture<ClientQueryResponse> future = new CompletableFuture<>();
 
-        ClientResponseHandler handler = new ClientResponseHandler(
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(Map.of("corr-query-1", future)),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                null
-        );
+        ClientResponseHandler handler = newHandler(Map.of(), Map.of(), Map.of("corr-query-1", future), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
         ClientQueryResponse resp = new ClientQueryResponse(5, "A", true, "OK", "Query completed", "A", "127.0.0.1", 10080, "result".getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -227,22 +213,7 @@ class ClientResponseHandlerTest {
 
         CompletableFuture<ClusterSummaryResponse> future = new CompletableFuture<>();
 
-        ClientResponseHandler handler = new ClientResponseHandler(
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(Map.of("corr-summary-1", future)),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                null
-        );
+        ClientResponseHandler handler = newHandler(Map.of(), Map.of(), Map.of(), Map.of("corr-summary-1", future), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
         ClusterSummaryResponse resp = new ClusterSummaryResponse(
@@ -265,9 +236,10 @@ class ClientResponseHandlerTest {
                 2,
                 2,
                 2,
+                0L,
                 java.util.List.of(),
                 java.util.List.of(),
-                java.util.List.of(new ClusterMemberSummary("A", true, true, false, true, "VOTER", "VOTER", "", "steady", true, "fresh", "local", 2L, 1L, 0L, 0, 100L, 0L))
+                java.util.List.of(new ClusterMemberSummary("A", true, true, false, true, "VOTER", "VOTER", "", "steady", 0L, "", "", true, "fresh", "local", 2L, 1L, 0L, 0, 100L, 0L))
         );
         Envelope envelope = ProtoMapper.wrap(
                 "corr-summary-1",
@@ -285,29 +257,64 @@ class ClientResponseHandlerTest {
     }
 
     @Test
+    void reconfigurationStatusResponseCompletesFuture() throws Exception {
+        log.info("*** Testcase *** ReconfigurationStatusResponse completes waiting future");
+
+        CompletableFuture<ReconfigurationStatusResponse> future = new CompletableFuture<>();
+        Map<String, CompletableFuture<ReconfigurationStatusResponse>> inFlightReconfigurationStatus =
+                new java.util.HashMap<>(Map.of("corr-reconfig-status-1", future));
+
+        ClientResponseHandler handler = newHandler(Map.of(), Map.of(), Map.of(), Map.of(), inFlightReconfigurationStatus, Map.of(), Map.of(), Map.of(), Map.of(), null);
+        EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+        ReconfigurationStatusResponse resp = new ReconfigurationStatusResponse(
+                250L,
+                5L,
+                "A",
+                true,
+                "OK",
+                "",
+                "",
+                0,
+                "LEADER",
+                "A",
+                true,
+                true,
+                3_000L,
+                "degraded",
+                "reconfiguration-stuck",
+                true,
+                true,
+                false,
+                java.util.List.of(),
+                java.util.List.of("D"),
+                java.util.List.of(new ClusterMemberSummary("D", false, false, true, false, "LEARNER", "", "LEARNER", "joining", 3_000L, "next", "role-transition", false, "stale", "down", 1L, 0L, 7L, 2, 0L, 250L))
+        );
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-reconfig-status-1",
+                "ReconfigurationStatusResponse",
+                ProtoMapper.toProto(resp).toByteString()
+        );
+
+        channel.writeInbound(envelope);
+
+        assertTrue(future.isDone());
+        assertEquals("reconfiguration-stuck", future.get().getClusterStatusReason());
+        assertEquals(List.of("D"), future.get().getBlockingNextQuorumPeerIds());
+        assertTrue(future.get().isReconfigurationActive());
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
     void telemetryResponseCompletesFuture() throws Exception {
         log.info("*** Testcase *** TelemetryResponse completes waiting future");
 
         CompletableFuture<TelemetryResponse> future = new CompletableFuture<>();
 
-        ClientResponseHandler handler = new ClientResponseHandler(
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(Map.of("corr-telemetry-1", future)),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                null
-        );
+        ClientResponseHandler handler = newHandler(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of("corr-telemetry-1", future), null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
-        TelemetryResponse resp = new TelemetryResponse(250L, 5, "A", true, "OK", "", "LEADER", "A", "", false, false, 7, 7, 8, 5, 0, 0, 100, 200, false, java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), "healthy", true, true, true, 1, 1, 1, "all-voters-healthy", java.util.List.of(), java.util.List.of(), java.util.List.of(new ClusterMemberSummary("A", true, true, false, true, "VOTER", "VOTER", "", "steady", true, "fresh", "local", 9L, 8L, 0L, 0, 100L, 0L)));
+        TelemetryResponse resp = new TelemetryResponse(250L, 5, "A", true, "OK", "", "LEADER", "A", "", false, false, 7, 7, 8, 5, 0, 0, 100, 200, false, java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), "healthy", true, true, true, 1, 1, 1, 0L, "all-voters-healthy", java.util.List.of(), java.util.List.of(), java.util.List.of(new ClusterMemberSummary("A", true, true, false, true, "VOTER", "VOTER", "", "steady", 0L, "", "", true, "fresh", "local", 9L, 8L, 0L, 0, 100L, 0L)));
         Envelope envelope = ProtoMapper.wrap(
                 "corr-telemetry-1",
                 "TelemetryResponse",
@@ -331,21 +338,7 @@ class ClientResponseHandlerTest {
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
         CapturingMessageHandler messageHandler = new CapturingMessageHandler();
 
-        ClientResponseHandler handler = new ClientResponseHandler(
-                inFlight,
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                messageHandler
-        );
+        ClientResponseHandler handler = newHandler(inFlight, Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), messageHandler);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
         byte[] payload = "ok".getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -364,21 +357,7 @@ class ClientResponseHandlerTest {
         log.info("*** Testcase *** Testing incomplete envelope; WARN logs expected for missing type/correlationId");
 
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
-        ClientResponseHandler handler = new ClientResponseHandler(
-                inFlight,
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                new java.util.HashMap<>(),
-                null
-        );
+        ClientResponseHandler handler = newHandler(inFlight, Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
         Envelope noType = Envelope.newBuilder()

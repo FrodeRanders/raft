@@ -16,26 +16,20 @@
  */
 package org.gautelis.raft.protocol;
 
-public record ClusterMemberSummary(
-        String peerId,
-        boolean local,
-        boolean currentMember,
-        boolean nextMember,
-        boolean voting,
-        String role,
-        String currentRole,
-        String nextRole,
-        String roleTransition,
-        long transitionAgeMillis,
-        String blockingQuorums,
-        String blockingReason,
-        boolean reachable,
-        String freshness,
-        String health,
-        long nextIndex,
-        long matchIndex,
-        long lag,
-        int consecutiveFailures,
-        long lastSuccessfulContactMillis,
-        long lastFailedContactMillis
-) {}
+public final class ReconfigurationStatusRequest {
+    private final long term;
+    private final String peerId;
+
+    public ReconfigurationStatusRequest(long term, String peerId) {
+        this.term = term;
+        this.peerId = peerId == null ? "" : peerId;
+    }
+
+    public long getTerm() {
+        return term;
+    }
+
+    public String getPeerId() {
+        return peerId;
+    }
+}

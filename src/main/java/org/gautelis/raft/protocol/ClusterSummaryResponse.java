@@ -38,6 +38,7 @@ public final class ClusterSummaryResponse {
     private final int votingMembers;
     private final int healthyVotingMembers;
     private final int reachableVotingMembers;
+    private final long reconfigurationAgeMillis;
     private final List<String> blockingCurrentQuorumPeerIds;
     private final List<String> blockingNextQuorumPeerIds;
     private final List<ClusterMemberSummary> members;
@@ -47,7 +48,7 @@ public final class ClusterSummaryResponse {
                                   String state, String leaderId, boolean jointConsensus, String clusterHealth,
                                   String clusterStatusReason, boolean quorumAvailable, boolean currentQuorumAvailable,
                                   boolean nextQuorumAvailable, int votingMembers, int healthyVotingMembers,
-                                  int reachableVotingMembers, List<String> blockingCurrentQuorumPeerIds,
+                                  int reachableVotingMembers, long reconfigurationAgeMillis, List<String> blockingCurrentQuorumPeerIds,
                                   List<String> blockingNextQuorumPeerIds, List<ClusterMemberSummary> members) {
         this.observedAtMillis = observedAtMillis;
         this.term = term;
@@ -68,6 +69,7 @@ public final class ClusterSummaryResponse {
         this.votingMembers = votingMembers;
         this.healthyVotingMembers = healthyVotingMembers;
         this.reachableVotingMembers = reachableVotingMembers;
+        this.reconfigurationAgeMillis = reconfigurationAgeMillis;
         this.blockingCurrentQuorumPeerIds = blockingCurrentQuorumPeerIds == null ? List.of() : List.copyOf(blockingCurrentQuorumPeerIds);
         this.blockingNextQuorumPeerIds = blockingNextQuorumPeerIds == null ? List.of() : List.copyOf(blockingNextQuorumPeerIds);
         this.members = members == null ? List.of() : List.copyOf(members);
@@ -92,6 +94,7 @@ public final class ClusterSummaryResponse {
     public int getVotingMembers() { return votingMembers; }
     public int getHealthyVotingMembers() { return healthyVotingMembers; }
     public int getReachableVotingMembers() { return reachableVotingMembers; }
+    public long getReconfigurationAgeMillis() { return reconfigurationAgeMillis; }
     public List<String> getBlockingCurrentQuorumPeerIds() { return blockingCurrentQuorumPeerIds; }
     public List<String> getBlockingNextQuorumPeerIds() { return blockingNextQuorumPeerIds; }
     public List<ClusterMemberSummary> getMembers() { return members; }

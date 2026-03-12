@@ -52,6 +52,7 @@ public final class TelemetryResponse {
     private final int votingMembers;
     private final int healthyVotingMembers;
     private final int reachableVotingMembers;
+    private final long reconfigurationAgeMillis;
     private final String clusterStatusReason;
     private final List<String> blockingCurrentQuorumPeerIds;
     private final List<String> blockingNextQuorumPeerIds;
@@ -67,8 +68,9 @@ public final class TelemetryResponse {
                              List<TelemetryPeerStats> peerStats, String clusterHealth,
                              boolean quorumAvailable, boolean currentQuorumAvailable, boolean nextQuorumAvailable,
                              int votingMembers, int healthyVotingMembers, int reachableVotingMembers,
-                             String clusterStatusReason, List<String> blockingCurrentQuorumPeerIds,
-                             List<String> blockingNextQuorumPeerIds, List<ClusterMemberSummary> clusterMembers) {
+                             long reconfigurationAgeMillis, String clusterStatusReason,
+                             List<String> blockingCurrentQuorumPeerIds, List<String> blockingNextQuorumPeerIds,
+                             List<ClusterMemberSummary> clusterMembers) {
         this.observedAtMillis = observedAtMillis;
         this.term = term;
         this.peerId = peerId;
@@ -102,6 +104,7 @@ public final class TelemetryResponse {
         this.votingMembers = votingMembers;
         this.healthyVotingMembers = healthyVotingMembers;
         this.reachableVotingMembers = reachableVotingMembers;
+        this.reconfigurationAgeMillis = reconfigurationAgeMillis;
         this.clusterStatusReason = clusterStatusReason == null ? "" : clusterStatusReason;
         this.blockingCurrentQuorumPeerIds = blockingCurrentQuorumPeerIds == null ? List.of() : List.copyOf(blockingCurrentQuorumPeerIds);
         this.blockingNextQuorumPeerIds = blockingNextQuorumPeerIds == null ? List.of() : List.copyOf(blockingNextQuorumPeerIds);
@@ -145,4 +148,5 @@ public final class TelemetryResponse {
     public List<String> getBlockingCurrentQuorumPeerIds() { return blockingCurrentQuorumPeerIds; }
     public List<String> getBlockingNextQuorumPeerIds() { return blockingNextQuorumPeerIds; }
     public List<ClusterMemberSummary> getClusterMembers() { return clusterMembers; }
+    public long getReconfigurationAgeMillis() { return reconfigurationAgeMillis; }
 }

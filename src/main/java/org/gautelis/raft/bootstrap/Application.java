@@ -29,6 +29,8 @@ import org.gautelis.raft.protocol.JoinClusterResponse;
 import org.gautelis.raft.protocol.JoinClusterStatusRequest;
 import org.gautelis.raft.protocol.JoinClusterStatusResponse;
 import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.protocol.ReconfigurationStatusRequest;
+import org.gautelis.raft.protocol.ReconfigurationStatusResponse;
 import org.gautelis.raft.protocol.ReconfigureClusterRequest;
 import org.gautelis.raft.protocol.ReconfigureClusterResponse;
 import org.gautelis.raft.protocol.StateMachineQuery;
@@ -58,6 +60,7 @@ public class Application {
             System.err.println("  java -jar target/raft.jar command <put|delete|clear> <target-port|target-host:port|id@target-host:port[/role]> [key] [value]");
             System.err.println("  java -jar target/raft.jar query get <target-port|target-host:port|id@target-host:port[/role]> <key>");
             System.err.println("  java -jar target/raft.jar cluster-summary [--json] <target-port|target-host:port|id@target-host:port[/role]>");
+            System.err.println("  java -jar target/raft.jar reconfiguration-status [--json] <target-port|target-host:port|id@target-host:port[/role]>");
             System.err.println("  java -jar target/raft.jar telemetry [--json] [--summary] <target-port|target-host:port|id@target-host:port[/role]>");
             System.err.println("  java -jar target/raft.jar join-request <target-port|target-host:port|id@target-host:port[/role]> <joining-port|joining-host:port|id@joining-host:port[/role]>");
             System.err.println("  java -jar target/raft.jar join-status <target-port|target-host:port|id@target-host:port[/role]> <joining-peer-id>");
@@ -79,6 +82,10 @@ public class Application {
         }
         if ("cluster-summary".equalsIgnoreCase(args[0])) {
             runClusterSummary(args);
+            return;
+        }
+        if ("reconfiguration-status".equalsIgnoreCase(args[0])) {
+            runReconfigurationStatus(args);
             return;
         }
         if ("join-request".equalsIgnoreCase(args[0])) {
@@ -187,6 +194,39 @@ public class Application {
             System.out.println(json ? renderClusterSummaryJson(response) : renderClusterSummary(response));
         } catch (Exception e) {
             System.err.println("Cluster summary request failed: " + e.getMessage());
+            System.exit(2);
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    private static void runReconfigurationStatus(String[] args) {
+        boolean json = false;
+        int targetIndex = -1;
+        for (int i = 1; i < args.length; i++) {
+            if ("--json".equalsIgnoreCase(args[i])) {
+                json = true;
+            } else {
+                targetIndex = i;
+                break;
+            }
+        }
+        if (args.length != targetIndex + 1) {
+            System.err.println("Usage: java -jar target/raft.jar reconfiguration-status [--json] <target-port|target-host:port|id@target-host:port>");
+            System.exit(1);
+        }
+
+        Peer target = parsePeerSpec(args[targetIndex], false);
+        RaftClient client = new RaftClient("reconfiguration-status-cli", null);
+        try {
+            ReconfigurationStatusResponse response = fetchReconfigurationStatus(client, target);
+            if (!response.isSuccess()) {
+                System.err.println("Reconfiguration status request failed for " + target.getId() + " status=" + response.getStatus());
+                System.exit(2);
+            }
+            System.out.println(json ? renderReconfigurationStatusJson(response) : renderReconfigurationStatus(response));
+        } catch (Exception e) {
+            System.err.println("Reconfiguration status request failed: " + e.getMessage());
             System.exit(2);
         } finally {
             client.shutdown();
@@ -653,6 +693,7 @@ public class Application {
         appendJsonField(out, "votingMembers", response.getVotingMembers(), true, 1);
         appendJsonField(out, "healthyVotingMembers", response.getHealthyVotingMembers(), true, 1);
         appendJsonField(out, "reachableVotingMembers", response.getReachableVotingMembers(), true, 1);
+        appendJsonField(out, "reconfigurationAgeMillis", response.getReconfigurationAgeMillis(), true, 1);
         appendJsonPeerArray(out, "currentMembers", response.getCurrentMembers(), true, 1);
         appendJsonPeerArray(out, "nextMembers", response.getNextMembers(), true, 1);
         appendJsonPeerArray(out, "knownPeers", response.getKnownPeers(), true, 1);
@@ -683,6 +724,7 @@ public class Application {
         appendJsonField(out, "votingMembers", response.getVotingMembers(), true, 1);
         appendJsonField(out, "healthyVotingMembers", response.getHealthyVotingMembers(), true, 1);
         appendJsonField(out, "reachableVotingMembers", response.getReachableVotingMembers(), true, 1);
+        appendJsonField(out, "reconfigurationAgeMillis", response.getReconfigurationAgeMillis(), true, 1);
         appendJsonStringArray(out, "blockingCurrentQuorumPeerIds", response.getBlockingCurrentQuorumPeerIds(), true, 1);
         appendJsonStringArray(out, "blockingNextQuorumPeerIds", response.getBlockingNextQuorumPeerIds(), false, 1);
         out.append("}");
@@ -704,6 +746,7 @@ public class Application {
                 .append(" quorum=").append(response.isQuorumAvailable())
                 .append(" currentQuorum=").append(response.isCurrentQuorumAvailable())
                 .append(" nextQuorum=").append(response.isNextQuorumAvailable())
+                .append(" reconfigAgeMillis=").append(response.getReconfigurationAgeMillis())
                 .append(" healthyVoters=").append(response.getHealthyVotingMembers()).append('/').append(response.getVotingMembers())
                 .append(" reachableVoters=").append(response.getReachableVotingMembers()).append('/').append(response.getVotingMembers());
         if (!response.getBlockingCurrentQuorumPeerIds().isEmpty()) {
@@ -720,6 +763,9 @@ public class Application {
                     .append(" currentRole=").append(member.currentRole().isBlank() ? "-" : member.currentRole().toLowerCase(Locale.ROOT))
                     .append(" nextRole=").append(member.nextRole().isBlank() ? "-" : member.nextRole().toLowerCase(Locale.ROOT))
                     .append(" transition=").append(member.roleTransition())
+                    .append(" transitionAgeMillis=").append(member.transitionAgeMillis())
+                    .append(" blockingQuorums=").append(member.blockingQuorums().isBlank() ? "-" : member.blockingQuorums())
+                    .append(" blockingReason=").append(member.blockingReason().isBlank() ? "-" : member.blockingReason())
                     .append(" voting=").append(member.voting())
                     .append(" local=").append(member.local())
                     .append(" current=").append(member.currentMember())
@@ -765,6 +811,81 @@ public class Application {
         return out.toString();
     }
 
+    private static String renderReconfigurationStatus(ReconfigurationStatusResponse response) {
+        StringBuilder out = new StringBuilder();
+        out.append("ReconfigurationStatus peer=").append(response.getPeerId())
+                .append(" status=").append(response.getStatus())
+                .append(" state=").append(response.getState())
+                .append(" term=").append(response.getTerm());
+        if (!response.getLeaderId().isBlank()) {
+            out.append(" leader=").append(response.getLeaderId());
+        }
+        out.append('\n');
+        out.append("Reconfiguration: active=").append(response.isReconfigurationActive())
+                .append(" jointConsensus=").append(response.isJointConsensus())
+                .append(" ageMillis=").append(response.getReconfigurationAgeMillis())
+                .append(" clusterHealth=").append(response.getClusterHealth())
+                .append(" reason=").append(response.getClusterStatusReason())
+                .append(" quorum=").append(response.isQuorumAvailable())
+                .append(" currentQuorum=").append(response.isCurrentQuorumAvailable())
+                .append(" nextQuorum=").append(response.isNextQuorumAvailable());
+        if (!response.getBlockingCurrentQuorumPeerIds().isEmpty()) {
+            out.append(" blockingCurrent=").append(response.getBlockingCurrentQuorumPeerIds());
+        }
+        if (!response.getBlockingNextQuorumPeerIds().isEmpty()) {
+            out.append(" blockingNext=").append(response.getBlockingNextQuorumPeerIds());
+        }
+        out.append('\n');
+        out.append("Members:\n");
+        for (var member : response.getMembers()) {
+            if ("steady".equals(member.roleTransition()) && member.blockingQuorums().isBlank()) {
+                continue;
+            }
+            out.append("  ").append(member.peerId())
+                    .append(" currentRole=").append(member.currentRole().isBlank() ? "-" : member.currentRole().toLowerCase(Locale.ROOT))
+                    .append(" nextRole=").append(member.nextRole().isBlank() ? "-" : member.nextRole().toLowerCase(Locale.ROOT))
+                    .append(" transition=").append(member.roleTransition())
+                    .append(" transitionAgeMillis=").append(member.transitionAgeMillis())
+                    .append(" blockingQuorums=").append(member.blockingQuorums().isBlank() ? "-" : member.blockingQuorums())
+                    .append(" blockingReason=").append(member.blockingReason().isBlank() ? "-" : member.blockingReason())
+                    .append(" health=").append(member.health())
+                    .append(" reachable=").append(member.reachable())
+                    .append(" freshness=").append(member.freshness())
+                    .append(" failures=").append(member.consecutiveFailures())
+                    .append(" lag=").append(member.lag())
+                    .append('\n');
+        }
+        return out.toString().trim();
+    }
+
+    private static String renderReconfigurationStatusJson(ReconfigurationStatusResponse response) {
+        StringBuilder out = new StringBuilder();
+        out.append("{\n");
+        appendJsonField(out, "observedAtMillis", response.getObservedAtMillis(), true, 1);
+        appendJsonField(out, "peerId", response.getPeerId(), true, 1);
+        appendJsonField(out, "success", response.isSuccess(), true, 1);
+        appendJsonField(out, "status", response.getStatus(), true, 1);
+        appendJsonField(out, "redirectLeaderId", response.getRedirectLeaderId(), true, 1);
+        appendJsonField(out, "redirectLeaderHost", response.getRedirectLeaderHost(), true, 1);
+        appendJsonField(out, "redirectLeaderPort", response.getRedirectLeaderPort(), true, 1);
+        appendJsonField(out, "state", response.getState(), true, 1);
+        appendJsonField(out, "leaderId", response.getLeaderId(), true, 1);
+        appendJsonField(out, "term", response.getTerm(), true, 1);
+        appendJsonField(out, "reconfigurationActive", response.isReconfigurationActive(), true, 1);
+        appendJsonField(out, "jointConsensus", response.isJointConsensus(), true, 1);
+        appendJsonField(out, "reconfigurationAgeMillis", response.getReconfigurationAgeMillis(), true, 1);
+        appendJsonField(out, "clusterHealth", response.getClusterHealth(), true, 1);
+        appendJsonField(out, "clusterStatusReason", response.getClusterStatusReason(), true, 1);
+        appendJsonField(out, "quorumAvailable", response.isQuorumAvailable(), true, 1);
+        appendJsonField(out, "currentQuorumAvailable", response.isCurrentQuorumAvailable(), true, 1);
+        appendJsonField(out, "nextQuorumAvailable", response.isNextQuorumAvailable(), true, 1);
+        appendJsonStringArray(out, "blockingCurrentQuorumPeerIds", response.getBlockingCurrentQuorumPeerIds(), true, 1);
+        appendJsonStringArray(out, "blockingNextQuorumPeerIds", response.getBlockingNextQuorumPeerIds(), true, 1);
+        appendJsonClusterMembers(out, "members", response.getMembers(), false, 1);
+        out.append("}");
+        return out.toString();
+    }
+
     private static void appendClusterView(StringBuilder out, TelemetryResponse response) {
         if (!"LEADER".equals(response.getState())) {
             return;
@@ -783,6 +904,9 @@ public class Application {
                     .append(" currentRole=").append(member.currentRole().isBlank() ? "-" : member.currentRole().toLowerCase(Locale.ROOT))
                     .append(" nextRole=").append(member.nextRole().isBlank() ? "-" : member.nextRole().toLowerCase(Locale.ROOT))
                     .append(" transition=").append(member.roleTransition())
+                    .append(" transitionAgeMillis=").append(member.transitionAgeMillis())
+                    .append(" blockingQuorums=").append(member.blockingQuorums().isBlank() ? "-" : member.blockingQuorums())
+                    .append(" blockingReason=").append(member.blockingReason().isBlank() ? "-" : member.blockingReason())
                     .append(" nodeRole=").append(member.local() ? "leader" : "peer")
                     .append(" current=").append(member.currentMember())
                     .append(" next=").append(member.nextMember())
@@ -827,6 +951,20 @@ public class Application {
             response = client.sendClusterSummaryRequest(
                     new Peer(response.getRedirectLeaderId(), new InetSocketAddress(response.getRedirectLeaderHost(), response.getRedirectLeaderPort())),
                     new ClusterSummaryRequest(0L, "cluster-summary-cli")
+            ).get(5, TimeUnit.SECONDS);
+        }
+        return response;
+    }
+
+    private static ReconfigurationStatusResponse fetchReconfigurationStatus(RaftClient client, Peer target) throws Exception {
+        ReconfigurationStatusResponse response = client.sendReconfigurationStatusRequest(
+                target,
+                new ReconfigurationStatusRequest(0L, "reconfiguration-status-cli")
+        ).get(5, TimeUnit.SECONDS);
+        if ("REDIRECT".equals(response.getStatus()) && !response.getRedirectLeaderHost().isBlank() && response.getRedirectLeaderPort() > 0) {
+            response = client.sendReconfigurationStatusRequest(
+                    new Peer(response.getRedirectLeaderId(), new InetSocketAddress(response.getRedirectLeaderHost(), response.getRedirectLeaderPort())),
+                    new ReconfigurationStatusRequest(0L, "reconfiguration-status-cli")
             ).get(5, TimeUnit.SECONDS);
         }
         return response;
@@ -1050,6 +1188,9 @@ public class Application {
                     .append(", \"currentRole\": \"").append(escapeJson(member.currentRole())).append('"')
                     .append(", \"nextRole\": \"").append(escapeJson(member.nextRole())).append('"')
                     .append(", \"roleTransition\": \"").append(escapeJson(member.roleTransition())).append('"')
+                    .append(", \"transitionAgeMillis\": ").append(member.transitionAgeMillis())
+                    .append(", \"blockingQuorums\": \"").append(escapeJson(member.blockingQuorums())).append('"')
+                    .append(", \"blockingReason\": \"").append(escapeJson(member.blockingReason())).append('"')
                     .append(", \"reachable\": ").append(member.reachable())
                     .append(", \"freshness\": \"").append(escapeJson(member.freshness())).append('"')
                     .append(", \"health\": \"").append(escapeJson(member.health())).append('"')

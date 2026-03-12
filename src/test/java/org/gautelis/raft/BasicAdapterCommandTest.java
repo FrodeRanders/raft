@@ -25,6 +25,8 @@ import org.gautelis.raft.protocol.ClientCommandRequest;
 import org.gautelis.raft.protocol.ClientCommandResponse;
 import org.gautelis.raft.protocol.ClientQueryRequest;
 import org.gautelis.raft.protocol.ClientQueryResponse;
+import org.gautelis.raft.protocol.AppendEntriesRequest;
+import org.gautelis.raft.protocol.AppendEntriesResponse;
 import org.gautelis.raft.protocol.ClusterSummaryRequest;
 import org.gautelis.raft.protocol.ClusterSummaryResponse;
 import org.gautelis.raft.protocol.JoinClusterRequest;
@@ -32,6 +34,8 @@ import org.gautelis.raft.protocol.JoinClusterResponse;
 import org.gautelis.raft.protocol.JoinClusterStatusRequest;
 import org.gautelis.raft.protocol.JoinClusterStatusResponse;
 import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.protocol.ReconfigurationStatusRequest;
+import org.gautelis.raft.protocol.ReconfigurationStatusResponse;
 import org.gautelis.raft.protocol.ReconfigureClusterRequest;
 import org.gautelis.raft.protocol.ReconfigureClusterResponse;
 import org.gautelis.raft.protocol.StateMachineQuery;
@@ -79,6 +83,40 @@ class BasicAdapterCommandTest {
         @Override
         public void shutdown() {
             // no-op in tests
+        }
+    }
+
+    static final class ImmediateRaftClient extends NoopRaftClient {
+        private final Map<String, RaftNode> nodesById;
+
+        ImmediateRaftClient(Map<String, RaftNode> nodesById) {
+            this.nodesById = nodesById;
+        }
+
+        @Override
+        public io.netty.util.concurrent.Future<List<VoteResponse>> requestVoteFromAll(java.util.Collection<Peer> peers, VoteRequest voteReq) {
+            var promise = io.netty.util.concurrent.ImmediateEventExecutor.INSTANCE.<List<VoteResponse>>newPromise();
+            java.util.ArrayList<VoteResponse> responses = new java.util.ArrayList<>();
+            for (Peer peer : peers) {
+                RaftNode node = nodesById.get(peer.getId());
+                if (node != null) {
+                    responses.add(node.handleVoteRequest(voteReq));
+                }
+            }
+            promise.setSuccess(responses);
+            return promise;
+        }
+
+        @Override
+        public java.util.concurrent.CompletableFuture<AppendEntriesResponse> sendAppendEntries(Peer peer, AppendEntriesRequest req) {
+            java.util.concurrent.CompletableFuture<AppendEntriesResponse> future = new java.util.concurrent.CompletableFuture<>();
+            RaftNode node = nodesById.get(peer.getId());
+            if (node == null) {
+                future.complete(new AppendEntriesResponse(req.getTerm(), peer.getId(), false, -1));
+            } else {
+                future.complete(node.handleAppendEntries(req));
+            }
+            return future;
         }
     }
 
@@ -131,6 +169,10 @@ class BasicAdapterCommandTest {
 
         ClusterSummaryResponse clusterSummary(ClusterSummaryRequest request) {
             return handleClusterSummaryRequest(request);
+        }
+
+        ReconfigurationStatusResponse reconfigurationStatus(ReconfigurationStatusRequest request) {
+            return handleReconfigurationStatusRequest(request);
         }
     }
 
@@ -553,6 +595,86 @@ class BasicAdapterCommandTest {
     }
 
     @Test
+    void leaderRejectsTypedClientQueryWhenLinearizableReadLeaseIsStale() {
+        announce("Typed query lease: leader rejects query when quorum-backed linearizable read lease is stale");
+        Peer a = new Peer("A", null);
+        Peer b = new Peer("B", null);
+
+        RaftNodeElectionTest.MutableTime time = new RaftNodeElectionTest.MutableTime(0);
+        Map<String, RaftNode> nodes = new HashMap<>();
+        RaftNodeElectionTest.QueuedRaftClient clientA = new RaftNodeElectionTest.QueuedRaftClient("A", nodes);
+        RaftNodeElectionTest.QueuedRaftClient clientB = new RaftNodeElectionTest.QueuedRaftClient("B", nodes);
+
+        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, new KeyValueStateMachine(), clientA, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(1));
+        RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new KeyValueStateMachine(), clientB, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(2));
+        nodes.put("A", nodeA);
+        nodes.put("B", nodeB);
+
+        nodeA.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        nodeA.electionTickForTest();
+        clientA.flush();
+        nodeA.heartbeatTickForTest();
+        clientA.flush();
+        assertTrue(nodeA.isLeader());
+
+        TestAdapter adapterA = new TestAdapter(a, List.of(b));
+        adapterA.bind(nodeA);
+
+        time.set(10_100);
+        ClientQueryResponse response = adapterA.query(new ClientQueryRequest(
+                nodeA.getTerm(), "client", StateMachineQuery.get("x").encode()
+        ));
+
+        assertFalse(response.isSuccess());
+        assertEquals("RETRY", response.getStatus());
+    }
+
+    @Test
+    void leaderRefreshesLinearizableReadLeaseViaReadBarrierHeartbeat() {
+        announce("Typed query barrier: leader refreshes stale linearizable read lease via quorum heartbeat before serving query");
+        Peer a = new Peer("A", null);
+        Peer b = new Peer("B", null);
+
+        MutableTime time = new MutableTime(0);
+        Map<String, RaftNode> nodes = new HashMap<>();
+        ImmediateRaftClient clientA = new ImmediateRaftClient(nodes);
+        ImmediateRaftClient clientB = new ImmediateRaftClient(nodes);
+
+        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, new KeyValueStateMachine(), clientA, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(1));
+        RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new KeyValueStateMachine(), clientB, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(2));
+        nodes.put("A", nodeA);
+        nodes.put("B", nodeB);
+
+        nodeA.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        nodeA.electionTickForTest();
+        nodeA.handleVoteResponsesForTest(List.of(
+                new VoteResponse(new VoteRequest(1L, "A", 0L, 0L), "B", true, 1L)
+        ), 1);
+        assertTrue(nodeA.isLeader());
+
+        nodeA.submitCommand(StateMachineCommand.put("x", "42").encode());
+
+        TestAdapter adapterA = new TestAdapter(a, List.of(b));
+        adapterA.bind(nodeA);
+
+        time.set(10_100);
+        assertFalse(nodeA.canServeLinearizableRead());
+
+        ClientQueryResponse response = adapterA.query(new ClientQueryRequest(
+                nodeA.getTerm(), "client", StateMachineQuery.get("x").encode()
+        ));
+
+        assertTrue(response.isSuccess());
+        assertEquals("OK", response.getStatus());
+        StateMachineQueryResult result = StateMachineQueryResult.decode(response.getResult()).orElseThrow();
+        assertTrue(result.isFound());
+        assertEquals("42", result.getValue());
+        assertTrue(nodeA.canServeLinearizableRead());
+    }
+
+    @Test
     void telemetrySummarizesNodeStateAndStats() {
         announce("Telemetry snapshot: adapter exposes node state, membership, and transport statistics");
         Peer me = peer("A");
@@ -657,6 +779,40 @@ class BasicAdapterCommandTest {
         assertEquals("A", summary.getRedirectLeaderId());
         assertEquals("127.0.0.1", summary.getRedirectLeaderHost());
         assertEquals(10080, summary.getRedirectLeaderPort());
+    }
+
+    @Test
+    void reconfigurationStatusRedirectsFollowersToLeaderEndpoint() {
+        announce("Reconfiguration status redirect: follower points focused reconfiguration status request at known leader endpoint");
+        Peer a = new Peer("A", new java.net.InetSocketAddress("127.0.0.1", 10080));
+        Peer b = new Peer("B", new java.net.InetSocketAddress("127.0.0.1", 10081));
+
+        RaftNodeElectionTest.MutableTime time = new RaftNodeElectionTest.MutableTime(0);
+        Map<String, RaftNode> nodes = new HashMap<>();
+        RaftNodeElectionTest.QueuedRaftClient clientA = new RaftNodeElectionTest.QueuedRaftClient("A", nodes);
+        RaftNodeElectionTest.QueuedRaftClient clientB = new RaftNodeElectionTest.QueuedRaftClient("B", nodes);
+
+        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, new KeyValueStateMachine(), clientA, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(1));
+        RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new KeyValueStateMachine(), clientB, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(2));
+        nodes.put("A", nodeA);
+        nodes.put("B", nodeB);
+
+        nodeA.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        nodeA.electionTickForTest();
+        clientA.flush();
+        nodeA.heartbeatTickForTest();
+        clientA.flush();
+
+        TestAdapter adapterB = new TestAdapter(b, List.of(a));
+        adapterB.bind(nodeB);
+        ReconfigurationStatusResponse status = adapterB.reconfigurationStatus(new ReconfigurationStatusRequest(nodeB.getTerm(), "client"));
+
+        assertFalse(status.isSuccess());
+        assertEquals("REDIRECT", status.getStatus());
+        assertEquals("A", status.getRedirectLeaderId());
+        assertEquals("127.0.0.1", status.getRedirectLeaderHost());
+        assertEquals(10080, status.getRedirectLeaderPort());
     }
 
     @Test
@@ -868,6 +1024,99 @@ class BasicAdapterCommandTest {
         assertFalse(telemetry.isQuorumAvailable());
         assertTrue(telemetry.getBlockingCurrentQuorumPeerIds().isEmpty());
         assertEquals(List.of("D", "E"), telemetry.getBlockingNextQuorumPeerIds());
+    }
+
+    @Test
+    void leaderTelemetryFlagsStuckReconfiguration() {
+        announce("Telemetry stuck reconfiguration: leader reports long-running membership transition explicitly");
+        String previous = System.getProperty("raft.telemetry.reconfiguration.stuck.millis");
+        System.setProperty("raft.telemetry.reconfiguration.stuck.millis", "1000");
+        try {
+            Peer a = new Peer("A", null);
+            Peer b = new Peer("B", null);
+            Peer d = learner("D");
+
+            RaftNodeElectionTest.MutableTime time = new RaftNodeElectionTest.MutableTime(0);
+            Map<String, RaftNode> nodes = new HashMap<>();
+            RaftNodeElectionTest.QueuedRaftClient clientA = new RaftNodeElectionTest.QueuedRaftClient("A", nodes);
+            RaftNodeElectionTest.QueuedRaftClient clientB = new RaftNodeElectionTest.QueuedRaftClient("B", nodes);
+
+            RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, new KeyValueStateMachine(), clientA, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(1));
+            RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new KeyValueStateMachine(), clientB, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(2));
+            nodes.put("A", nodeA);
+            nodes.put("B", nodeB);
+
+            nodeA.setLastHeartbeatMillisForTest(0);
+            time.set(10_000);
+            nodeA.electionTickForTest();
+            clientA.flush();
+            nodeA.heartbeatTickForTest();
+            clientA.flush();
+            assertTrue(nodeA.isLeader());
+
+            TestAdapter adapterA = new TestAdapter(a, List.of(b));
+            adapterA.bind(nodeA);
+
+            assertTrue(nodeA.submitJoinConfigurationChange(d));
+            time.set(12_500);
+
+            ClusterSummaryResponse summary = adapterA.clusterSummary(new ClusterSummaryRequest(nodeA.getTerm(), "client"));
+            assertEquals("degraded", summary.getClusterHealth());
+            assertEquals("reconfiguration-stuck", summary.getClusterStatusReason());
+            assertTrue(summary.getReconfigurationAgeMillis() >= 2_500L);
+
+            TelemetryResponse telemetry = adapterA.telemetry(new TelemetryRequest(nodeA.getTerm(), "client", false, false));
+            assertEquals("degraded", telemetry.getClusterHealth());
+            assertEquals("reconfiguration-stuck", telemetry.getClusterStatusReason());
+            assertTrue(telemetry.getReconfigurationAgeMillis() >= 2_500L);
+        } finally {
+            if (previous == null) {
+                System.clearProperty("raft.telemetry.reconfiguration.stuck.millis");
+            } else {
+                System.setProperty("raft.telemetry.reconfiguration.stuck.millis", previous);
+            }
+        }
+    }
+
+    @Test
+    void reconfigurationStatusFocusesOnTransitionAndBlockers() {
+        announce("Reconfiguration status view: leader exposes focused transition age and blocker detail");
+        Peer a = new Peer("A", null);
+        Peer b = new Peer("B", null);
+        Peer d = learner("D");
+
+        RaftNodeElectionTest.MutableTime time = new RaftNodeElectionTest.MutableTime(0);
+        Map<String, RaftNode> nodes = new HashMap<>();
+        RaftNodeElectionTest.QueuedRaftClient clientA = new RaftNodeElectionTest.QueuedRaftClient("A", nodes);
+        RaftNodeElectionTest.QueuedRaftClient clientB = new RaftNodeElectionTest.QueuedRaftClient("B", nodes);
+
+        RaftNode nodeA = new RaftNode(a, List.of(b), 100, null, new KeyValueStateMachine(), clientA, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(1));
+        RaftNode nodeB = new RaftNode(b, List.of(a), 100, null, new KeyValueStateMachine(), clientB, new InMemoryLogStore(), new InMemoryPersistentStateStore(), time, new Random(2));
+        nodes.put("A", nodeA);
+        nodes.put("B", nodeB);
+
+        nodeA.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        nodeA.electionTickForTest();
+        clientA.flush();
+        nodeA.heartbeatTickForTest();
+        clientA.flush();
+        assertTrue(nodeA.isLeader());
+
+        TestAdapter adapterA = new TestAdapter(a, List.of(b));
+        adapterA.bind(nodeA);
+
+        assertTrue(nodeA.submitJoinConfigurationChange(d));
+        time.set(12_500);
+
+        ReconfigurationStatusResponse status = adapterA.reconfigurationStatus(new ReconfigurationStatusRequest(nodeA.getTerm(), "client"));
+        assertTrue(status.isSuccess());
+        assertTrue(status.isReconfigurationActive());
+        assertTrue(status.isJointConsensus());
+        assertTrue(status.getReconfigurationAgeMillis() >= 2_500L);
+        var joining = status.getMembers().stream().filter(member -> "D".equals(member.peerId())).findFirst().orElseThrow();
+        assertEquals("joining", joining.roleTransition());
+        assertEquals("LEARNER", joining.nextRole());
     }
 
     @Test

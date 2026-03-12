@@ -69,6 +69,7 @@ public class RaftClient {
     private final Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<ClientQueryResponse>> inFlightClientQueries = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<ClusterSummaryResponse>> inFlightClusterSummary = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<ReconfigurationStatusResponse>> inFlightReconfigurationStatus = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<JoinClusterResponse>> inFlightJoinCluster = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<JoinClusterStatusResponse>> inFlightJoinStatus = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<ReconfigureClusterResponse>> inFlightReconfigureCluster = new ConcurrentHashMap<>();
@@ -87,7 +88,7 @@ public class RaftClient {
                 ChannelPipeline p = ch.pipeline();
                 p.addLast(new ProtobufLiteDecoder());
                 p.addLast(new ProtobufLiteEncoder());
-                p.addLast(new ClientResponseHandler(inFlightRequests, inFlightAppendEntries, inFlightInstallSnapshot, inFlightClientCommands, inFlightClientQueries, inFlightClusterSummary, inFlightJoinCluster, inFlightJoinStatus, inFlightReconfigureCluster, inFlightTelemetry, requestTimings, requestTimeouts, peerResponseStats, messageHandler));
+                p.addLast(new ClientResponseHandler(inFlightRequests, inFlightAppendEntries, inFlightInstallSnapshot, inFlightClientCommands, inFlightClientQueries, inFlightClusterSummary, inFlightReconfigurationStatus, inFlightJoinCluster, inFlightJoinStatus, inFlightReconfigureCluster, inFlightTelemetry, requestTimings, requestTimeouts, peerResponseStats, messageHandler));
             }
         };
     }
@@ -583,14 +584,14 @@ public class RaftClient {
         if (channel == null || !channel.isActive()) {
             connect(peer).addListener((ChannelFuture cf) -> {
                 if (!cf.isSuccess()) {
-                    outbound.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "UNREACHABLE", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, List.of(), List.of(), List.of()));
+                    outbound.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "UNREACHABLE", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, 0L, List.of(), List.of(), List.of()));
                     return;
                 }
                 Channel newChannel = cf.channel();
                 channels.put(peer, newChannel);
                 sendClusterSummaryRequestOverChannel(newChannel, peer, request).whenComplete((response, error) -> {
                     if (error != null) {
-                        outbound.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, List.of(), List.of(), List.of()));
+                        outbound.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, 0L, List.of(), List.of(), List.of()));
                     } else {
                         outbound.complete(response);
                     }
@@ -599,7 +600,40 @@ public class RaftClient {
         } else {
             sendClusterSummaryRequestOverChannel(channel, peer, request).whenComplete((response, error) -> {
                 if (error != null) {
-                    outbound.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, List.of(), List.of(), List.of()));
+                    outbound.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, 0L, List.of(), List.of(), List.of()));
+                } else {
+                    outbound.complete(response);
+                }
+            });
+        }
+        return outbound;
+    }
+
+    public CompletableFuture<ReconfigurationStatusResponse> sendReconfigurationStatusRequest(Peer peer, ReconfigurationStatusRequest request) {
+        knownPeers.add(peer);
+
+        CompletableFuture<ReconfigurationStatusResponse> outbound = new CompletableFuture<>();
+        Channel channel = channels.get(peer);
+        if (channel == null || !channel.isActive()) {
+            connect(peer).addListener((ChannelFuture cf) -> {
+                if (!cf.isSuccess()) {
+                    outbound.complete(new ReconfigurationStatusResponse(0L, request.getTerm(), peer.getId(), false, "UNREACHABLE", "", "", 0, "", "", false, false, 0L, "", "", false, false, false, List.of(), List.of(), List.of()));
+                    return;
+                }
+                Channel newChannel = cf.channel();
+                channels.put(peer, newChannel);
+                sendReconfigurationStatusRequestOverChannel(newChannel, peer, request).whenComplete((response, error) -> {
+                    if (error != null) {
+                        outbound.complete(new ReconfigurationStatusResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", 0, "", "", false, false, 0L, "", "", false, false, false, List.of(), List.of(), List.of()));
+                    } else {
+                        outbound.complete(response);
+                    }
+                });
+            });
+        } else {
+            sendReconfigurationStatusRequestOverChannel(channel, peer, request).whenComplete((response, error) -> {
+                if (error != null) {
+                    outbound.complete(new ReconfigurationStatusResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", 0, "", "", false, false, 0L, "", "", false, false, false, List.of(), List.of(), List.of()));
                 } else {
                     outbound.complete(response);
                 }
@@ -682,14 +716,14 @@ public class RaftClient {
         if (channel == null || !channel.isActive()) {
             connect(peer).addListener((ChannelFuture cf) -> {
                 if (!cf.isSuccess()) {
-                    outbound.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "UNREACHABLE", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, "", List.of(), List.of(), List.of()));
+                    outbound.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "UNREACHABLE", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, 0L, "", List.of(), List.of(), List.of()));
                     return;
                 }
                 Channel newChannel = cf.channel();
                 channels.put(peer, newChannel);
                 sendTelemetryRequestOverChannel(newChannel, peer, request).whenComplete((response, error) -> {
                     if (error != null) {
-                        outbound.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, "", List.of(), List.of(), List.of()));
+                        outbound.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, 0L, "", List.of(), List.of(), List.of()));
                     } else {
                         outbound.complete(response);
                     }
@@ -698,7 +732,7 @@ public class RaftClient {
         } else {
             sendTelemetryRequestOverChannel(channel, peer, request).whenComplete((response, error) -> {
                 if (error != null) {
-                    outbound.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, "", List.of(), List.of(), List.of()));
+                    outbound.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, 0L, "", List.of(), List.of(), List.of()));
                 } else {
                     outbound.complete(response);
                 }
@@ -871,7 +905,7 @@ public class RaftClient {
             inFlightClusterSummary.remove(correlationId);
             requestTimings.remove(correlationId);
             requestTimeouts.remove(correlationId);
-            future.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "TIMEOUT", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, List.of(), List.of(), List.of()));
+            future.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "TIMEOUT", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, 0L, List.of(), List.of(), List.of()));
         }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
         requestTimeouts.put(correlationId, timeoutTask);
 
@@ -891,6 +925,49 @@ public class RaftClient {
             });
         } catch (Exception e) {
             inFlightClusterSummary.remove(correlationId);
+            requestTimings.remove(correlationId);
+            ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+            if (pendingTimeout != null) {
+                pendingTimeout.cancel(false);
+            }
+            future.completeExceptionally(e);
+        }
+        return future;
+    }
+
+    private CompletableFuture<ReconfigurationStatusResponse> sendReconfigurationStatusRequestOverChannel(Channel ch, Peer peer, ReconfigurationStatusRequest request) {
+        String correlationId = java.util.UUID.randomUUID().toString();
+        CompletableFuture<ReconfigurationStatusResponse> future = new CompletableFuture<>();
+        inFlightReconfigurationStatus.put(correlationId, future);
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+
+        ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            inFlightReconfigurationStatus.remove(correlationId);
+            requestTimings.remove(correlationId);
+            requestTimeouts.remove(correlationId);
+            future.complete(new ReconfigurationStatusResponse(0L, request.getTerm(), peer.getId(), false, "TIMEOUT", "", "", 0, "", "", false, false, 0L, "", "", false, false, false, List.of(), List.of(), List.of()));
+        }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
+        requestTimeouts.put(correlationId, timeoutTask);
+
+        try {
+            var protoRequest = ProtoMapper.toProto(request);
+            Envelope envelope = ProtoMapper.wrap(correlationId, "ReconfigurationStatusRequest", protoRequest.toByteString());
+            ch.writeAndFlush(envelope).addListener(f -> {
+                if (!f.isSuccess()) {
+                    inFlightReconfigurationStatus.remove(correlationId);
+                    requestTimings.remove(correlationId);
+                    ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+                    if (pendingTimeout != null) {
+                        pendingTimeout.cancel(false);
+                    }
+                    future.completeExceptionally(f.cause());
+                }
+            });
+        } catch (Exception e) {
+            inFlightReconfigurationStatus.remove(correlationId);
             requestTimings.remove(correlationId);
             ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
             if (pendingTimeout != null) {
@@ -1043,7 +1120,7 @@ public class RaftClient {
             inFlightTelemetry.remove(correlationId);
             requestTimings.remove(correlationId);
             requestTimeouts.remove(correlationId);
-            future.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "TIMEOUT", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, "", List.of(), List.of(), List.of()));
+            future.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "TIMEOUT", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, 0L, "", List.of(), List.of(), List.of()));
         }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
         requestTimeouts.put(correlationId, timeoutTask);
 

@@ -244,6 +244,11 @@ message ClusterSummaryRequest {
   string peer_id = 2;
 }
 
+message ReconfigurationStatusRequest {
+  int64 term = 1;
+  string peer_id = 2;
+}
+
 message ClusterMemberSummary {
   string peer_id = 1;
   bool local = 2;
@@ -254,15 +259,18 @@ message ClusterMemberSummary {
   string current_role = 7;
   string next_role = 8;
   string role_transition = 9;
-  bool reachable = 10;
-  string freshness = 11;
-  string health = 12;
-  int64 next_index = 13;
-  int64 match_index = 14;
-  int64 lag = 15;
-  int32 consecutive_failures = 16;
-  int64 last_successful_contact_millis = 17;
-  int64 last_failed_contact_millis = 18;
+  int64 transition_age_millis = 10;
+  string blocking_quorums = 11;
+  string blocking_reason = 12;
+  bool reachable = 13;
+  string freshness = 14;
+  string health = 15;
+  int64 next_index = 16;
+  int64 match_index = 17;
+  int64 lag = 18;
+  int32 consecutive_failures = 19;
+  int64 last_successful_contact_millis = 20;
+  int64 last_failed_contact_millis = 21;
 }
 
 message ClusterSummaryResponse {
@@ -285,9 +293,34 @@ message ClusterSummaryResponse {
   int32 voting_members = 17;
   int32 healthy_voting_members = 18;
   int32 reachable_voting_members = 19;
-  repeated string blocking_current_quorum_peer_ids = 20;
-  repeated string blocking_next_quorum_peer_ids = 21;
-  repeated ClusterMemberSummary members = 22;
+  int64 reconfiguration_age_millis = 20;
+  repeated string blocking_current_quorum_peer_ids = 21;
+  repeated string blocking_next_quorum_peer_ids = 22;
+  repeated ClusterMemberSummary members = 23;
+}
+
+message ReconfigurationStatusResponse {
+  int64 observed_at_millis = 1;
+  int64 term = 2;
+  string peer_id = 3;
+  bool success = 4;
+  string status = 5;
+  string redirect_leader_id = 6;
+  string redirect_leader_host = 7;
+  int32 redirect_leader_port = 8;
+  string state = 9;
+  string leader_id = 10;
+  bool reconfiguration_active = 11;
+  bool joint_consensus = 12;
+  int64 reconfiguration_age_millis = 13;
+  string cluster_health = 14;
+  string cluster_status_reason = 15;
+  bool quorum_available = 16;
+  bool current_quorum_available = 17;
+  bool next_quorum_available = 18;
+  repeated string blocking_current_quorum_peer_ids = 19;
+  repeated string blocking_next_quorum_peer_ids = 20;
+  repeated ClusterMemberSummary members = 21;
 }
 
 message TelemetryResponse {
@@ -328,4 +361,5 @@ message TelemetryResponse {
   repeated string blocking_current_quorum_peer_ids = 35;
   repeated string blocking_next_quorum_peer_ids = 36;
   repeated ClusterMemberSummary cluster_members = 37;
+  int64 reconfiguration_age_millis = 38;
 }

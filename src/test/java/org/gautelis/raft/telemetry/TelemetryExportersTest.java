@@ -72,6 +72,7 @@ class TelemetryExportersTest {
                     1200L,
                     active,
                     target,
+                    500L,
                     List.of(),
                     List.of(),
                     List.of(new TelemetryReplicationStatus("B", 14L, 12L, true, 995L, 0, 0L))
@@ -90,6 +91,7 @@ class TelemetryExportersTest {
             assertTrue(response.body().contains("raft_transport_response_mean_millis{peer_id=\"A\",remote_peer_id=\"B\"} 1.500"));
             assertTrue(response.body().contains("raft_members_promoting{peer_id=\"A\"} 1"));
             assertTrue(response.body().contains("raft_members_demoting{peer_id=\"A\"} 1"));
+            assertTrue(response.body().contains("raft_reconfiguration_age_millis{peer_id=\"A\"} 500"));
         } finally {
             exporter.close();
         }
@@ -123,6 +125,7 @@ class TelemetryExportersTest {
             assertTrue(body.get().contains("\"name\":\"raft.term\""));
             assertTrue(body.get().contains("\"name\":\"raft.members.promoting\""));
             assertTrue(body.get().contains("\"name\":\"raft.members.demoting\""));
+            assertTrue(body.get().contains("\"name\":\"raft.reconfiguration.age.millis\""));
             assertTrue(body.get().contains("\"key\":\"remote.peer.id\""));
             assertTrue(body.get().contains("\"stringValue\":\"B\""));
         } finally {
@@ -178,6 +181,7 @@ class TelemetryExportersTest {
                 1200L,
                 active,
                 target,
+                500L,
                 List.of(),
                 List.of(),
                 List.of(new TelemetryReplicationStatus("B", 14L, 12L, true, 995L, 0, 0L))

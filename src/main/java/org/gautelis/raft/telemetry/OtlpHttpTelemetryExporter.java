@@ -137,6 +137,9 @@ final class OtlpHttpTelemetryExporter implements TelemetryExporter {
                 attrs("peer.id", snapshot.peerId()));
         firstMetric = appendLongGauge(out, firstMetric, "raft.members.removing", "Members present in active configuration but not target configuration", "1", timeUnixNano, transitionCount(snapshot.configuration(), snapshot.latestKnownConfiguration(), "removing"),
                 attrs("peer.id", snapshot.peerId()));
+        firstMetric = appendLongGauge(out, firstMetric, "raft.reconfiguration.age.millis", "Age of the current in-flight reconfiguration", "ms", timeUnixNano,
+                snapshot.configurationTransitionStartedMillis() <= 0L ? 0L : Math.max(0L, snapshot.observedAtMillis() - snapshot.configurationTransitionStartedMillis()),
+                attrs("peer.id", snapshot.peerId()));
         firstMetric = appendLongGauge(out, firstMetric, "raft.joint.consensus", "Joint consensus flag", "1", timeUnixNano, snapshot.configuration().isJointConsensus() ? 1 : 0,
                 attrs("peer.id", snapshot.peerId()));
         firstMetric = appendLongGauge(out, firstMetric, "raft.joining", "Joining flag", "1", timeUnixNano, snapshot.joining() ? 1 : 0,

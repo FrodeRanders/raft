@@ -113,6 +113,7 @@ public final class PrometheusTelemetryExporter implements TelemetryExporter {
         appendGauge(out, "raft_members_demoting", transitionCount(snapshot.configuration(), snapshot.latestKnownConfiguration(), "demoting"), labels("peer_id", snapshot.peerId()));
         appendGauge(out, "raft_members_joining", transitionCount(snapshot.configuration(), snapshot.latestKnownConfiguration(), "joining"), labels("peer_id", snapshot.peerId()));
         appendGauge(out, "raft_members_removing", transitionCount(snapshot.configuration(), snapshot.latestKnownConfiguration(), "removing"), labels("peer_id", snapshot.peerId()));
+        appendGauge(out, "raft_reconfiguration_age_millis", snapshot.configurationTransitionStartedMillis() <= 0L ? 0L : Math.max(0L, snapshot.observedAtMillis() - snapshot.configurationTransitionStartedMillis()), labels("peer_id", snapshot.peerId()));
 
         for (TelemetryReplicationStatus replication : snapshot.replication()) {
             String labels = labels("peer_id", snapshot.peerId(), "remote_peer_id", replication.peerId());

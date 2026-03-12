@@ -23,6 +23,8 @@ import org.gautelis.raft.protocol.ClientCommandResponse;
 import org.gautelis.raft.protocol.ClientQueryRequest;
 import org.gautelis.raft.protocol.ClientQueryResponse;
 import org.gautelis.raft.protocol.ClusterMemberSummary;
+import org.gautelis.raft.protocol.ReconfigurationStatusRequest;
+import org.gautelis.raft.protocol.ReconfigurationStatusResponse;
 import org.gautelis.raft.protocol.ClusterSummaryRequest;
 import org.gautelis.raft.protocol.ClusterSummaryResponse;
 import org.gautelis.raft.protocol.JoinClusterRequest;
@@ -291,6 +293,17 @@ public final class ProtoMapper {
         return new ClusterSummaryRequest(request.getTerm(), request.getPeerId());
     }
 
+    public static org.gautelis.raft.proto.ReconfigurationStatusRequest toProto(ReconfigurationStatusRequest request) {
+        return org.gautelis.raft.proto.ReconfigurationStatusRequest.newBuilder()
+                .setTerm(request.getTerm())
+                .setPeerId(request.getPeerId())
+                .build();
+    }
+
+    public static ReconfigurationStatusRequest fromProto(org.gautelis.raft.proto.ReconfigurationStatusRequest request) {
+        return new ReconfigurationStatusRequest(request.getTerm(), request.getPeerId());
+    }
+
     public static org.gautelis.raft.proto.ClusterSummaryResponse toProto(ClusterSummaryResponse response) {
         var builder = org.gautelis.raft.proto.ClusterSummaryResponse.newBuilder()
                 .setObservedAtMillis(response.getObservedAtMillis())
@@ -312,6 +325,7 @@ public final class ProtoMapper {
                 .setVotingMembers(response.getVotingMembers())
                 .setHealthyVotingMembers(response.getHealthyVotingMembers())
                 .setReachableVotingMembers(response.getReachableVotingMembers())
+                .setReconfigurationAgeMillis(response.getReconfigurationAgeMillis())
                 .addAllBlockingCurrentQuorumPeerIds(response.getBlockingCurrentQuorumPeerIds())
                 .addAllBlockingNextQuorumPeerIds(response.getBlockingNextQuorumPeerIds());
         for (ClusterMemberSummary member : response.getMembers()) {
@@ -325,6 +339,9 @@ public final class ProtoMapper {
                     .setCurrentRole(member.currentRole() == null ? "" : member.currentRole())
                     .setNextRole(member.nextRole() == null ? "" : member.nextRole())
                     .setRoleTransition(member.roleTransition() == null ? "" : member.roleTransition())
+                    .setTransitionAgeMillis(member.transitionAgeMillis())
+                    .setBlockingQuorums(member.blockingQuorums() == null ? "" : member.blockingQuorums())
+                    .setBlockingReason(member.blockingReason() == null ? "" : member.blockingReason())
                     .setReachable(member.reachable())
                     .setFreshness(member.freshness() == null ? "" : member.freshness())
                     .setHealth(member.health() == null ? "" : member.health())
@@ -351,6 +368,9 @@ public final class ProtoMapper {
                     member.getCurrentRole(),
                     member.getNextRole(),
                     member.getRoleTransition(),
+                    member.getTransitionAgeMillis(),
+                    member.getBlockingQuorums(),
+                    member.getBlockingReason(),
                     member.getReachable(),
                     member.getFreshness(),
                     member.getHealth(),
@@ -382,6 +402,109 @@ public final class ProtoMapper {
                 response.getVotingMembers(),
                 response.getHealthyVotingMembers(),
                 response.getReachableVotingMembers(),
+                response.getReconfigurationAgeMillis(),
+                response.getBlockingCurrentQuorumPeerIdsList(),
+                response.getBlockingNextQuorumPeerIdsList(),
+                members
+        );
+    }
+
+    public static org.gautelis.raft.proto.ReconfigurationStatusResponse toProto(ReconfigurationStatusResponse response) {
+        var builder = org.gautelis.raft.proto.ReconfigurationStatusResponse.newBuilder()
+                .setObservedAtMillis(response.getObservedAtMillis())
+                .setTerm(response.getTerm())
+                .setPeerId(response.getPeerId())
+                .setSuccess(response.isSuccess())
+                .setStatus(response.getStatus())
+                .setRedirectLeaderId(response.getRedirectLeaderId())
+                .setRedirectLeaderHost(response.getRedirectLeaderHost())
+                .setRedirectLeaderPort(response.getRedirectLeaderPort())
+                .setState(response.getState())
+                .setLeaderId(response.getLeaderId())
+                .setReconfigurationActive(response.isReconfigurationActive())
+                .setJointConsensus(response.isJointConsensus())
+                .setReconfigurationAgeMillis(response.getReconfigurationAgeMillis())
+                .setClusterHealth(response.getClusterHealth())
+                .setClusterStatusReason(response.getClusterStatusReason())
+                .setQuorumAvailable(response.isQuorumAvailable())
+                .setCurrentQuorumAvailable(response.isCurrentQuorumAvailable())
+                .setNextQuorumAvailable(response.isNextQuorumAvailable())
+                .addAllBlockingCurrentQuorumPeerIds(response.getBlockingCurrentQuorumPeerIds())
+                .addAllBlockingNextQuorumPeerIds(response.getBlockingNextQuorumPeerIds());
+
+        for (ClusterMemberSummary member : response.getMembers()) {
+            builder.addMembers(org.gautelis.raft.proto.ClusterMemberSummary.newBuilder()
+                    .setPeerId(member.peerId())
+                    .setLocal(member.local())
+                    .setCurrentMember(member.currentMember())
+                    .setNextMember(member.nextMember())
+                    .setVoting(member.voting())
+                    .setRole(member.role())
+                    .setCurrentRole(member.currentRole())
+                    .setNextRole(member.nextRole())
+                    .setRoleTransition(member.roleTransition())
+                    .setTransitionAgeMillis(member.transitionAgeMillis())
+                    .setBlockingQuorums(member.blockingQuorums() == null ? "" : member.blockingQuorums())
+                    .setBlockingReason(member.blockingReason() == null ? "" : member.blockingReason())
+                    .setReachable(member.reachable())
+                    .setFreshness(member.freshness())
+                    .setHealth(member.health())
+                    .setNextIndex(member.nextIndex())
+                    .setMatchIndex(member.matchIndex())
+                    .setLag(member.lag())
+                    .setConsecutiveFailures(member.consecutiveFailures())
+                    .setLastSuccessfulContactMillis(member.lastSuccessfulContactMillis())
+                    .setLastFailedContactMillis(member.lastFailedContactMillis())
+                    .build());
+        }
+        return builder.build();
+    }
+
+    public static ReconfigurationStatusResponse fromProto(org.gautelis.raft.proto.ReconfigurationStatusResponse response) {
+        java.util.List<ClusterMemberSummary> members = response.getMembersList().stream()
+                .map(member -> new ClusterMemberSummary(
+                        member.getPeerId(),
+                        member.getLocal(),
+                        member.getCurrentMember(),
+                        member.getNextMember(),
+                        member.getVoting(),
+                        member.getRole(),
+                        member.getCurrentRole(),
+                        member.getNextRole(),
+                        member.getRoleTransition(),
+                        member.getTransitionAgeMillis(),
+                        member.getBlockingQuorums(),
+                        member.getBlockingReason(),
+                        member.getReachable(),
+                        member.getFreshness(),
+                        member.getHealth(),
+                        member.getNextIndex(),
+                        member.getMatchIndex(),
+                        member.getLag(),
+                        member.getConsecutiveFailures(),
+                        member.getLastSuccessfulContactMillis(),
+                        member.getLastFailedContactMillis()
+                ))
+                .toList();
+        return new ReconfigurationStatusResponse(
+                response.getObservedAtMillis(),
+                response.getTerm(),
+                response.getPeerId(),
+                response.getSuccess(),
+                response.getStatus(),
+                response.getRedirectLeaderId(),
+                response.getRedirectLeaderHost(),
+                response.getRedirectLeaderPort(),
+                response.getState(),
+                response.getLeaderId(),
+                response.getReconfigurationActive(),
+                response.getJointConsensus(),
+                response.getReconfigurationAgeMillis(),
+                response.getClusterHealth(),
+                response.getClusterStatusReason(),
+                response.getQuorumAvailable(),
+                response.getCurrentQuorumAvailable(),
+                response.getNextQuorumAvailable(),
                 response.getBlockingCurrentQuorumPeerIdsList(),
                 response.getBlockingNextQuorumPeerIdsList(),
                 members
@@ -579,6 +702,7 @@ public final class ProtoMapper {
                 .setHealthyVotingMembers(response.getHealthyVotingMembers())
                 .setReachableVotingMembers(response.getReachableVotingMembers())
                 .setClusterStatusReason(response.getClusterStatusReason() == null ? "" : response.getClusterStatusReason());
+        builder.setReconfigurationAgeMillis(response.getReconfigurationAgeMillis());
         builder.addAllBlockingCurrentQuorumPeerIds(response.getBlockingCurrentQuorumPeerIds());
         builder.addAllBlockingNextQuorumPeerIds(response.getBlockingNextQuorumPeerIds());
         for (var peer : response.getCurrentMembers()) {
@@ -623,6 +747,9 @@ public final class ProtoMapper {
                     .setCurrentRole(member.currentRole() == null ? "" : member.currentRole())
                     .setNextRole(member.nextRole() == null ? "" : member.nextRole())
                     .setRoleTransition(member.roleTransition() == null ? "" : member.roleTransition())
+                    .setTransitionAgeMillis(member.transitionAgeMillis())
+                    .setBlockingQuorums(member.blockingQuorums() == null ? "" : member.blockingQuorums())
+                    .setBlockingReason(member.blockingReason() == null ? "" : member.blockingReason())
                     .setReachable(member.reachable())
                     .setFreshness(member.freshness() == null ? "" : member.freshness())
                     .setHealth(member.health() == null ? "" : member.health())
@@ -677,6 +804,9 @@ public final class ProtoMapper {
                     member.getCurrentRole(),
                     member.getNextRole(),
                     member.getRoleTransition(),
+                    member.getTransitionAgeMillis(),
+                    member.getBlockingQuorums(),
+                    member.getBlockingReason(),
                     member.getReachable(),
                     member.getFreshness(),
                     member.getHealth(),
@@ -722,6 +852,7 @@ public final class ProtoMapper {
                 response.getVotingMembers(),
                 response.getHealthyVotingMembers(),
                 response.getReachableVotingMembers(),
+                response.getReconfigurationAgeMillis(),
                 response.getClusterStatusReason(),
                 response.getBlockingCurrentQuorumPeerIdsList(),
                 response.getBlockingNextQuorumPeerIdsList(),
@@ -788,6 +919,22 @@ public final class ProtoMapper {
     public static Optional<org.gautelis.raft.proto.ClusterSummaryResponse> parseClusterSummaryResponse(byte[] payload) {
         try {
             return Optional.of(org.gautelis.raft.proto.ClusterSummaryResponse.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.ReconfigurationStatusRequest> parseReconfigurationStatusRequest(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.ReconfigurationStatusRequest.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.ReconfigurationStatusResponse> parseReconfigurationStatusResponse(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.ReconfigurationStatusResponse.parseFrom(payload));
         } catch (InvalidProtocolBufferException e) {
             return Optional.empty();
         }

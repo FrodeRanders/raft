@@ -26,6 +26,7 @@ import org.gautelis.raft.protocol.ClusterSummaryResponse;
 import org.gautelis.raft.protocol.InstallSnapshotResponse;
 import org.gautelis.raft.protocol.JoinClusterResponse;
 import org.gautelis.raft.protocol.JoinClusterStatusResponse;
+import org.gautelis.raft.protocol.ReconfigurationStatusResponse;
 import org.gautelis.raft.protocol.ReconfigureClusterResponse;
 import org.gautelis.raft.protocol.TelemetryResponse;
 import org.gautelis.raft.protocol.VoteResponse;
@@ -53,6 +54,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
     private final Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands;
     private final Map<String, CompletableFuture<ClientQueryResponse>> inFlightClientQueries;
     private final Map<String, CompletableFuture<ClusterSummaryResponse>> inFlightClusterSummary;
+    private final Map<String, CompletableFuture<ReconfigurationStatusResponse>> inFlightReconfigurationStatus;
     private final Map<String, CompletableFuture<JoinClusterResponse>> inFlightJoinCluster;
     private final Map<String, CompletableFuture<JoinClusterStatusResponse>> inFlightJoinStatus;
     private final Map<String, CompletableFuture<ReconfigureClusterResponse>> inFlightReconfigureCluster;
@@ -60,6 +62,41 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
     private final Map<String, RequestTiming> requestTimings;
     private final Map<String, ScheduledFuture<?>> requestTimeouts;
     private final Map<String, RunningStatistics> peerResponseStats;
+
+    public ClientResponseHandler(
+            Map<String, CompletableFuture<VoteResponse>> inFlightRequests,
+            Map<String, CompletableFuture<AppendEntriesResponse>> inFlightAppendEntries,
+            Map<String, CompletableFuture<InstallSnapshotResponse>> inFlightInstallSnapshot,
+            Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands,
+            Map<String, CompletableFuture<ClientQueryResponse>> inFlightClientQueries,
+            Map<String, CompletableFuture<ClusterSummaryResponse>> inFlightClusterSummary,
+            Map<String, CompletableFuture<JoinClusterResponse>> inFlightJoinCluster,
+            Map<String, CompletableFuture<JoinClusterStatusResponse>> inFlightJoinStatus,
+            Map<String, CompletableFuture<ReconfigureClusterResponse>> inFlightReconfigureCluster,
+            Map<String, CompletableFuture<TelemetryResponse>> inFlightTelemetry,
+            Map<String, RequestTiming> requestTimings,
+            Map<String, ScheduledFuture<?>> requestTimeouts,
+            Map<String, RunningStatistics> peerResponseStats,
+            MessageHandler messageHandler
+    ) {
+        this(
+                inFlightRequests,
+                inFlightAppendEntries,
+                inFlightInstallSnapshot,
+                inFlightClientCommands,
+                inFlightClientQueries,
+                inFlightClusterSummary,
+                new java.util.HashMap<>(),
+                inFlightJoinCluster,
+                inFlightJoinStatus,
+                inFlightReconfigureCluster,
+                inFlightTelemetry,
+                requestTimings,
+                requestTimeouts,
+                peerResponseStats,
+                messageHandler
+        );
+    }
 
     public ClientResponseHandler(
             Map<String, CompletableFuture<VoteResponse>> inFlightRequests,
@@ -83,6 +120,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 inFlightClientCommands,
                 inFlightClientQueries,
                 new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
                 inFlightJoinCluster,
                 inFlightJoinStatus,
                 inFlightReconfigureCluster,
@@ -101,6 +139,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
             Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands,
             Map<String, CompletableFuture<ClientQueryResponse>> inFlightClientQueries,
             Map<String, CompletableFuture<ClusterSummaryResponse>> inFlightClusterSummary,
+            Map<String, CompletableFuture<ReconfigurationStatusResponse>> inFlightReconfigurationStatus,
             Map<String, CompletableFuture<JoinClusterResponse>> inFlightJoinCluster,
             Map<String, CompletableFuture<JoinClusterStatusResponse>> inFlightJoinStatus,
             Map<String, CompletableFuture<ReconfigureClusterResponse>> inFlightReconfigureCluster,
@@ -116,6 +155,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
         this.inFlightClientCommands = inFlightClientCommands;
         this.inFlightClientQueries = inFlightClientQueries;
         this.inFlightClusterSummary = inFlightClusterSummary;
+        this.inFlightReconfigurationStatus = inFlightReconfigurationStatus;
         this.inFlightJoinCluster = inFlightJoinCluster;
         this.inFlightJoinStatus = inFlightJoinStatus;
         this.inFlightReconfigureCluster = inFlightReconfigureCluster;
@@ -323,6 +363,28 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                     log.trace("Received ClusterSummaryResponse from {} for correlationId={}", clusterSummaryResponse.getPeerId(), correlationId);
                 } else {
                     log.warn("No future found for ClusterSummaryResponse correlationId={}", correlationId);
+                }
+            }
+
+            case "ReconfigurationStatusResponse" -> {
+                var response = ProtoMapper.parseReconfigurationStatusResponse(payload);
+                if (response.isEmpty()) {
+                    log.warn("Failed to parse ReconfigurationStatusResponse payload");
+                    return;
+                }
+                ReconfigurationStatusResponse reconfigurationStatusResponse = ProtoMapper.fromProto(response.get());
+
+                CompletableFuture<ReconfigurationStatusResponse> fut = inFlightReconfigurationStatus.remove(correlationId);
+                requestTimings.remove(correlationId);
+                ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
+                if (timeoutTask != null) {
+                    timeoutTask.cancel(false);
+                }
+                if (fut != null) {
+                    fut.complete(reconfigurationStatusResponse);
+                    log.trace("Received ReconfigurationStatusResponse from {} for correlationId={}", reconfigurationStatusResponse.getPeerId(), correlationId);
+                } else {
+                    log.warn("No future found for ReconfigurationStatusResponse correlationId={}", correlationId);
                 }
             }
 
