@@ -32,6 +32,30 @@
             </Policies>
             <DefaultRolloverStrategy max="9"/>
         </RollingFile>
+
+        <RollingFile name="TELEMETRY"
+                     fileName="${log-path}/telemetry.log"
+                     filePattern="${log-path}/telemetry-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [TELEMETRY]%n%m%n</pattern>
+            </PatternLayout>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="10 MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="9"/>
+        </RollingFile>
+
+        <RollingFile name="OTEL"
+                     fileName="${log-path}/otel.log"
+                     filePattern="${log-path}/otel-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [OTEL] %m%n</pattern>
+            </PatternLayout>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="10 MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="9"/>
+        </RollingFile>
     </Appenders>
 
     <Loggers>
@@ -40,6 +64,14 @@
 
         <logger name="STATISTICS" level="INFO">
             <appender-ref ref="STATISTICS"/>
+        </logger>
+
+        <logger name="TELEMETRY" level="INFO" additivity="false">
+            <appender-ref ref="TELEMETRY"/>
+        </logger>
+
+        <logger name="OTEL" level="INFO" additivity="false">
+            <appender-ref ref="OTEL"/>
         </logger>
 
         <Root level="DEBUG">

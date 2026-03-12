@@ -14,28 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.gautelis.raft.protocol;
+package org.gautelis.raft.statemachine;
 
-public class AdminCommand {
-    private long term;
-    private String peerId;
-    private String command;
-
-    public AdminCommand(long term, String peerId, String command) {
-        this.term = term;
-        this.peerId = peerId;
-        this.command = command;
-    }
-
-    public long getTerm() {
-        return term;
-    }
-
-    public String getPeerId() {
-        return peerId;
-    }
-
-    public String getCommand() {
-        return command;
-    }
+public interface QueryableStateMachine extends SnapshotStateMachine {
+    byte[] query(byte[] request);
 }

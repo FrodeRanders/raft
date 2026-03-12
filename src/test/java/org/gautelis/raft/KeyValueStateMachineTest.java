@@ -16,6 +16,9 @@
  */
 package org.gautelis.raft;
 
+import org.gautelis.raft.protocol.StateMachineCommand;
+import org.gautelis.raft.protocol.StateMachineQuery;
+import org.gautelis.raft.protocol.StateMachineQueryResult;
 import org.gautelis.raft.storage.*;
 import org.gautelis.raft.statemachine.*;
 import org.gautelis.raft.transport.netty.*;
@@ -27,6 +30,8 @@ import org.slf4j.LoggerFactory;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KeyValueStateMachineTest {
     private static final Logger log = LoggerFactory.getLogger(KeyValueStateMachineTest.class);
@@ -35,9 +40,9 @@ class KeyValueStateMachineTest {
     void applyAndSnapshotRestoreRoundtrip() {
         log.info("*** Testcase *** KeyValue state machine roundtrip: verifies apply mutations survive snapshot/restore with deterministic state");
         KeyValueStateMachine sm = new KeyValueStateMachine();
-        sm.apply(1, "set a 1");
-        sm.apply(1, "put b hello");
-        sm.apply(1, "del a");
+        sm.apply(1, StateMachineCommand.put("a", "1").encode());
+        sm.apply(1, StateMachineCommand.put("b", "hello").encode());
+        sm.apply(1, StateMachineCommand.delete("a").encode());
 
         assertNull(sm.get("a"));
         assertEquals("hello", sm.get("b"));
@@ -48,5 +53,20 @@ class KeyValueStateMachineTest {
 
         assertNull(restored.get("a"));
         assertEquals("hello", restored.get("b"));
+    }
+
+    @Test
+    void queryReturnsTypedGetResult() {
+        log.info("*** Testcase *** KeyValue query result: verifies structured get query returns found/value state");
+        KeyValueStateMachine sm = new KeyValueStateMachine();
+        sm.apply(1, StateMachineCommand.put("a", "1").encode());
+
+        StateMachineQueryResult result = StateMachineQueryResult.decode(sm.query(StateMachineQuery.get("a").encode())).orElseThrow();
+        StateMachineQueryResult missing = StateMachineQueryResult.decode(sm.query(StateMachineQuery.get("missing").encode())).orElseThrow();
+
+        assertEquals("a", result.getKey());
+        assertEquals("1", result.getValue());
+        assertTrue(result.isFound());
+        assertFalse(missing.isFound());
     }
 }

@@ -22,6 +22,7 @@ import org.gautelis.raft.transport.netty.*;
 import org.gautelis.raft.serialization.ProtoMapper;
 
 import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.protocol.VoteRequest;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -187,5 +188,33 @@ class RaftNodeConfigValidationTest {
         assertTrue(node.isLeader());
 
         assertFalse(node.submitFinalizeConfigurationChange());
+    }
+
+    @Test
+    void learnerNodeStaysFollowerAndDoesNotVote() {
+        announce("Learner election suppression: learner members stay follower and reject vote requests");
+        Peer a = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
+        Peer b = new Peer("B", new InetSocketAddress("127.0.0.1", 10081));
+        Peer learner = new Peer("L", new InetSocketAddress("127.0.0.1", 10082), Peer.Role.LEARNER);
+
+        RaftNodeElectionTest.MutableTime time = new RaftNodeElectionTest.MutableTime(0);
+        RaftNode node = new RaftNode(
+                learner,
+                List.of(a, b),
+                100,
+                null,
+                new NoopRaftClient(),
+                new InMemoryLogStore(),
+                new InMemoryPersistentStateStore(),
+                time,
+                new Random(1)
+        );
+
+        node.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        node.electionTickForTest();
+
+        assertFalse(node.isLeader());
+        assertFalse(node.handleVoteRequest(new VoteRequest(1L, "A", 0L, 0L)).isVoteGranted());
     }
 }

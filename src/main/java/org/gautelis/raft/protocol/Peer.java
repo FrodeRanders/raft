@@ -20,29 +20,46 @@ import java.net.InetSocketAddress;
 import java.util.Objects;
 
 public class Peer {
+    public enum Role {
+        VOTER,
+        LEARNER
+    }
+
     private String id;
     private InetSocketAddress address;
+    private Role role;
+
     public Peer(String id, InetSocketAddress address) {
+        this(id, address, Role.VOTER);
+    }
+
+    public Peer(String id, InetSocketAddress address, Role role) {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("Peer id must be non-null and non-blank");
         }
         this.id = id;
         this.address = address;
+        this.role = role == null ? Role.VOTER : role;
     }
 
     public String getId() { return id; }
     public InetSocketAddress getAddress() { return address; }
+    public Role getRole() { return role; }
+    public boolean isVoter() { return role == Role.VOTER; }
+    public boolean isLearner() { return role == Role.LEARNER; }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof Peer peer)) return false;
-        return Objects.equals(id, peer.id);
+        return Objects.equals(id, peer.id)
+                && Objects.equals(address, peer.address)
+                && role == peer.role;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id);
+        return Objects.hash(id, address, role);
     }
 
     @Override
@@ -50,6 +67,7 @@ public class Peer {
         StringBuilder sb = new StringBuilder("Peer{");
         sb.append("id=").append(id);
         sb.append(", address=").append(address);
+        sb.append(", role=").append(role);
         sb.append('}');
         return sb.toString();
     }

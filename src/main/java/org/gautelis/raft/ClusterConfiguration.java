@@ -28,14 +28,14 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Represents the Raft voting configuration.
+ * Represents the Raft replication configuration.
  *
  * Stable configuration:
  * - only {@code currentMembers} is populated
  *
  * Joint consensus configuration:
  * - both {@code currentMembers} and {@code nextMembers} are populated
- * - quorums must satisfy majorities of both sets
+ * - quorums must satisfy majorities of the voter subsets in both sets
  */
 public final class ClusterConfiguration {
     private final LinkedHashMap<String, Peer> currentMembers;
@@ -66,6 +66,32 @@ public final class ClusterConfiguration {
         return Collections.unmodifiableCollection(nextMembers.values());
     }
 
+    public Collection<Peer> currentVotingMembers() {
+        return currentMembers.values().stream()
+                .filter(Peer::isVoter)
+                .toList();
+    }
+
+    public Collection<Peer> nextVotingMembers() {
+        if (!isJointConsensus()) {
+            return currentVotingMembers();
+        }
+        return nextMembers.values().stream()
+                .filter(Peer::isVoter)
+                .toList();
+    }
+
+    public Collection<Peer> allVotingMembers() {
+        LinkedHashMap<String, Peer> all = new LinkedHashMap<>();
+        for (Peer peer : currentVotingMembers()) {
+            all.put(peer.getId(), peer);
+        }
+        for (Peer peer : nextVotingMembers()) {
+            all.put(peer.getId(), peer);
+        }
+        return Collections.unmodifiableCollection(all.values());
+    }
+
     public Collection<Peer> allMembers() {
         LinkedHashMap<String, Peer> all = new LinkedHashMap<>(currentMembers);
         all.putAll(nextMembers);
@@ -74,6 +100,22 @@ public final class ClusterConfiguration {
 
     public boolean contains(String peerId) {
         return currentMembers.containsKey(peerId) || nextMembers.containsKey(peerId);
+    }
+
+    public boolean isVoter(String peerId) {
+        if (peerId == null) {
+            return false;
+        }
+        Peer current = currentMembers.get(peerId);
+        if (current != null && current.isVoter()) {
+            return true;
+        }
+        Peer next = nextMembers.get(peerId);
+        return next != null && next.isVoter();
+    }
+
+    public boolean isLearner(String peerId) {
+        return contains(peerId) && !isVoter(peerId);
     }
 
     public ClusterConfiguration transitionTo(Collection<Peer> proposedMembers) {
@@ -95,25 +137,25 @@ public final class ClusterConfiguration {
     }
 
     public int currentMajoritySize() {
-        return majoritySize(currentMembers.size());
+        return majoritySize((int) currentVotingMembers().stream().count());
     }
 
     public int nextMajoritySize() {
         if (!isJointConsensus()) {
             return currentMajoritySize();
         }
-        return majoritySize(nextMembers.size());
+        return majoritySize((int) nextVotingMembers().stream().count());
     }
 
     public boolean hasCurrentMajority(Collection<String> peerIds) {
-        return countPresent(peerIds, currentMembers.keySet()) >= currentMajoritySize();
+        return countPresent(peerIds, currentVotingMembers().stream().map(Peer::getId).collect(java.util.stream.Collectors.toSet())) >= currentMajoritySize();
     }
 
     public boolean hasNextMajority(Collection<String> peerIds) {
         if (!isJointConsensus()) {
             return hasCurrentMajority(peerIds);
         }
-        return countPresent(peerIds, nextMembers.keySet()) >= nextMajoritySize();
+        return countPresent(peerIds, nextVotingMembers().stream().map(Peer::getId).collect(java.util.stream.Collectors.toSet())) >= nextMajoritySize();
     }
 
     public boolean hasJointMajority(Collection<String> peerIds) {
@@ -161,8 +203,8 @@ public final class ClusterConfiguration {
             }
 
             Peer existing = normalized.get(peerId);
-            if (existing != null && !sameAddress(existing.getAddress(), peer.getAddress())) {
-                throw new IllegalArgumentException("Conflicting peer configuration for id " + peerId + ": " + existing.getAddress() + " vs " + peer.getAddress());
+            if (existing != null && (!sameAddress(existing.getAddress(), peer.getAddress()) || existing.getRole() != peer.getRole())) {
+                throw new IllegalArgumentException("Conflicting peer configuration for id " + peerId + ": " + existing + " vs " + peer);
             }
             normalized.putIfAbsent(peerId, peer);
         }

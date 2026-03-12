@@ -24,11 +24,11 @@ import org.gautelis.raft.serialization.ProtoMapper;
 import org.gautelis.raft.protocol.AppendEntriesRequest;
 import org.gautelis.raft.protocol.LogEntry;
 import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.protocol.StateMachineCommand;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -61,7 +61,7 @@ class RaftStateMachineApplyTest {
         Peer b = peer("B");
         List<String> applied = new ArrayList<>();
 
-        CommandHandler commandHandler = (term, command) -> applied.add(term + ":" + command);
+        CommandHandler commandHandler = (term, command) -> applied.add(term + ":" + StateMachineCommand.decode(command).map(Object::toString).orElse("invalid"));
         RaftNode nodeB = new RaftNode(
                 b,
                 List.of(a),
@@ -81,7 +81,7 @@ class RaftStateMachineApplyTest {
                 0,
                 0,
                 0,
-                List.of(new LogEntry(2, "A", "set x=1".getBytes(StandardCharsets.UTF_8)))
+                List.of(new LogEntry(2, "A", StateMachineCommand.put("x", "1").encode()))
         );
         var response = nodeB.handleAppendEntries(appendUncommitted);
         assertTrue(response.isSuccess());
@@ -98,7 +98,7 @@ class RaftStateMachineApplyTest {
         Peer b = peer("B");
         List<String> applied = new ArrayList<>();
 
-        CommandHandler commandHandler = (term, command) -> applied.add(term + ":" + command);
+        CommandHandler commandHandler = (term, command) -> applied.add(term + ":" + StateMachineCommand.decode(command).map(Object::toString).orElse("invalid"));
         RaftNode nodeB = new RaftNode(
                 b,
                 List.of(a),
@@ -119,7 +119,7 @@ class RaftStateMachineApplyTest {
                 0,
                 0,
                 0,
-                List.of(new LogEntry(3, "A", "set y=2".getBytes(StandardCharsets.UTF_8)))
+                List.of(new LogEntry(3, "A", StateMachineCommand.put("y", "2").encode()))
         ));
         assertTrue(applied.isEmpty());
 
@@ -136,7 +136,7 @@ class RaftStateMachineApplyTest {
         assertEquals(1, nodeB.getCommitIndexForTest());
         assertEquals(1, nodeB.getLastAppliedForTest());
         assertEquals(1, applied.size());
-        assertEquals("3:set y=2", applied.getFirst());
+        assertEquals("3:" + StateMachineCommand.put("y", "2"), applied.getFirst());
 
         // Repeat same commit index; should not re-apply.
         nodeB.handleAppendEntries(new AppendEntriesRequest(
@@ -157,7 +157,7 @@ class RaftStateMachineApplyTest {
         Peer b = peer("B");
         List<String> applied = new ArrayList<>();
 
-        CommandHandler commandHandler = (term, command) -> applied.add(term + ":" + command);
+        CommandHandler commandHandler = (term, command) -> applied.add(term + ":" + StateMachineCommand.decode(command).map(Object::toString).orElse("invalid"));
         RaftNode nodeB = new RaftNode(
                 b,
                 List.of(a),
@@ -178,7 +178,7 @@ class RaftStateMachineApplyTest {
                 0,
                 0,
                 0,
-                List.of(new LogEntry(3, "A", "set z=3".getBytes(StandardCharsets.UTF_8)))
+                List.of(new LogEntry(3, "A", StateMachineCommand.put("z", "3").encode()))
         ));
         // Advance node term to 4 via empty AppendEntries heartbeat, without changing entry term.
         nodeB.handleAppendEntries(new AppendEntriesRequest(
@@ -201,6 +201,6 @@ class RaftStateMachineApplyTest {
         ));
 
         assertEquals(1, applied.size());
-        assertEquals("3:set z=3", applied.getFirst());
+        assertEquals("3:" + StateMachineCommand.put("z", "3"), applied.getFirst());
     }
 }

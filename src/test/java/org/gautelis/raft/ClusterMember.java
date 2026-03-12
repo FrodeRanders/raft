@@ -22,8 +22,9 @@ import org.gautelis.raft.transport.netty.*;
 import org.gautelis.raft.serialization.ProtoMapper;
 
 import io.netty.channel.ChannelHandlerContext;
-import org.gautelis.raft.protocol.ClusterMessage;
+import org.gautelis.raft.protocol.ClientCommandRequest;
 import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.protocol.StateMachineCommand;
 import org.gautelis.raft.bootstrap.BasicAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,22 +41,22 @@ public class ClusterMember extends BasicAdapter {
     @Override
     public void handleMessage(String correlationId, String type, byte[] payload, ChannelHandlerContext ctx) {
         switch (type) {
-            case "ClusterMessage" -> {
-                var parsed = ProtoMapper.parseClusterMessage(payload);
+            case "ClientCommandRequest" -> {
+                var parsed = ProtoMapper.parseClientCommandRequest(payload);
                 if (parsed.isEmpty()) {
-                    log.info("Received invalid cluster message payload");
+                    log.info("Received invalid client command payload");
                     return;
                 }
-                ClusterMessage command = ProtoMapper.fromProto(parsed.get());
-                log.info("Received cluster message {}", command.getMessage());
+                ClientCommandRequest command = ProtoMapper.fromProto(parsed.get());
+                log.info("Received client command ({} bytes)", command.getCommand().length);
             }
         }
     }
 
-    public void inform(String message) {
-        final String type = "ClusterMessage";
-        ClusterMessage command = new ClusterMessage(
-                stateMachine.getTerm(), stateMachine.getId(), message
+    public void inform(StateMachineCommand message) {
+        final String type = "ClientCommandRequest";
+        ClientCommandRequest command = new ClientCommandRequest(
+                stateMachine.getTerm(), stateMachine.getId(), message.encode()
         );
 
         byte[] payload = ProtoMapper.toProto(command).toByteString().toByteArray();

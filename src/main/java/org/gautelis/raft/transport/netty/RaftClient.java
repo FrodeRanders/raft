@@ -66,6 +66,13 @@ public class RaftClient {
     private final Map<String, CompletableFuture<VoteResponse>> inFlightRequests = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<AppendEntriesResponse>> inFlightAppendEntries = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<InstallSnapshotResponse>> inFlightInstallSnapshot = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<ClientQueryResponse>> inFlightClientQueries = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<ClusterSummaryResponse>> inFlightClusterSummary = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<JoinClusterResponse>> inFlightJoinCluster = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<JoinClusterStatusResponse>> inFlightJoinStatus = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<ReconfigureClusterResponse>> inFlightReconfigureCluster = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<TelemetryResponse>> inFlightTelemetry = new ConcurrentHashMap<>();
     private final Map<String, RequestTiming> requestTimings = new ConcurrentHashMap<>();
     private final Map<String, ScheduledFuture<?>> requestTimeouts = new ConcurrentHashMap<>();
     private final Map<String, RunningStatistics> peerResponseStats = new ConcurrentHashMap<>();
@@ -80,7 +87,7 @@ public class RaftClient {
                 ChannelPipeline p = ch.pipeline();
                 p.addLast(new ProtobufLiteDecoder());
                 p.addLast(new ProtobufLiteEncoder());
-                p.addLast(new ClientResponseHandler(inFlightRequests, inFlightAppendEntries, inFlightInstallSnapshot, requestTimings, requestTimeouts, peerResponseStats, messageHandler));
+                p.addLast(new ClientResponseHandler(inFlightRequests, inFlightAppendEntries, inFlightInstallSnapshot, inFlightClientCommands, inFlightClientQueries, inFlightClusterSummary, inFlightJoinCluster, inFlightJoinStatus, inFlightReconfigureCluster, inFlightTelemetry, requestTimings, requestTimeouts, peerResponseStats, messageHandler));
             }
         };
     }
@@ -266,6 +273,10 @@ public class RaftClient {
             inFlightRequests.remove(correlationId);
             inFlightAppendEntries.remove(correlationId);
             inFlightInstallSnapshot.remove(correlationId);
+            inFlightJoinCluster.remove(correlationId);
+            inFlightJoinStatus.remove(correlationId);
+            inFlightReconfigureCluster.remove(correlationId);
+            inFlightTelemetry.remove(correlationId);
             requestTimings.remove(correlationId);
             requestTimeouts.remove(correlationId);
             future.completeExceptionally(new TimeoutException("Timed out waiting for VoteResponse from " + peer.getId()));
@@ -284,6 +295,10 @@ public class RaftClient {
                             inFlightRequests.remove(correlationId);
                             inFlightAppendEntries.remove(correlationId);
                             inFlightInstallSnapshot.remove(correlationId);
+                            inFlightJoinCluster.remove(correlationId);
+                            inFlightJoinStatus.remove(correlationId);
+                            inFlightReconfigureCluster.remove(correlationId);
+                            inFlightTelemetry.remove(correlationId);
                             requestTimings.remove(correlationId);
                             ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
                             if (pendingTimeout != null) {
@@ -302,6 +317,10 @@ public class RaftClient {
             inFlightRequests.remove(correlationId);
             inFlightAppendEntries.remove(correlationId);
             inFlightInstallSnapshot.remove(correlationId);
+            inFlightJoinCluster.remove(correlationId);
+            inFlightJoinStatus.remove(correlationId);
+            inFlightReconfigureCluster.remove(correlationId);
+            inFlightTelemetry.remove(correlationId);
             requestTimings.remove(correlationId);
             ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
             if (pendingTimeout != null) {
@@ -424,6 +443,270 @@ public class RaftClient {
         return outbound;
     }
 
+    public CompletableFuture<Boolean> sendMessage(Peer peer, String type, byte[] payload) {
+        knownPeers.add(peer);
+
+        CompletableFuture<Boolean> outbound = new CompletableFuture<>();
+        Channel channel = channels.get(peer);
+        if (channel == null || !channel.isActive()) {
+            connect(peer).addListener((ChannelFuture cf) -> {
+                if (!cf.isSuccess()) {
+                    outbound.complete(false);
+                    return;
+                }
+                Channel newChannel = cf.channel();
+                channels.put(peer, newChannel);
+                sendMessageOverChannel(newChannel, type, payload).whenComplete((sent, error) -> {
+                    if (error != null) {
+                        outbound.complete(false);
+                    } else {
+                        outbound.complete(sent);
+                    }
+                });
+            });
+        } else {
+            sendMessageOverChannel(channel, type, payload).whenComplete((sent, error) -> {
+                if (error != null) {
+                    outbound.complete(false);
+                } else {
+                    outbound.complete(sent);
+                }
+            });
+        }
+        return outbound;
+    }
+
+    public CompletableFuture<JoinClusterResponse> sendJoinClusterRequest(Peer peer, JoinClusterRequest request) {
+        knownPeers.add(peer);
+
+        CompletableFuture<JoinClusterResponse> outbound = new CompletableFuture<>();
+        Channel channel = channels.get(peer);
+        if (channel == null || !channel.isActive()) {
+            connect(peer).addListener((ChannelFuture cf) -> {
+                if (!cf.isSuccess()) {
+                    outbound.complete(new JoinClusterResponse(request.getTerm(), peer.getId(), false, "UNREACHABLE", "Could not connect to peer", ""));
+                    return;
+                }
+                Channel newChannel = cf.channel();
+                channels.put(peer, newChannel);
+                sendJoinClusterRequestOverChannel(newChannel, peer, request).whenComplete((response, error) -> {
+                    if (error != null) {
+                        outbound.complete(new JoinClusterResponse(request.getTerm(), peer.getId(), false, "FAILED", error.getMessage(), ""));
+                    } else {
+                        outbound.complete(response);
+                    }
+                });
+            });
+        } else {
+            sendJoinClusterRequestOverChannel(channel, peer, request).whenComplete((response, error) -> {
+                if (error != null) {
+                    outbound.complete(new JoinClusterResponse(request.getTerm(), peer.getId(), false, "FAILED", error.getMessage(), ""));
+                } else {
+                    outbound.complete(response);
+                }
+            });
+        }
+        return outbound;
+    }
+
+    public CompletableFuture<ClientCommandResponse> sendClientCommandRequest(Peer peer, ClientCommandRequest request) {
+        knownPeers.add(peer);
+
+        CompletableFuture<ClientCommandResponse> outbound = new CompletableFuture<>();
+        Channel channel = channels.get(peer);
+        if (channel == null || !channel.isActive()) {
+            connect(peer).addListener((ChannelFuture cf) -> {
+                if (!cf.isSuccess()) {
+                    outbound.complete(new ClientCommandResponse(request.getTerm(), peer.getId(), false, "UNREACHABLE", "Could not connect to peer", "", "", 0));
+                    return;
+                }
+                Channel newChannel = cf.channel();
+                channels.put(peer, newChannel);
+                sendClientCommandRequestOverChannel(newChannel, peer, request).whenComplete((response, error) -> {
+                    if (error != null) {
+                        outbound.complete(new ClientCommandResponse(request.getTerm(), peer.getId(), false, "FAILED", error.getMessage(), "", "", 0));
+                    } else {
+                        outbound.complete(response);
+                    }
+                });
+            });
+        } else {
+            sendClientCommandRequestOverChannel(channel, peer, request).whenComplete((response, error) -> {
+                if (error != null) {
+                    outbound.complete(new ClientCommandResponse(request.getTerm(), peer.getId(), false, "FAILED", error.getMessage(), "", "", 0));
+                } else {
+                    outbound.complete(response);
+                }
+            });
+        }
+        return outbound;
+    }
+
+    public CompletableFuture<ClientQueryResponse> sendClientQueryRequest(Peer peer, ClientQueryRequest request) {
+        knownPeers.add(peer);
+
+        CompletableFuture<ClientQueryResponse> outbound = new CompletableFuture<>();
+        Channel channel = channels.get(peer);
+        if (channel == null || !channel.isActive()) {
+            connect(peer).addListener((ChannelFuture cf) -> {
+                if (!cf.isSuccess()) {
+                    outbound.complete(new ClientQueryResponse(request.getTerm(), peer.getId(), false, "UNREACHABLE", "Could not connect to peer", "", "", 0, new byte[0]));
+                    return;
+                }
+                Channel newChannel = cf.channel();
+                channels.put(peer, newChannel);
+                sendClientQueryRequestOverChannel(newChannel, peer, request).whenComplete((response, error) -> {
+                    if (error != null) {
+                        outbound.complete(new ClientQueryResponse(request.getTerm(), peer.getId(), false, "FAILED", error.getMessage(), "", "", 0, new byte[0]));
+                    } else {
+                        outbound.complete(response);
+                    }
+                });
+            });
+        } else {
+            sendClientQueryRequestOverChannel(channel, peer, request).whenComplete((response, error) -> {
+                if (error != null) {
+                    outbound.complete(new ClientQueryResponse(request.getTerm(), peer.getId(), false, "FAILED", error.getMessage(), "", "", 0, new byte[0]));
+                } else {
+                    outbound.complete(response);
+                }
+            });
+        }
+        return outbound;
+    }
+
+    public CompletableFuture<ClusterSummaryResponse> sendClusterSummaryRequest(Peer peer, ClusterSummaryRequest request) {
+        knownPeers.add(peer);
+
+        CompletableFuture<ClusterSummaryResponse> outbound = new CompletableFuture<>();
+        Channel channel = channels.get(peer);
+        if (channel == null || !channel.isActive()) {
+            connect(peer).addListener((ChannelFuture cf) -> {
+                if (!cf.isSuccess()) {
+                    outbound.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "UNREACHABLE", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, List.of(), List.of(), List.of()));
+                    return;
+                }
+                Channel newChannel = cf.channel();
+                channels.put(peer, newChannel);
+                sendClusterSummaryRequestOverChannel(newChannel, peer, request).whenComplete((response, error) -> {
+                    if (error != null) {
+                        outbound.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, List.of(), List.of(), List.of()));
+                    } else {
+                        outbound.complete(response);
+                    }
+                });
+            });
+        } else {
+            sendClusterSummaryRequestOverChannel(channel, peer, request).whenComplete((response, error) -> {
+                if (error != null) {
+                    outbound.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, List.of(), List.of(), List.of()));
+                } else {
+                    outbound.complete(response);
+                }
+            });
+        }
+        return outbound;
+    }
+
+    public CompletableFuture<JoinClusterStatusResponse> sendJoinClusterStatusRequest(Peer peer, JoinClusterStatusRequest request) {
+        knownPeers.add(peer);
+
+        CompletableFuture<JoinClusterStatusResponse> outbound = new CompletableFuture<>();
+        Channel channel = channels.get(peer);
+        if (channel == null || !channel.isActive()) {
+            connect(peer).addListener((ChannelFuture cf) -> {
+                if (!cf.isSuccess()) {
+                    outbound.complete(new JoinClusterStatusResponse(request.getTerm(), peer.getId(), false, "UNREACHABLE", "Could not connect to peer", ""));
+                    return;
+                }
+                Channel newChannel = cf.channel();
+                channels.put(peer, newChannel);
+                sendJoinClusterStatusRequestOverChannel(newChannel, peer, request).whenComplete((response, error) -> {
+                    if (error != null) {
+                        outbound.complete(new JoinClusterStatusResponse(request.getTerm(), peer.getId(), false, "FAILED", error.getMessage(), ""));
+                    } else {
+                        outbound.complete(response);
+                    }
+                });
+            });
+        } else {
+            sendJoinClusterStatusRequestOverChannel(channel, peer, request).whenComplete((response, error) -> {
+                if (error != null) {
+                    outbound.complete(new JoinClusterStatusResponse(request.getTerm(), peer.getId(), false, "FAILED", error.getMessage(), ""));
+                } else {
+                    outbound.complete(response);
+                }
+            });
+        }
+        return outbound;
+    }
+
+    public CompletableFuture<ReconfigureClusterResponse> sendReconfigureClusterRequest(Peer peer, ReconfigureClusterRequest request) {
+        knownPeers.add(peer);
+
+        CompletableFuture<ReconfigureClusterResponse> outbound = new CompletableFuture<>();
+        Channel channel = channels.get(peer);
+        if (channel == null || !channel.isActive()) {
+            connect(peer).addListener((ChannelFuture cf) -> {
+                if (!cf.isSuccess()) {
+                    outbound.complete(new ReconfigureClusterResponse(request.getTerm(), peer.getId(), false, "UNREACHABLE", "Could not connect to peer", ""));
+                    return;
+                }
+                Channel newChannel = cf.channel();
+                channels.put(peer, newChannel);
+                sendReconfigureClusterRequestOverChannel(newChannel, peer, request).whenComplete((response, error) -> {
+                    if (error != null) {
+                        outbound.complete(new ReconfigureClusterResponse(request.getTerm(), peer.getId(), false, "FAILED", error.getMessage(), ""));
+                    } else {
+                        outbound.complete(response);
+                    }
+                });
+            });
+        } else {
+            sendReconfigureClusterRequestOverChannel(channel, peer, request).whenComplete((response, error) -> {
+                if (error != null) {
+                    outbound.complete(new ReconfigureClusterResponse(request.getTerm(), peer.getId(), false, "FAILED", error.getMessage(), ""));
+                } else {
+                    outbound.complete(response);
+                }
+            });
+        }
+        return outbound;
+    }
+
+    public CompletableFuture<TelemetryResponse> sendTelemetryRequest(Peer peer, TelemetryRequest request) {
+        knownPeers.add(peer);
+
+        CompletableFuture<TelemetryResponse> outbound = new CompletableFuture<>();
+        Channel channel = channels.get(peer);
+        if (channel == null || !channel.isActive()) {
+            connect(peer).addListener((ChannelFuture cf) -> {
+                if (!cf.isSuccess()) {
+                    outbound.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "UNREACHABLE", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, "", List.of(), List.of(), List.of()));
+                    return;
+                }
+                Channel newChannel = cf.channel();
+                channels.put(peer, newChannel);
+                sendTelemetryRequestOverChannel(newChannel, peer, request).whenComplete((response, error) -> {
+                    if (error != null) {
+                        outbound.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, "", List.of(), List.of(), List.of()));
+                    } else {
+                        outbound.complete(response);
+                    }
+                });
+            });
+        } else {
+            sendTelemetryRequestOverChannel(channel, peer, request).whenComplete((response, error) -> {
+                if (error != null) {
+                    outbound.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "FAILED", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, "", List.of(), List.of(), List.of()));
+                } else {
+                    outbound.complete(response);
+                }
+            });
+        }
+        return outbound;
+    }
+
     private CompletableFuture<InstallSnapshotResponse> sendInstallSnapshotOverChannel(Channel ch, Peer peer, InstallSnapshotRequest req) {
         String correlationId = java.util.UUID.randomUUID().toString();
         CompletableFuture<InstallSnapshotResponse> future = new CompletableFuture<>();
@@ -457,6 +740,329 @@ public class RaftClient {
             });
         } catch (Exception e) {
             inFlightInstallSnapshot.remove(correlationId);
+            requestTimings.remove(correlationId);
+            ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+            if (pendingTimeout != null) {
+                pendingTimeout.cancel(false);
+            }
+            future.completeExceptionally(e);
+        }
+        return future;
+    }
+
+    private CompletableFuture<Boolean> sendMessageOverChannel(Channel ch, String type, byte[] payload) {
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+        try {
+            byte[] safePayload = payload == null ? new byte[0] : payload;
+            Envelope envelope = ProtoMapper.wrap(
+                    java.util.UUID.randomUUID().toString(),
+                    type,
+                    safePayload
+            );
+            ch.writeAndFlush(envelope).addListener(f -> {
+                if (!f.isSuccess()) {
+                    future.completeExceptionally(f.cause());
+                    return;
+                }
+                future.complete(true);
+            });
+        } catch (Exception e) {
+            future.completeExceptionally(e);
+        }
+        return future;
+    }
+
+    private CompletableFuture<ClientCommandResponse> sendClientCommandRequestOverChannel(Channel ch, Peer peer, ClientCommandRequest request) {
+        String correlationId = java.util.UUID.randomUUID().toString();
+        CompletableFuture<ClientCommandResponse> future = new CompletableFuture<>();
+        inFlightClientCommands.put(correlationId, future);
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+
+        ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            inFlightClientCommands.remove(correlationId);
+            requestTimings.remove(correlationId);
+            requestTimeouts.remove(correlationId);
+            future.complete(new ClientCommandResponse(request.getTerm(), peer.getId(), false, "TIMEOUT", "Timed out waiting for ClientCommandResponse", "", "", 0));
+        }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
+        requestTimeouts.put(correlationId, timeoutTask);
+
+        try {
+            var protoRequest = ProtoMapper.toProto(request);
+            Envelope envelope = ProtoMapper.wrap(correlationId, "ClientCommandRequest", protoRequest.toByteString());
+            ch.writeAndFlush(envelope).addListener(f -> {
+                if (!f.isSuccess()) {
+                    inFlightClientCommands.remove(correlationId);
+                    requestTimings.remove(correlationId);
+                    ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+                    if (pendingTimeout != null) {
+                        pendingTimeout.cancel(false);
+                    }
+                    future.completeExceptionally(f.cause());
+                }
+            });
+        } catch (Exception e) {
+            inFlightClientCommands.remove(correlationId);
+            requestTimings.remove(correlationId);
+            ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+            if (pendingTimeout != null) {
+                pendingTimeout.cancel(false);
+            }
+            future.completeExceptionally(e);
+        }
+        return future;
+    }
+
+    private CompletableFuture<ClientQueryResponse> sendClientQueryRequestOverChannel(Channel ch, Peer peer, ClientQueryRequest request) {
+        String correlationId = java.util.UUID.randomUUID().toString();
+        CompletableFuture<ClientQueryResponse> future = new CompletableFuture<>();
+        inFlightClientQueries.put(correlationId, future);
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+
+        ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            inFlightClientQueries.remove(correlationId);
+            requestTimings.remove(correlationId);
+            requestTimeouts.remove(correlationId);
+            future.complete(new ClientQueryResponse(request.getTerm(), peer.getId(), false, "TIMEOUT", "Timed out waiting for ClientQueryResponse", "", "", 0, new byte[0]));
+        }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
+        requestTimeouts.put(correlationId, timeoutTask);
+
+        try {
+            var protoRequest = ProtoMapper.toProto(request);
+            Envelope envelope = ProtoMapper.wrap(correlationId, "ClientQueryRequest", protoRequest.toByteString());
+            ch.writeAndFlush(envelope).addListener(f -> {
+                if (!f.isSuccess()) {
+                    inFlightClientQueries.remove(correlationId);
+                    requestTimings.remove(correlationId);
+                    ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+                    if (pendingTimeout != null) {
+                        pendingTimeout.cancel(false);
+                    }
+                    future.completeExceptionally(f.cause());
+                }
+            });
+        } catch (Exception e) {
+            inFlightClientQueries.remove(correlationId);
+            requestTimings.remove(correlationId);
+            ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+            if (pendingTimeout != null) {
+                pendingTimeout.cancel(false);
+            }
+            future.completeExceptionally(e);
+        }
+        return future;
+    }
+
+    private CompletableFuture<ClusterSummaryResponse> sendClusterSummaryRequestOverChannel(Channel ch, Peer peer, ClusterSummaryRequest request) {
+        String correlationId = java.util.UUID.randomUUID().toString();
+        CompletableFuture<ClusterSummaryResponse> future = new CompletableFuture<>();
+        inFlightClusterSummary.put(correlationId, future);
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+
+        ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            inFlightClusterSummary.remove(correlationId);
+            requestTimings.remove(correlationId);
+            requestTimeouts.remove(correlationId);
+            future.complete(new ClusterSummaryResponse(0L, request.getTerm(), peer.getId(), false, "TIMEOUT", "", "", 0, "", "", false, "", "", false, false, false, 0, 0, 0, List.of(), List.of(), List.of()));
+        }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
+        requestTimeouts.put(correlationId, timeoutTask);
+
+        try {
+            var protoRequest = ProtoMapper.toProto(request);
+            Envelope envelope = ProtoMapper.wrap(correlationId, "ClusterSummaryRequest", protoRequest.toByteString());
+            ch.writeAndFlush(envelope).addListener(f -> {
+                if (!f.isSuccess()) {
+                    inFlightClusterSummary.remove(correlationId);
+                    requestTimings.remove(correlationId);
+                    ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+                    if (pendingTimeout != null) {
+                        pendingTimeout.cancel(false);
+                    }
+                    future.completeExceptionally(f.cause());
+                }
+            });
+        } catch (Exception e) {
+            inFlightClusterSummary.remove(correlationId);
+            requestTimings.remove(correlationId);
+            ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+            if (pendingTimeout != null) {
+                pendingTimeout.cancel(false);
+            }
+            future.completeExceptionally(e);
+        }
+        return future;
+    }
+
+    private CompletableFuture<JoinClusterResponse> sendJoinClusterRequestOverChannel(Channel ch, Peer peer, JoinClusterRequest request) {
+        String correlationId = java.util.UUID.randomUUID().toString();
+        CompletableFuture<JoinClusterResponse> future = new CompletableFuture<>();
+        inFlightJoinCluster.put(correlationId, future);
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+
+        ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            inFlightJoinCluster.remove(correlationId);
+            requestTimings.remove(correlationId);
+            requestTimeouts.remove(correlationId);
+            future.complete(new JoinClusterResponse(request.getTerm(), peer.getId(), false, "TIMEOUT", "Timed out waiting for JoinClusterResponse", ""));
+        }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
+        requestTimeouts.put(correlationId, timeoutTask);
+
+        try {
+            var protoRequest = ProtoMapper.toProto(request);
+            Envelope envelope = ProtoMapper.wrap(correlationId, "JoinClusterRequest", protoRequest.toByteString());
+            ch.writeAndFlush(envelope).addListener(f -> {
+                if (!f.isSuccess()) {
+                    inFlightJoinCluster.remove(correlationId);
+                    requestTimings.remove(correlationId);
+                    ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+                    if (pendingTimeout != null) {
+                        pendingTimeout.cancel(false);
+                    }
+                    future.completeExceptionally(f.cause());
+                }
+            });
+        } catch (Exception e) {
+            inFlightJoinCluster.remove(correlationId);
+            requestTimings.remove(correlationId);
+            ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+            if (pendingTimeout != null) {
+                pendingTimeout.cancel(false);
+            }
+            future.completeExceptionally(e);
+        }
+        return future;
+    }
+
+    private CompletableFuture<JoinClusterStatusResponse> sendJoinClusterStatusRequestOverChannel(Channel ch, Peer peer, JoinClusterStatusRequest request) {
+        String correlationId = java.util.UUID.randomUUID().toString();
+        CompletableFuture<JoinClusterStatusResponse> future = new CompletableFuture<>();
+        inFlightJoinStatus.put(correlationId, future);
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+
+        ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            inFlightJoinStatus.remove(correlationId);
+            requestTimings.remove(correlationId);
+            requestTimeouts.remove(correlationId);
+            future.complete(new JoinClusterStatusResponse(request.getTerm(), peer.getId(), false, "TIMEOUT", "Timed out waiting for JoinClusterStatusResponse", ""));
+        }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
+        requestTimeouts.put(correlationId, timeoutTask);
+
+        try {
+            var protoRequest = ProtoMapper.toProto(request);
+            Envelope envelope = ProtoMapper.wrap(correlationId, "JoinClusterStatusRequest", protoRequest.toByteString());
+            ch.writeAndFlush(envelope).addListener(f -> {
+                if (!f.isSuccess()) {
+                    inFlightJoinStatus.remove(correlationId);
+                    requestTimings.remove(correlationId);
+                    ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+                    if (pendingTimeout != null) {
+                        pendingTimeout.cancel(false);
+                    }
+                    future.completeExceptionally(f.cause());
+                }
+            });
+        } catch (Exception e) {
+            inFlightJoinStatus.remove(correlationId);
+            requestTimings.remove(correlationId);
+            ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+            if (pendingTimeout != null) {
+                pendingTimeout.cancel(false);
+            }
+            future.completeExceptionally(e);
+        }
+        return future;
+    }
+
+    private CompletableFuture<ReconfigureClusterResponse> sendReconfigureClusterRequestOverChannel(Channel ch, Peer peer, ReconfigureClusterRequest request) {
+        String correlationId = java.util.UUID.randomUUID().toString();
+        CompletableFuture<ReconfigureClusterResponse> future = new CompletableFuture<>();
+        inFlightReconfigureCluster.put(correlationId, future);
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+
+        ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            inFlightReconfigureCluster.remove(correlationId);
+            requestTimings.remove(correlationId);
+            requestTimeouts.remove(correlationId);
+            future.complete(new ReconfigureClusterResponse(request.getTerm(), peer.getId(), false, "TIMEOUT", "Timed out waiting for ReconfigureClusterResponse", ""));
+        }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
+        requestTimeouts.put(correlationId, timeoutTask);
+
+        try {
+            var protoRequest = ProtoMapper.toProto(request);
+            Envelope envelope = ProtoMapper.wrap(correlationId, "ReconfigureClusterRequest", protoRequest.toByteString());
+            ch.writeAndFlush(envelope).addListener(f -> {
+                if (!f.isSuccess()) {
+                    inFlightReconfigureCluster.remove(correlationId);
+                    requestTimings.remove(correlationId);
+                    ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+                    if (pendingTimeout != null) {
+                        pendingTimeout.cancel(false);
+                    }
+                    future.completeExceptionally(f.cause());
+                }
+            });
+        } catch (Exception e) {
+            inFlightReconfigureCluster.remove(correlationId);
+            requestTimings.remove(correlationId);
+            ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+            if (pendingTimeout != null) {
+                pendingTimeout.cancel(false);
+            }
+            future.completeExceptionally(e);
+        }
+        return future;
+    }
+
+    private CompletableFuture<TelemetryResponse> sendTelemetryRequestOverChannel(Channel ch, Peer peer, TelemetryRequest request) {
+        String correlationId = java.util.UUID.randomUUID().toString();
+        CompletableFuture<TelemetryResponse> future = new CompletableFuture<>();
+        inFlightTelemetry.put(correlationId, future);
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+
+        ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            inFlightTelemetry.remove(correlationId);
+            requestTimings.remove(correlationId);
+            requestTimeouts.remove(correlationId);
+            future.complete(new TelemetryResponse(0L, request.getTerm(), peer.getId(), false, "TIMEOUT", "", "", "", "", false, false, 0, 0, 0, 0, 0, 0, 0, 0, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), "", false, false, false, 0, 0, 0, "", List.of(), List.of(), List.of()));
+        }, voteRequestTimeoutMillis, TimeUnit.MILLISECONDS);
+        requestTimeouts.put(correlationId, timeoutTask);
+
+        try {
+            var telemetryRequest = ProtoMapper.toProto(request);
+            Envelope envelope = ProtoMapper.wrap(correlationId, "TelemetryRequest", telemetryRequest.toByteString());
+            ch.writeAndFlush(envelope).addListener(f -> {
+                if (!f.isSuccess()) {
+                    inFlightTelemetry.remove(correlationId);
+                    requestTimings.remove(correlationId);
+                    ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
+                    if (pendingTimeout != null) {
+                        pendingTimeout.cancel(false);
+                    }
+                    future.completeExceptionally(f.cause());
+                }
+            });
+        } catch (Exception e) {
+            inFlightTelemetry.remove(correlationId);
             requestTimings.remove(correlationId);
             ScheduledFuture<?> pendingTimeout = requestTimeouts.remove(correlationId);
             if (pendingTimeout != null) {
@@ -536,8 +1142,44 @@ public class RaftClient {
         return peerResponseStats.get(peerId);
     }
 
+    public List<TelemetryPeerStats> snapshotResponseTimeStats() {
+        List<String> peerIds = new ArrayList<>(peerResponseStats.keySet());
+        Collections.sort(peerIds);
+        List<TelemetryPeerStats> snapshot = new ArrayList<>();
+        for (String peerId : peerIds) {
+            RunningStatistics stats = peerResponseStats.get(peerId);
+            if (stats == null) {
+                continue;
+            }
+            synchronized (stats) {
+                snapshot.add(new TelemetryPeerStats(
+                        peerId,
+                        stats.getCount(),
+                        stats.getCount() == 0 ? 0.0 : stats.getMean(),
+                        stats.getCount() == 0 ? 0.0 : stats.getMin(),
+                        stats.getCount() == 0 ? 0.0 : stats.getMax(),
+                        stats.getCount() == 0 ? 0.0 : stats.getCV()
+                ));
+            }
+        }
+        return List.copyOf(snapshot);
+    }
+
     public Collection<Peer> getKnownPeersForTest() {
         return Set.copyOf(knownPeers);
+    }
+
+    public boolean isPeerReachable(String peerId) {
+        if (peerId == null || peerId.isBlank()) {
+            return false;
+        }
+        for (Map.Entry<Peer, Channel> entry : channels.entrySet()) {
+            if (peerId.equals(entry.getKey().getId())) {
+                Channel channel = entry.getValue();
+                return channel != null && channel.isActive();
+            }
+        }
+        return false;
     }
 
     private void logResponseTimeStatistics() {

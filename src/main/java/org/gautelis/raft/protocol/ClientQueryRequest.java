@@ -16,15 +16,17 @@
  */
 package org.gautelis.raft.protocol;
 
-public class ClusterMessage {
-    private long term;
-    private String peerId;  // for heartbeat messages
+import java.util.Arrays;
 
-    private String message;
-    public ClusterMessage(long term, String peerId, String message) {
+public final class ClientQueryRequest {
+    private final long term;
+    private final String peerId;
+    private final byte[] query;
+
+    public ClientQueryRequest(long term, String peerId, byte[] query) {
         this.term = term;
         this.peerId = peerId;
-        this.message = message;
+        this.query = query == null ? new byte[0] : Arrays.copyOf(query, query.length);
     }
 
     public long getTerm() {
@@ -35,17 +37,7 @@ public class ClusterMessage {
         return peerId;
     }
 
-    public String getMessage() {
-        return message;
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder("ClusterMessage{");
-        sb.append("term=").append(term);
-        sb.append(", peerId=").append(peerId);
-        sb.append(", message='").append(message).append('\'');
-        sb.append('}');
-        return sb.toString();
+    public byte[] getQuery() {
+        return Arrays.copyOf(query, query.length);
     }
 }

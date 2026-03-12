@@ -18,8 +18,23 @@ package org.gautelis.raft.serialization;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
-import org.gautelis.raft.protocol.ClusterMessage;
-import org.gautelis.raft.protocol.AdminCommand;
+import org.gautelis.raft.protocol.ClientCommandRequest;
+import org.gautelis.raft.protocol.ClientCommandResponse;
+import org.gautelis.raft.protocol.ClientQueryRequest;
+import org.gautelis.raft.protocol.ClientQueryResponse;
+import org.gautelis.raft.protocol.ClusterMemberSummary;
+import org.gautelis.raft.protocol.ClusterSummaryRequest;
+import org.gautelis.raft.protocol.ClusterSummaryResponse;
+import org.gautelis.raft.protocol.JoinClusterRequest;
+import org.gautelis.raft.protocol.JoinClusterResponse;
+import org.gautelis.raft.protocol.JoinClusterStatusRequest;
+import org.gautelis.raft.protocol.JoinClusterStatusResponse;
+import org.gautelis.raft.protocol.ReconfigureClusterRequest;
+import org.gautelis.raft.protocol.ReconfigureClusterResponse;
+import org.gautelis.raft.protocol.TelemetryPeerStats;
+import org.gautelis.raft.protocol.TelemetryReplicationStatus;
+import org.gautelis.raft.protocol.TelemetryRequest;
+import org.gautelis.raft.protocol.TelemetryResponse;
 import org.gautelis.raft.protocol.LogEntry;
 import org.gautelis.raft.protocol.AppendEntriesRequest;
 import org.gautelis.raft.protocol.AppendEntriesResponse;
@@ -187,28 +202,531 @@ public final class ProtoMapper {
         );
     }
 
-    public static org.gautelis.raft.proto.ClusterMessage toProto(ClusterMessage message) {
-        return org.gautelis.raft.proto.ClusterMessage.newBuilder()
-                .setTerm(message.getTerm())
-                .setPeerId(message.getPeerId())
-                .setMessage(message.getMessage())
+    public static org.gautelis.raft.proto.ClientCommandRequest toProto(ClientCommandRequest request) {
+        return org.gautelis.raft.proto.ClientCommandRequest.newBuilder()
+                .setTerm(request.getTerm())
+                .setPeerId(request.getPeerId() == null ? "" : request.getPeerId())
+                .setCommand(ByteString.copyFrom(request.getCommand()))
                 .build();
     }
 
-    public static ClusterMessage fromProto(org.gautelis.raft.proto.ClusterMessage message) {
-        return new ClusterMessage(message.getTerm(), message.getPeerId(), message.getMessage());
+    public static ClientCommandRequest fromProto(org.gautelis.raft.proto.ClientCommandRequest request) {
+        return new ClientCommandRequest(request.getTerm(), request.getPeerId(), request.getCommand().toByteArray());
     }
 
-    public static org.gautelis.raft.proto.AdminCommand toProto(AdminCommand command) {
-        return org.gautelis.raft.proto.AdminCommand.newBuilder()
-                .setTerm(command.getTerm())
-                .setPeerId(command.getPeerId())
-                .setCommand(command.getCommand())
+    public static org.gautelis.raft.proto.ClientCommandResponse toProto(ClientCommandResponse response) {
+        return org.gautelis.raft.proto.ClientCommandResponse.newBuilder()
+                .setTerm(response.getTerm())
+                .setPeerId(response.getPeerId() == null ? "" : response.getPeerId())
+                .setSuccess(response.isSuccess())
+                .setStatus(response.getStatus() == null ? "" : response.getStatus())
+                .setMessage(response.getMessage() == null ? "" : response.getMessage())
+                .setLeaderId(response.getLeaderId() == null ? "" : response.getLeaderId())
+                .setLeaderHost(response.getLeaderHost() == null ? "" : response.getLeaderHost())
+                .setLeaderPort(response.getLeaderPort())
                 .build();
     }
 
-    public static AdminCommand fromProto(org.gautelis.raft.proto.AdminCommand command) {
-        return new AdminCommand(command.getTerm(), command.getPeerId(), command.getCommand());
+    public static ClientCommandResponse fromProto(org.gautelis.raft.proto.ClientCommandResponse response) {
+        return new ClientCommandResponse(
+                response.getTerm(),
+                response.getPeerId(),
+                response.getSuccess(),
+                response.getStatus(),
+                response.getMessage(),
+                response.getLeaderId(),
+                response.getLeaderHost(),
+                response.getLeaderPort()
+        );
+    }
+
+    public static org.gautelis.raft.proto.ClientQueryRequest toProto(ClientQueryRequest request) {
+        return org.gautelis.raft.proto.ClientQueryRequest.newBuilder()
+                .setTerm(request.getTerm())
+                .setPeerId(request.getPeerId() == null ? "" : request.getPeerId())
+                .setQuery(ByteString.copyFrom(request.getQuery()))
+                .build();
+    }
+
+    public static ClientQueryRequest fromProto(org.gautelis.raft.proto.ClientQueryRequest request) {
+        return new ClientQueryRequest(request.getTerm(), request.getPeerId(), request.getQuery().toByteArray());
+    }
+
+    public static org.gautelis.raft.proto.ClientQueryResponse toProto(ClientQueryResponse response) {
+        return org.gautelis.raft.proto.ClientQueryResponse.newBuilder()
+                .setTerm(response.getTerm())
+                .setPeerId(response.getPeerId() == null ? "" : response.getPeerId())
+                .setSuccess(response.isSuccess())
+                .setStatus(response.getStatus() == null ? "" : response.getStatus())
+                .setMessage(response.getMessage() == null ? "" : response.getMessage())
+                .setLeaderId(response.getLeaderId() == null ? "" : response.getLeaderId())
+                .setLeaderHost(response.getLeaderHost() == null ? "" : response.getLeaderHost())
+                .setLeaderPort(response.getLeaderPort())
+                .setResult(ByteString.copyFrom(response.getResult()))
+                .build();
+    }
+
+    public static ClientQueryResponse fromProto(org.gautelis.raft.proto.ClientQueryResponse response) {
+        return new ClientQueryResponse(
+                response.getTerm(),
+                response.getPeerId(),
+                response.getSuccess(),
+                response.getStatus(),
+                response.getMessage(),
+                response.getLeaderId(),
+                response.getLeaderHost(),
+                response.getLeaderPort(),
+                response.getResult().toByteArray()
+        );
+    }
+
+    public static org.gautelis.raft.proto.ClusterSummaryRequest toProto(ClusterSummaryRequest request) {
+        return org.gautelis.raft.proto.ClusterSummaryRequest.newBuilder()
+                .setTerm(request.getTerm())
+                .setPeerId(request.getPeerId() == null ? "" : request.getPeerId())
+                .build();
+    }
+
+    public static ClusterSummaryRequest fromProto(org.gautelis.raft.proto.ClusterSummaryRequest request) {
+        return new ClusterSummaryRequest(request.getTerm(), request.getPeerId());
+    }
+
+    public static org.gautelis.raft.proto.ClusterSummaryResponse toProto(ClusterSummaryResponse response) {
+        var builder = org.gautelis.raft.proto.ClusterSummaryResponse.newBuilder()
+                .setObservedAtMillis(response.getObservedAtMillis())
+                .setTerm(response.getTerm())
+                .setPeerId(response.getPeerId() == null ? "" : response.getPeerId())
+                .setSuccess(response.isSuccess())
+                .setStatus(response.getStatus() == null ? "" : response.getStatus())
+                .setRedirectLeaderId(response.getRedirectLeaderId() == null ? "" : response.getRedirectLeaderId())
+                .setRedirectLeaderHost(response.getRedirectLeaderHost() == null ? "" : response.getRedirectLeaderHost())
+                .setRedirectLeaderPort(response.getRedirectLeaderPort())
+                .setState(response.getState() == null ? "" : response.getState())
+                .setLeaderId(response.getLeaderId() == null ? "" : response.getLeaderId())
+                .setJointConsensus(response.isJointConsensus())
+                .setClusterHealth(response.getClusterHealth() == null ? "" : response.getClusterHealth())
+                .setClusterStatusReason(response.getClusterStatusReason() == null ? "" : response.getClusterStatusReason())
+                .setQuorumAvailable(response.isQuorumAvailable())
+                .setCurrentQuorumAvailable(response.isCurrentQuorumAvailable())
+                .setNextQuorumAvailable(response.isNextQuorumAvailable())
+                .setVotingMembers(response.getVotingMembers())
+                .setHealthyVotingMembers(response.getHealthyVotingMembers())
+                .setReachableVotingMembers(response.getReachableVotingMembers())
+                .addAllBlockingCurrentQuorumPeerIds(response.getBlockingCurrentQuorumPeerIds())
+                .addAllBlockingNextQuorumPeerIds(response.getBlockingNextQuorumPeerIds());
+        for (ClusterMemberSummary member : response.getMembers()) {
+            builder.addMembers(org.gautelis.raft.proto.ClusterMemberSummary.newBuilder()
+                    .setPeerId(member.peerId())
+                    .setLocal(member.local())
+                    .setCurrentMember(member.currentMember())
+                    .setNextMember(member.nextMember())
+                    .setVoting(member.voting())
+                    .setRole(member.role() == null ? "" : member.role())
+                    .setCurrentRole(member.currentRole() == null ? "" : member.currentRole())
+                    .setNextRole(member.nextRole() == null ? "" : member.nextRole())
+                    .setRoleTransition(member.roleTransition() == null ? "" : member.roleTransition())
+                    .setReachable(member.reachable())
+                    .setFreshness(member.freshness() == null ? "" : member.freshness())
+                    .setHealth(member.health() == null ? "" : member.health())
+                    .setNextIndex(member.nextIndex())
+                    .setMatchIndex(member.matchIndex())
+                    .setLag(member.lag())
+                    .setConsecutiveFailures(member.consecutiveFailures())
+                    .setLastSuccessfulContactMillis(member.lastSuccessfulContactMillis())
+                    .setLastFailedContactMillis(member.lastFailedContactMillis()));
+        }
+        return builder.build();
+    }
+
+    public static ClusterSummaryResponse fromProto(org.gautelis.raft.proto.ClusterSummaryResponse response) {
+        java.util.List<ClusterMemberSummary> members = new java.util.ArrayList<>();
+        for (org.gautelis.raft.proto.ClusterMemberSummary member : response.getMembersList()) {
+            members.add(new ClusterMemberSummary(
+                    member.getPeerId(),
+                    member.getLocal(),
+                    member.getCurrentMember(),
+                    member.getNextMember(),
+                    member.getVoting(),
+                    member.getRole(),
+                    member.getCurrentRole(),
+                    member.getNextRole(),
+                    member.getRoleTransition(),
+                    member.getReachable(),
+                    member.getFreshness(),
+                    member.getHealth(),
+                    member.getNextIndex(),
+                    member.getMatchIndex(),
+                    member.getLag(),
+                    member.getConsecutiveFailures(),
+                    member.getLastSuccessfulContactMillis(),
+                    member.getLastFailedContactMillis()
+            ));
+        }
+        return new ClusterSummaryResponse(
+                response.getObservedAtMillis(),
+                response.getTerm(),
+                response.getPeerId(),
+                response.getSuccess(),
+                response.getStatus(),
+                response.getRedirectLeaderId(),
+                response.getRedirectLeaderHost(),
+                response.getRedirectLeaderPort(),
+                response.getState(),
+                response.getLeaderId(),
+                response.getJointConsensus(),
+                response.getClusterHealth(),
+                response.getClusterStatusReason(),
+                response.getQuorumAvailable(),
+                response.getCurrentQuorumAvailable(),
+                response.getNextQuorumAvailable(),
+                response.getVotingMembers(),
+                response.getHealthyVotingMembers(),
+                response.getReachableVotingMembers(),
+                response.getBlockingCurrentQuorumPeerIdsList(),
+                response.getBlockingNextQuorumPeerIdsList(),
+                members
+        );
+    }
+
+    public static org.gautelis.raft.proto.JoinClusterRequest toProto(JoinClusterRequest request) {
+        var builder = org.gautelis.raft.proto.JoinClusterRequest.newBuilder()
+                .setTerm(request.getTerm())
+                .setPeerId(request.getPeerId() == null ? "" : request.getPeerId());
+        if (request.getJoiningPeer() != null) {
+            builder.setJoiningPeerId(request.getJoiningPeer().getId());
+            builder.setRole(request.getJoiningPeer().getRole().name());
+            if (request.getJoiningPeer().getAddress() != null) {
+                builder.setHost(request.getJoiningPeer().getAddress().getHostString());
+                builder.setPort(request.getJoiningPeer().getAddress().getPort());
+            }
+        }
+        return builder.build();
+    }
+
+    public static JoinClusterRequest fromProto(org.gautelis.raft.proto.JoinClusterRequest request) {
+        java.net.InetSocketAddress address = request.getHost().isBlank() || request.getPort() <= 0
+                ? null
+                : new java.net.InetSocketAddress(request.getHost(), request.getPort());
+        org.gautelis.raft.protocol.Peer.Role role = request.getRole().isBlank()
+                ? org.gautelis.raft.protocol.Peer.Role.VOTER
+                : org.gautelis.raft.protocol.Peer.Role.valueOf(request.getRole());
+        return new JoinClusterRequest(
+                request.getTerm(),
+                request.getPeerId(),
+                new org.gautelis.raft.protocol.Peer(request.getJoiningPeerId(), address, role)
+        );
+    }
+
+    public static org.gautelis.raft.proto.JoinClusterResponse toProto(JoinClusterResponse response) {
+        return org.gautelis.raft.proto.JoinClusterResponse.newBuilder()
+                .setTerm(response.getTerm())
+                .setPeerId(response.getPeerId() == null ? "" : response.getPeerId())
+                .setSuccess(response.isSuccess())
+                .setStatus(response.getStatus() == null ? "" : response.getStatus())
+                .setMessage(response.getMessage() == null ? "" : response.getMessage())
+                .setLeaderId(response.getLeaderId() == null ? "" : response.getLeaderId())
+                .build();
+    }
+
+    public static JoinClusterResponse fromProto(org.gautelis.raft.proto.JoinClusterResponse response) {
+        return new JoinClusterResponse(
+                response.getTerm(),
+                response.getPeerId(),
+                response.getSuccess(),
+                response.getStatus(),
+                response.getMessage(),
+                response.getLeaderId()
+        );
+    }
+
+    public static org.gautelis.raft.proto.JoinClusterStatusRequest toProto(JoinClusterStatusRequest request) {
+        return org.gautelis.raft.proto.JoinClusterStatusRequest.newBuilder()
+                .setTerm(request.getTerm())
+                .setPeerId(request.getPeerId() == null ? "" : request.getPeerId())
+                .setTargetPeerId(request.getTargetPeerId() == null ? "" : request.getTargetPeerId())
+                .build();
+    }
+
+    public static JoinClusterStatusRequest fromProto(org.gautelis.raft.proto.JoinClusterStatusRequest request) {
+        return new JoinClusterStatusRequest(
+                request.getTerm(),
+                request.getPeerId(),
+                request.getTargetPeerId()
+        );
+    }
+
+    public static org.gautelis.raft.proto.JoinClusterStatusResponse toProto(JoinClusterStatusResponse response) {
+        return org.gautelis.raft.proto.JoinClusterStatusResponse.newBuilder()
+                .setTerm(response.getTerm())
+                .setPeerId(response.getPeerId() == null ? "" : response.getPeerId())
+                .setSuccess(response.isSuccess())
+                .setStatus(response.getStatus() == null ? "" : response.getStatus())
+                .setMessage(response.getMessage() == null ? "" : response.getMessage())
+                .setLeaderId(response.getLeaderId() == null ? "" : response.getLeaderId())
+                .build();
+    }
+
+    public static JoinClusterStatusResponse fromProto(org.gautelis.raft.proto.JoinClusterStatusResponse response) {
+        return new JoinClusterStatusResponse(
+                response.getTerm(),
+                response.getPeerId(),
+                response.getSuccess(),
+                response.getStatus(),
+                response.getMessage(),
+                response.getLeaderId()
+        );
+    }
+
+    public static org.gautelis.raft.proto.ReconfigureClusterRequest toProto(ReconfigureClusterRequest request) {
+        var builder = org.gautelis.raft.proto.ReconfigureClusterRequest.newBuilder()
+                .setTerm(request.getTerm())
+                .setPeerId(request.getPeerId() == null ? "" : request.getPeerId())
+                .setAction(request.getAction() == null ? "" : request.getAction().name());
+        for (org.gautelis.raft.protocol.Peer member : request.getMembers()) {
+            var peerBuilder = org.gautelis.raft.proto.PeerSpec.newBuilder()
+                    .setId(member.getId())
+                    .setRole(member.getRole().name());
+            if (member.getAddress() != null) {
+                peerBuilder.setHost(member.getAddress().getHostString())
+                        .setPort(member.getAddress().getPort());
+            }
+            builder.addMembers(peerBuilder);
+        }
+        return builder.build();
+    }
+
+    public static ReconfigureClusterRequest fromProto(org.gautelis.raft.proto.ReconfigureClusterRequest request) {
+        java.util.List<org.gautelis.raft.protocol.Peer> members = new java.util.ArrayList<>();
+        for (org.gautelis.raft.proto.PeerSpec member : request.getMembersList()) {
+            java.net.InetSocketAddress address = member.getHost().isBlank() || member.getPort() <= 0
+                    ? null
+                    : new java.net.InetSocketAddress(member.getHost(), member.getPort());
+            org.gautelis.raft.protocol.Peer.Role role = member.getRole().isBlank()
+                    ? org.gautelis.raft.protocol.Peer.Role.VOTER
+                    : org.gautelis.raft.protocol.Peer.Role.valueOf(member.getRole());
+            members.add(new org.gautelis.raft.protocol.Peer(member.getId(), address, role));
+        }
+        return new ReconfigureClusterRequest(
+                request.getTerm(),
+                request.getPeerId(),
+                ReconfigureClusterRequest.Action.valueOf(request.getAction()),
+                members
+        );
+    }
+
+    public static org.gautelis.raft.proto.ReconfigureClusterResponse toProto(ReconfigureClusterResponse response) {
+        return org.gautelis.raft.proto.ReconfigureClusterResponse.newBuilder()
+                .setTerm(response.getTerm())
+                .setPeerId(response.getPeerId() == null ? "" : response.getPeerId())
+                .setSuccess(response.isSuccess())
+                .setStatus(response.getStatus() == null ? "" : response.getStatus())
+                .setMessage(response.getMessage() == null ? "" : response.getMessage())
+                .setLeaderId(response.getLeaderId() == null ? "" : response.getLeaderId())
+                .build();
+    }
+
+    public static ReconfigureClusterResponse fromProto(org.gautelis.raft.proto.ReconfigureClusterResponse response) {
+        return new ReconfigureClusterResponse(
+                response.getTerm(),
+                response.getPeerId(),
+                response.getSuccess(),
+                response.getStatus(),
+                response.getMessage(),
+                response.getLeaderId()
+        );
+    }
+
+    public static org.gautelis.raft.proto.TelemetryRequest toProto(TelemetryRequest request) {
+        return org.gautelis.raft.proto.TelemetryRequest.newBuilder()
+                .setTerm(request.getTerm())
+                .setPeerId(request.getPeerId() == null ? "" : request.getPeerId())
+                .setIncludePeerStats(request.isIncludePeerStats())
+                .setRequireLeaderSummary(request.isRequireLeaderSummary())
+                .build();
+    }
+
+    public static TelemetryRequest fromProto(org.gautelis.raft.proto.TelemetryRequest request) {
+        return new TelemetryRequest(request.getTerm(), request.getPeerId(), request.getIncludePeerStats(), request.getRequireLeaderSummary());
+    }
+
+    public static org.gautelis.raft.proto.TelemetryResponse toProto(TelemetryResponse response) {
+        var builder = org.gautelis.raft.proto.TelemetryResponse.newBuilder()
+                .setObservedAtMillis(response.getObservedAtMillis())
+                .setTerm(response.getTerm())
+                .setPeerId(response.getPeerId() == null ? "" : response.getPeerId())
+                .setSuccess(response.isSuccess())
+                .setStatus(response.getStatus() == null ? "" : response.getStatus())
+                .setRedirectLeaderId(response.getRedirectLeaderId() == null ? "" : response.getRedirectLeaderId())
+                .setState(response.getState() == null ? "" : response.getState())
+                .setLeaderId(response.getLeaderId() == null ? "" : response.getLeaderId())
+                .setVotedFor(response.getVotedFor() == null ? "" : response.getVotedFor())
+                .setJoining(response.isJoining())
+                .setDecommissioned(response.isDecommissioned())
+                .setCommitIndex(response.getCommitIndex())
+                .setLastApplied(response.getLastApplied())
+                .setLastLogIndex(response.getLastLogIndex())
+                .setLastLogTerm(response.getLastLogTerm())
+                .setSnapshotIndex(response.getSnapshotIndex())
+                .setSnapshotTerm(response.getSnapshotTerm())
+                .setLastHeartbeatMillis(response.getLastHeartbeatMillis())
+                .setNextElectionDeadlineMillis(response.getNextElectionDeadlineMillis())
+                .setJointConsensus(response.isJointConsensus())
+                .setClusterHealth(response.getClusterHealth() == null ? "" : response.getClusterHealth())
+                .setQuorumAvailable(response.isQuorumAvailable())
+                .setCurrentQuorumAvailable(response.isCurrentQuorumAvailable())
+                .setNextQuorumAvailable(response.isNextQuorumAvailable())
+                .setVotingMembers(response.getVotingMembers())
+                .setHealthyVotingMembers(response.getHealthyVotingMembers())
+                .setReachableVotingMembers(response.getReachableVotingMembers())
+                .setClusterStatusReason(response.getClusterStatusReason() == null ? "" : response.getClusterStatusReason());
+        builder.addAllBlockingCurrentQuorumPeerIds(response.getBlockingCurrentQuorumPeerIds());
+        builder.addAllBlockingNextQuorumPeerIds(response.getBlockingNextQuorumPeerIds());
+        for (var peer : response.getCurrentMembers()) {
+            builder.addCurrentMembers(toPeerSpec(peer));
+        }
+        for (var peer : response.getNextMembers()) {
+            builder.addNextMembers(toPeerSpec(peer));
+        }
+        for (var peer : response.getKnownPeers()) {
+            builder.addKnownPeers(toPeerSpec(peer));
+        }
+        builder.addAllPendingJoinIds(response.getPendingJoinIds());
+        for (var status : response.getReplication()) {
+            builder.addReplication(org.gautelis.raft.proto.TelemetryReplicationStatus.newBuilder()
+                    .setPeerId(status.peerId())
+                    .setNextIndex(status.nextIndex())
+                    .setMatchIndex(status.matchIndex())
+                    .setReachable(status.reachable())
+                    .setLastSuccessfulContactMillis(status.lastSuccessfulContactMillis())
+                    .setConsecutiveFailures(status.consecutiveFailures())
+                    .setLastFailedContactMillis(status.lastFailedContactMillis())
+                    .build());
+        }
+        for (var stats : response.getPeerStats()) {
+            builder.addPeerStats(org.gautelis.raft.proto.TelemetryPeerStats.newBuilder()
+                    .setPeerId(stats.peerId())
+                    .setSamples(stats.samples())
+                    .setMeanMillis(stats.meanMillis())
+                    .setMinMillis(stats.minMillis())
+                    .setMaxMillis(stats.maxMillis())
+                    .setCvPercent(stats.cvPercent())
+                    .build());
+        }
+        for (ClusterMemberSummary member : response.getClusterMembers()) {
+            builder.addClusterMembers(org.gautelis.raft.proto.ClusterMemberSummary.newBuilder()
+                    .setPeerId(member.peerId())
+                    .setLocal(member.local())
+                    .setCurrentMember(member.currentMember())
+                    .setNextMember(member.nextMember())
+                    .setVoting(member.voting())
+                    .setRole(member.role() == null ? "" : member.role())
+                    .setCurrentRole(member.currentRole() == null ? "" : member.currentRole())
+                    .setNextRole(member.nextRole() == null ? "" : member.nextRole())
+                    .setRoleTransition(member.roleTransition() == null ? "" : member.roleTransition())
+                    .setReachable(member.reachable())
+                    .setFreshness(member.freshness() == null ? "" : member.freshness())
+                    .setHealth(member.health() == null ? "" : member.health())
+                    .setNextIndex(member.nextIndex())
+                    .setMatchIndex(member.matchIndex())
+                    .setLag(member.lag())
+                    .setConsecutiveFailures(member.consecutiveFailures())
+                    .setLastSuccessfulContactMillis(member.lastSuccessfulContactMillis())
+                    .setLastFailedContactMillis(member.lastFailedContactMillis()));
+        }
+        return builder.build();
+    }
+
+    public static TelemetryResponse fromProto(org.gautelis.raft.proto.TelemetryResponse response) {
+        java.util.List<org.gautelis.raft.protocol.Peer> currentMembers = new java.util.ArrayList<>();
+        for (var member : response.getCurrentMembersList()) {
+            currentMembers.add(fromPeerSpec(member));
+        }
+        java.util.List<org.gautelis.raft.protocol.Peer> nextMembers = new java.util.ArrayList<>();
+        for (var member : response.getNextMembersList()) {
+            nextMembers.add(fromPeerSpec(member));
+        }
+        java.util.List<org.gautelis.raft.protocol.Peer> knownPeers = new java.util.ArrayList<>();
+        for (var member : response.getKnownPeersList()) {
+            knownPeers.add(fromPeerSpec(member));
+        }
+        java.util.List<TelemetryReplicationStatus> replication = new java.util.ArrayList<>();
+        for (var item : response.getReplicationList()) {
+            replication.add(new TelemetryReplicationStatus(
+                    item.getPeerId(),
+                    item.getNextIndex(),
+                    item.getMatchIndex(),
+                    item.getReachable(),
+                    item.getLastSuccessfulContactMillis(),
+                    item.getConsecutiveFailures(),
+                    item.getLastFailedContactMillis()
+            ));
+        }
+        java.util.List<TelemetryPeerStats> peerStats = new java.util.ArrayList<>();
+        for (var item : response.getPeerStatsList()) {
+            peerStats.add(new TelemetryPeerStats(item.getPeerId(), item.getSamples(), item.getMeanMillis(), item.getMinMillis(), item.getMaxMillis(), item.getCvPercent()));
+        }
+        java.util.List<ClusterMemberSummary> clusterMembers = new java.util.ArrayList<>();
+        for (var member : response.getClusterMembersList()) {
+            clusterMembers.add(new ClusterMemberSummary(
+                    member.getPeerId(),
+                    member.getLocal(),
+                    member.getCurrentMember(),
+                    member.getNextMember(),
+                    member.getVoting(),
+                    member.getRole(),
+                    member.getCurrentRole(),
+                    member.getNextRole(),
+                    member.getRoleTransition(),
+                    member.getReachable(),
+                    member.getFreshness(),
+                    member.getHealth(),
+                    member.getNextIndex(),
+                    member.getMatchIndex(),
+                    member.getLag(),
+                    member.getConsecutiveFailures(),
+                    member.getLastSuccessfulContactMillis(),
+                    member.getLastFailedContactMillis()
+            ));
+        }
+        return new TelemetryResponse(
+                response.getObservedAtMillis(),
+                response.getTerm(),
+                response.getPeerId(),
+                response.getSuccess(),
+                response.getStatus(),
+                response.getRedirectLeaderId(),
+                response.getState(),
+                response.getLeaderId(),
+                response.getVotedFor(),
+                response.getJoining(),
+                response.getDecommissioned(),
+                response.getCommitIndex(),
+                response.getLastApplied(),
+                response.getLastLogIndex(),
+                response.getLastLogTerm(),
+                response.getSnapshotIndex(),
+                response.getSnapshotTerm(),
+                response.getLastHeartbeatMillis(),
+                response.getNextElectionDeadlineMillis(),
+                response.getJointConsensus(),
+                currentMembers,
+                nextMembers,
+                knownPeers,
+                response.getPendingJoinIdsList(),
+                replication,
+                peerStats,
+                response.getClusterHealth(),
+                response.getQuorumAvailable(),
+                response.getCurrentQuorumAvailable(),
+                response.getNextQuorumAvailable(),
+                response.getVotingMembers(),
+                response.getHealthyVotingMembers(),
+                response.getReachableVotingMembers(),
+                response.getClusterStatusReason(),
+                response.getBlockingCurrentQuorumPeerIdsList(),
+                response.getBlockingNextQuorumPeerIdsList(),
+                clusterMembers
+        );
     }
 
     public static Optional<org.gautelis.raft.proto.VoteRequest> parseVoteRequest(byte[] payload) {
@@ -227,20 +745,137 @@ public final class ProtoMapper {
         }
     }
 
-    public static Optional<org.gautelis.raft.proto.ClusterMessage> parseClusterMessage(byte[] payload) {
+    public static Optional<org.gautelis.raft.proto.ClientCommandRequest> parseClientCommandRequest(byte[] payload) {
         try {
-            return Optional.of(org.gautelis.raft.proto.ClusterMessage.parseFrom(payload));
+            return Optional.of(org.gautelis.raft.proto.ClientCommandRequest.parseFrom(payload));
         } catch (InvalidProtocolBufferException e) {
             return Optional.empty();
         }
     }
 
-    public static Optional<org.gautelis.raft.proto.AdminCommand> parseAdminCommand(byte[] payload) {
+    public static Optional<org.gautelis.raft.proto.ClientCommandResponse> parseClientCommandResponse(byte[] payload) {
         try {
-            return Optional.of(org.gautelis.raft.proto.AdminCommand.parseFrom(payload));
+            return Optional.of(org.gautelis.raft.proto.ClientCommandResponse.parseFrom(payload));
         } catch (InvalidProtocolBufferException e) {
             return Optional.empty();
         }
+    }
+
+    public static Optional<org.gautelis.raft.proto.ClientQueryRequest> parseClientQueryRequest(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.ClientQueryRequest.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.ClientQueryResponse> parseClientQueryResponse(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.ClientQueryResponse.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.ClusterSummaryRequest> parseClusterSummaryRequest(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.ClusterSummaryRequest.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.ClusterSummaryResponse> parseClusterSummaryResponse(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.ClusterSummaryResponse.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.JoinClusterRequest> parseJoinClusterRequest(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.JoinClusterRequest.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.JoinClusterResponse> parseJoinClusterResponse(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.JoinClusterResponse.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.JoinClusterStatusRequest> parseJoinClusterStatusRequest(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.JoinClusterStatusRequest.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.JoinClusterStatusResponse> parseJoinClusterStatusResponse(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.JoinClusterStatusResponse.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.ReconfigureClusterRequest> parseReconfigureClusterRequest(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.ReconfigureClusterRequest.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.ReconfigureClusterResponse> parseReconfigureClusterResponse(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.ReconfigureClusterResponse.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.TelemetryRequest> parseTelemetryRequest(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.TelemetryRequest.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<org.gautelis.raft.proto.TelemetryResponse> parseTelemetryResponse(byte[] payload) {
+        try {
+            return Optional.of(org.gautelis.raft.proto.TelemetryResponse.parseFrom(payload));
+        } catch (InvalidProtocolBufferException e) {
+            return Optional.empty();
+        }
+    }
+
+    private static org.gautelis.raft.proto.PeerSpec toPeerSpec(org.gautelis.raft.protocol.Peer member) {
+        var builder = org.gautelis.raft.proto.PeerSpec.newBuilder()
+                .setId(member.getId())
+                .setRole(member.getRole().name());
+        if (member.getAddress() != null) {
+            builder.setHost(member.getAddress().getHostString())
+                    .setPort(member.getAddress().getPort());
+        }
+        return builder.build();
+    }
+
+    private static org.gautelis.raft.protocol.Peer fromPeerSpec(org.gautelis.raft.proto.PeerSpec member) {
+        java.net.InetSocketAddress address = member.getHost().isBlank() || member.getPort() <= 0
+                ? null
+                : new java.net.InetSocketAddress(member.getHost(), member.getPort());
+        org.gautelis.raft.protocol.Peer.Role role = member.getRole().isBlank()
+                ? org.gautelis.raft.protocol.Peer.Role.VOTER
+                : org.gautelis.raft.protocol.Peer.Role.valueOf(member.getRole());
+        return new org.gautelis.raft.protocol.Peer(member.getId(), address, role);
     }
 
     public static Optional<org.gautelis.raft.proto.AppendEntriesRequest> parseAppendEntriesRequest(byte[] payload) {

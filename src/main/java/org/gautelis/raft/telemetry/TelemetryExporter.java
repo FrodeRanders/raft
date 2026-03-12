@@ -14,8 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.gautelis.raft.statemachine;
+package org.gautelis.raft.telemetry;
 
-public interface CommandHandler {
-    void handle(long myTerm, byte[] command);
+import org.gautelis.raft.RaftNode;
+import org.gautelis.raft.protocol.TelemetryPeerStats;
+
+import java.util.List;
+
+public interface TelemetryExporter {
+    default boolean isEnabled() {
+        return true;
+    }
+
+    void publish(RaftNode.TelemetrySnapshot snapshot, List<TelemetryPeerStats> peerStats);
+
+    default void close() {
+    }
 }

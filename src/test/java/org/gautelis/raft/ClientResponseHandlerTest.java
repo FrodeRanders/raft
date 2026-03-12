@@ -22,6 +22,12 @@ import org.gautelis.raft.transport.netty.*;
 import org.gautelis.raft.serialization.ProtoMapper;
 
 import io.netty.channel.embedded.EmbeddedChannel;
+import org.gautelis.raft.protocol.ClientCommandResponse;
+import org.gautelis.raft.protocol.ClientQueryResponse;
+import org.gautelis.raft.protocol.ClusterMemberSummary;
+import org.gautelis.raft.protocol.ClusterSummaryResponse;
+import org.gautelis.raft.protocol.JoinClusterResponse;
+import org.gautelis.raft.protocol.TelemetryResponse;
 import org.gautelis.raft.protocol.VoteRequest;
 import org.gautelis.raft.protocol.VoteResponse;
 import org.gautelis.raft.proto.Envelope;
@@ -70,6 +76,12 @@ class ClientResponseHandlerTest {
                 new java.util.HashMap<>(),
                 new java.util.HashMap<>(),
                 new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
                 null
         );
         EmbeddedChannel channel = new EmbeddedChannel(handler);
@@ -92,6 +104,227 @@ class ClientResponseHandlerTest {
     }
 
     @Test
+    void joinClusterResponseCompletesFuture() throws Exception {
+        log.info("*** Testcase *** JoinClusterResponse completes waiting future");
+
+        CompletableFuture<JoinClusterResponse> future = new CompletableFuture<>();
+
+        ClientResponseHandler handler = new ClientResponseHandler(
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(Map.of("corr-admin-1", future)),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                null
+        );
+        EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+        JoinClusterResponse resp = new JoinClusterResponse(5, "A", true, "PENDING", "Join request accepted", "A");
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-admin-1",
+                "JoinClusterResponse",
+                ProtoMapper.toProto(resp).toByteString()
+        );
+
+        channel.writeInbound(envelope);
+
+        assertTrue(future.isDone());
+        assertEquals("PENDING", future.get().getStatus());
+        assertEquals("A", future.get().getLeaderId());
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void clientCommandResponseCompletesFuture() throws Exception {
+        log.info("*** Testcase *** ClientCommandResponse completes waiting future");
+
+        CompletableFuture<ClientCommandResponse> future = new CompletableFuture<>();
+
+        ClientResponseHandler handler = new ClientResponseHandler(
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(Map.of("corr-command-1", future)),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                null
+        );
+        EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+        ClientCommandResponse resp = new ClientCommandResponse(5, "A", true, "ACCEPTED", "Command accepted for replication", "A", "127.0.0.1", 10080);
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-command-1",
+                "ClientCommandResponse",
+                ProtoMapper.toProto(resp).toByteString()
+        );
+
+        channel.writeInbound(envelope);
+
+        assertTrue(future.isDone());
+        assertEquals("ACCEPTED", future.get().getStatus());
+        assertEquals("A", future.get().getLeaderId());
+        assertEquals("127.0.0.1", future.get().getLeaderHost());
+        assertEquals(10080, future.get().getLeaderPort());
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void clientQueryResponseCompletesFuture() throws Exception {
+        log.info("*** Testcase *** ClientQueryResponse completes waiting future");
+
+        CompletableFuture<ClientQueryResponse> future = new CompletableFuture<>();
+
+        ClientResponseHandler handler = new ClientResponseHandler(
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(Map.of("corr-query-1", future)),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                null
+        );
+        EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+        ClientQueryResponse resp = new ClientQueryResponse(5, "A", true, "OK", "Query completed", "A", "127.0.0.1", 10080, "result".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-query-1",
+                "ClientQueryResponse",
+                ProtoMapper.toProto(resp).toByteString()
+        );
+
+        channel.writeInbound(envelope);
+
+        assertTrue(future.isDone());
+        assertEquals("OK", future.get().getStatus());
+        assertEquals("A", future.get().getLeaderId());
+        assertEquals("127.0.0.1", future.get().getLeaderHost());
+        assertEquals(10080, future.get().getLeaderPort());
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void clusterSummaryResponseCompletesFuture() throws Exception {
+        log.info("*** Testcase *** ClusterSummaryResponse completes waiting future");
+
+        CompletableFuture<ClusterSummaryResponse> future = new CompletableFuture<>();
+
+        ClientResponseHandler handler = new ClientResponseHandler(
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(Map.of("corr-summary-1", future)),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                null
+        );
+        EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+        ClusterSummaryResponse resp = new ClusterSummaryResponse(
+                250L,
+                5L,
+                "A",
+                true,
+                "OK",
+                "",
+                "",
+                0,
+                "LEADER",
+                "A",
+                false,
+                "healthy",
+                "all-voters-healthy",
+                true,
+                true,
+                true,
+                2,
+                2,
+                2,
+                java.util.List.of(),
+                java.util.List.of(),
+                java.util.List.of(new ClusterMemberSummary("A", true, true, false, true, "VOTER", "VOTER", "", "steady", true, "fresh", "local", 2L, 1L, 0L, 0, 100L, 0L))
+        );
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-summary-1",
+                "ClusterSummaryResponse",
+                ProtoMapper.toProto(resp).toByteString()
+        );
+
+        channel.writeInbound(envelope);
+
+        assertTrue(future.isDone());
+        assertEquals("OK", future.get().getStatus());
+        assertEquals("healthy", future.get().getClusterHealth());
+        assertEquals(1, future.get().getMembers().size());
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void telemetryResponseCompletesFuture() throws Exception {
+        log.info("*** Testcase *** TelemetryResponse completes waiting future");
+
+        CompletableFuture<TelemetryResponse> future = new CompletableFuture<>();
+
+        ClientResponseHandler handler = new ClientResponseHandler(
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(Map.of("corr-telemetry-1", future)),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                null
+        );
+        EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+        TelemetryResponse resp = new TelemetryResponse(250L, 5, "A", true, "OK", "", "LEADER", "A", "", false, false, 7, 7, 8, 5, 0, 0, 100, 200, false, java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), "healthy", true, true, true, 1, 1, 1, "all-voters-healthy", java.util.List.of(), java.util.List.of(), java.util.List.of(new ClusterMemberSummary("A", true, true, false, true, "VOTER", "VOTER", "", "steady", true, "fresh", "local", 9L, 8L, 0L, 0, 100L, 0L)));
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-telemetry-1",
+                "TelemetryResponse",
+                ProtoMapper.toProto(resp).toByteString()
+        );
+
+        channel.writeInbound(envelope);
+
+        assertTrue(future.isDone());
+        assertEquals("LEADER", future.get().getState());
+        assertEquals(7, future.get().getCommitIndex());
+        assertEquals("healthy", future.get().getClusterHealth());
+        assertEquals("all-voters-healthy", future.get().getClusterStatusReason());
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
     void unknownTypeDelegatesToMessageHandler() throws Exception {
         log.info("*** Testcase *** Unknown type delegates to message handler");
 
@@ -100,6 +333,12 @@ class ClientResponseHandlerTest {
 
         ClientResponseHandler handler = new ClientResponseHandler(
                 inFlight,
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
                 new java.util.HashMap<>(),
                 new java.util.HashMap<>(),
                 new java.util.HashMap<>(),
@@ -127,6 +366,12 @@ class ClientResponseHandlerTest {
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
         ClientResponseHandler handler = new ClientResponseHandler(
                 inFlight,
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
                 new java.util.HashMap<>(),
                 new java.util.HashMap<>(),
                 new java.util.HashMap<>(),

@@ -105,6 +105,8 @@ final class ClusterConfigurationSnapshotCodec {
             json.append('{');
             appendField(json, "id", quote(peer.getId()));
             json.append(',');
+            appendField(json, "role", quote(peer.getRole().name()));
+            json.append(',');
             if (peer.getAddress() == null) {
                 appendField(json, "address", "null");
             } else {
@@ -126,6 +128,7 @@ final class ClusterConfigurationSnapshotCodec {
                 throw new IllegalArgumentException("Peer entry must be a JSON object");
             }
             String id = (String) required(peerObject, "id");
+            String roleValue = peerObject.containsKey("role") ? (String) required(peerObject, "role") : Peer.Role.VOTER.name();
             Object addressValue = required(peerObject, "address");
             InetSocketAddress address = null;
             if (addressValue != null) {
@@ -136,7 +139,7 @@ final class ClusterConfigurationSnapshotCodec {
                 int port = ((Number) required(addressObject, "port")).intValue();
                 address = new InetSocketAddress(host, port);
             }
-            peers.add(new Peer(id, address));
+            peers.add(new Peer(id, address, Peer.Role.valueOf(roleValue)));
         }
         return peers;
     }

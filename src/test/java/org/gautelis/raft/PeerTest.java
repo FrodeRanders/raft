@@ -38,10 +38,10 @@ class PeerTest {
     private static final Logger log = LoggerFactory.getLogger(PeerTest.class);
 
     @Test
-    void peersWithSameIdAreEqualAndShareHashCode() {
-        log.info("*** Testcase *** Peer identity equality: verifies peers with same id compare equal and share hash code");
+    void peersWithSameAddressAndRoleAreEqualAndShareHashCode() {
+        log.info("*** Testcase *** Peer identity equality: verifies peers with same id, address, and role compare equal and share hash code");
         Peer first = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
-        Peer second = new Peer("A", new InetSocketAddress("127.0.0.1", 10081));
+        Peer second = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
 
         assertEquals(first, second);
         assertEquals(first.hashCode(), second.hashCode());
@@ -49,9 +49,9 @@ class PeerTest {
 
     @Test
     void mapLookupWorksAcrossEquivalentPeerInstances() {
-        log.info("*** Testcase *** Peer map-key behavior: verifies id-equivalent peer instances resolve the same map entry");
+        log.info("*** Testcase *** Peer map-key behavior: verifies fully equivalent peer instances resolve the same map entry");
         Peer key = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
-        Peer equivalent = new Peer("A", new InetSocketAddress("127.0.0.1", 10081));
+        Peer equivalent = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
 
         Map<Peer, String> map = new HashMap<>();
         map.put(key, "channel");

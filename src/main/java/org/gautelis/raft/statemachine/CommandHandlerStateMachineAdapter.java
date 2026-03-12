@@ -24,7 +24,7 @@ public final class CommandHandlerStateMachineAdapter implements SnapshotStateMac
     }
 
     @Override
-    public void apply(long term, String command) {
+    public void apply(long term, byte[] command) {
         delegate.handle(term, command);
     }
 

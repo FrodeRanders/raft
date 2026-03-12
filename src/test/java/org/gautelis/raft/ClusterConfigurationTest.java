@@ -30,6 +30,10 @@ class ClusterConfigurationTest {
         return new Peer(id, null);
     }
 
+    private static Peer learner(String id) {
+        return new Peer(id, null, Peer.Role.LEARNER);
+    }
+
     @Test
     void stableConfigurationUsesSingleMajority() {
         ClusterConfiguration configuration = ClusterConfiguration.stable(List.of(peer("A"), peer("B"), peer("C")));
@@ -59,5 +63,16 @@ class ClusterConfigurationTest {
 
         assertFalse(configuration.hasJointMajority(List.of("A", "B")));
         assertTrue(configuration.hasJointMajority(List.of("B", "D")));
+    }
+
+    @Test
+    void learnerMembersDoNotAffectVotingMajorities() {
+        ClusterConfiguration configuration = ClusterConfiguration.stable(List.of(peer("A"), peer("B"), learner("L")));
+
+        assertTrue(configuration.contains("L"));
+        assertTrue(configuration.isLearner("L"));
+        assertFalse(configuration.isVoter("L"));
+        assertTrue(configuration.hasJointMajority(List.of("A", "B")));
+        assertFalse(configuration.hasJointMajority(List.of("A")));
     }
 }

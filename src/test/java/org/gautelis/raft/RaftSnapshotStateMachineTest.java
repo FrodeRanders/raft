@@ -25,11 +25,11 @@ import org.gautelis.raft.protocol.AppendEntriesRequest;
 import org.gautelis.raft.protocol.InstallSnapshotRequest;
 import org.gautelis.raft.protocol.LogEntry;
 import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.protocol.StateMachineCommand;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -62,13 +62,13 @@ class RaftSnapshotStateMachineTest {
         private final List<String> applied = new ArrayList<>();
 
         @Override
-        public void apply(long term, String command) {
-            applied.add(term + ":" + command);
+        public void apply(long term, byte[] command) {
+            applied.add(term + ":" + StateMachineCommand.decode(command).map(Object::toString).orElse("invalid"));
         }
 
         @Override
         public byte[] snapshot() {
-            return "snapshot-current".getBytes(StandardCharsets.UTF_8);
+            return "snapshot-current".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         }
 
         @Override
@@ -108,11 +108,11 @@ class RaftSnapshotStateMachineTest {
                 "A",
                 5,
                 4,
-                "snapshot-5".getBytes(StandardCharsets.UTF_8)
+                "snapshot-5".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         );
         var snapshotResponse = nodeB.handleInstallSnapshot(snapshotRequest);
         assertTrue(snapshotResponse.isSuccess());
-        assertArrayEquals("snapshot-5".getBytes(StandardCharsets.UTF_8), sm.restored);
+        assertArrayEquals("snapshot-5".getBytes(java.nio.charset.StandardCharsets.UTF_8), sm.restored);
         assertEquals(5, nodeB.getCommitIndexForTest());
         assertEquals(5, nodeB.getLastAppliedForTest());
 
@@ -123,7 +123,7 @@ class RaftSnapshotStateMachineTest {
                 5,
                 4,
                 5,
-                List.of(new LogEntry(4, "A", "set x=7".getBytes(StandardCharsets.UTF_8)))
+                List.of(new LogEntry(4, "A", StateMachineCommand.put("x", "7").encode()))
         ));
         nodeB.handleAppendEntries(new AppendEntriesRequest(
                 4,
@@ -135,7 +135,7 @@ class RaftSnapshotStateMachineTest {
         ));
 
         assertEquals(1, sm.applied.size());
-        assertEquals("4:set x=7", sm.applied.getFirst());
+        assertEquals("4:" + StateMachineCommand.put("x", "7"), sm.applied.getFirst());
     }
 
     @Test
@@ -164,7 +164,7 @@ class RaftSnapshotStateMachineTest {
         ClusterConfiguration configuration = ClusterConfiguration
                 .stable(List.of(a, b, c))
                 .transitionTo(List.of(a, b, d));
-        byte[] payload = ClusterConfigurationSnapshotCodec.encode(configuration, "snapshot-joint".getBytes(StandardCharsets.UTF_8));
+        byte[] payload = ClusterConfigurationSnapshotCodec.encode(configuration, "snapshot-joint".getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
         InstallSnapshotRequest snapshotRequest = new InstallSnapshotRequest(
                 4,
@@ -175,7 +175,7 @@ class RaftSnapshotStateMachineTest {
         );
         var snapshotResponse = nodeB.handleInstallSnapshot(snapshotRequest);
         assertTrue(snapshotResponse.isSuccess());
-        assertArrayEquals("snapshot-joint".getBytes(StandardCharsets.UTF_8), sm.restored);
+        assertArrayEquals("snapshot-joint".getBytes(java.nio.charset.StandardCharsets.UTF_8), sm.restored);
         assertTrue(nodeB.getClusterConfigurationForTest().isJointConsensus());
         assertTrue(nodeB.getClusterConfigurationForTest().contains("D"));
         assertTrue(nodeB.getClusterConfigurationForTest().contains("C"));
@@ -211,7 +211,7 @@ class RaftSnapshotStateMachineTest {
                 .stable(List.of(a, b, c))
                 .transitionTo(List.of(b, c))
                 .finalizeTransition();
-        byte[] payload = ClusterConfigurationSnapshotCodec.encode(configuration, "snapshot-final".getBytes(StandardCharsets.UTF_8));
+        byte[] payload = ClusterConfigurationSnapshotCodec.encode(configuration, "snapshot-final".getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
         InstallSnapshotRequest snapshotRequest = new InstallSnapshotRequest(
                 4,
@@ -222,7 +222,7 @@ class RaftSnapshotStateMachineTest {
         );
         var snapshotResponse = nodeA.handleInstallSnapshot(snapshotRequest);
         assertTrue(snapshotResponse.isSuccess());
-        assertArrayEquals("snapshot-final".getBytes(StandardCharsets.UTF_8), sm.restored);
+        assertArrayEquals("snapshot-final".getBytes(java.nio.charset.StandardCharsets.UTF_8), sm.restored);
         assertFalse(nodeA.getClusterConfigurationForTest().contains("A"));
         assertFalse(nodeA.getClusterConfigurationForTest().isJointConsensus());
         assertTrue(nodeA.isDecommissionedForTest());

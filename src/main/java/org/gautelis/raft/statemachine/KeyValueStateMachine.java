@@ -16,6 +16,10 @@
  */
 package org.gautelis.raft.statemachine;
 
+import org.gautelis.raft.protocol.StateMachineCommand;
+import org.gautelis.raft.protocol.StateMachineQuery;
+import org.gautelis.raft.protocol.StateMachineQueryResult;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -26,7 +30,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
 
-public final class KeyValueStateMachine implements SnapshotStateMachine {
+public final class KeyValueStateMachine implements QueryableStateMachine {
     // Reference implementation of a deterministic state machine used by the Raft log:
     // - apply() mutates authoritative state from committed commands
     // - snapshot()/restore() provides compaction and InstallSnapshot support
@@ -34,34 +38,20 @@ public final class KeyValueStateMachine implements SnapshotStateMachine {
     private final Map<String, String> values = new HashMap<>();
 
     @Override
-    public synchronized void apply(long term, String command) {
+    public synchronized void apply(long term, byte[] command) {
         // Only committed commands should arrive here from RaftNode.applyCommittedEntries().
-        if (command == null) {
+        if (command == null || command.length == 0) {
             return;
         }
-
-        String trimmed = command.trim();
-        if (trimmed.isEmpty()) {
+        var parsed = StateMachineCommand.decode(command);
+        if (parsed.isEmpty()) {
             return;
         }
-
-        String[] parts = trimmed.split("\\s+", 3);
-        String op = parts[0].toLowerCase(java.util.Locale.ROOT);
-        switch (op) {
-            case "set", "put" -> {
-                if (parts.length >= 3) {
-                    values.put(parts[1], parts[2]);
-                }
-            }
-            case "delete", "del" -> {
-                if (parts.length >= 2) {
-                    values.remove(parts[1]);
-                }
-            }
-            case "clear" -> values.clear();
-            default -> {
-                // Unknown command is ignored.
-            }
+        StateMachineCommand decoded = parsed.get();
+        switch (decoded.getType()) {
+            case PUT -> values.put(decoded.getKey(), decoded.getValue());
+            case DELETE -> values.remove(decoded.getKey());
+            case CLEAR -> values.clear();
         }
     }
 
@@ -105,6 +95,18 @@ public final class KeyValueStateMachine implements SnapshotStateMachine {
 
     public synchronized String get(String key) {
         return values.get(key);
+    }
+
+    @Override
+    public synchronized byte[] query(byte[] request) {
+        var parsed = StateMachineQuery.decode(request);
+        if (parsed.isEmpty()) {
+            return new byte[0];
+        }
+        StateMachineQuery query = parsed.get();
+        return switch (query.getType()) {
+            case GET -> StateMachineQueryResult.get(query.getKey(), values.containsKey(query.getKey()), values.get(query.getKey())).encode();
+        };
     }
 
     public synchronized Map<String, String> asMap() {

@@ -14,8 +14,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.gautelis.raft.statemachine;
+package org.gautelis.raft.protocol;
 
-public interface CommandHandler {
-    void handle(long myTerm, byte[] command);
+public final class ClusterSummaryRequest {
+    private final long term;
+    private final String peerId;
+
+    public ClusterSummaryRequest(long term, String peerId) {
+        this.term = term;
+        this.peerId = peerId;
+    }
+
+    public long getTerm() {
+        return term;
+    }
+
+    public String getPeerId() {
+        return peerId;
+    }
 }

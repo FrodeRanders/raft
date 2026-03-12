@@ -14,8 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.gautelis.raft.statemachine;
+package org.gautelis.raft.protocol;
 
-public interface CommandHandler {
-    void handle(long myTerm, byte[] command);
-}
+public record ClusterMemberSummary(
+        String peerId,
+        boolean local,
+        boolean currentMember,
+        boolean nextMember,
+        boolean voting,
+        String role,
+        String currentRole,
+        String nextRole,
+        String roleTransition,
+        boolean reachable,
+        String freshness,
+        String health,
+        long nextIndex,
+        long matchIndex,
+        long lag,
+        int consecutiveFailures,
+        long lastSuccessfulContactMillis,
+        long lastFailedContactMillis
+) {}

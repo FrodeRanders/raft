@@ -26,6 +26,7 @@ import org.gautelis.raft.serialization.ProtoMapper;
 import org.gautelis.raft.protocol.AppendEntriesRequest;
 import org.gautelis.raft.protocol.LogEntry;
 import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.protocol.StateMachineCommand;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,8 +63,8 @@ class RaftCompactionPolicyTest {
         private final List<String> applied = new ArrayList<>();
 
         @Override
-        public void apply(long term, String command) {
-            applied.add(term + ":" + command);
+        public void apply(long term, byte[] command) {
+            applied.add(term + ":" + StateMachineCommand.decode(command).map(Object::toString).orElse("invalid"));
         }
 
         @Override
@@ -108,7 +109,7 @@ class RaftCompactionPolicyTest {
                     0,
                     0,
                     1,
-                    List.of(new LogEntry(2, "A", "set x 10".getBytes(StandardCharsets.UTF_8)))
+                    List.of(new LogEntry(2, "A", StateMachineCommand.put("x", "10").encode()))
             ));
 
             assertEquals(1, store.snapshotIndex());
@@ -116,7 +117,7 @@ class RaftCompactionPolicyTest {
             assertFalse(store.snapshotData().length == 0);
             var decoded = ClusterConfigurationSnapshotCodec.decode(store.snapshotData());
             assertTrue(decoded.isPresent());
-            assertTrue(new String(decoded.get().stateMachineSnapshot(), StandardCharsets.UTF_8).contains("set x 10"));
+            assertTrue(new String(decoded.get().stateMachineSnapshot(), StandardCharsets.UTF_8).contains("PUT(x=10)"));
         } finally {
             if (prev == null) {
                 System.clearProperty("raft.snapshot.min.entries");

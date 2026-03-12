@@ -16,21 +16,15 @@
  */
 package org.gautelis.raft;
 
+import com.google.protobuf.InvalidProtocolBufferException;
 import org.gautelis.raft.protocol.Peer;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 
 final class ClusterConfigurationCommand {
-    // Internal log encoding for membership changes.
-    // These entries are not user commands; RaftNode intercepts and applies them on commit.
-    private static final String PREFIX = "__raft_config__:";
-    private static final String JOINT = "joint:";
-    private static final String FINALIZE = "finalize";
-
     enum Type {
         JOINT,
         FINALIZE
@@ -42,64 +36,67 @@ final class ClusterConfigurationCommand {
     private ClusterConfigurationCommand() {
     }
 
-    static String joint(List<Peer> members) {
-        // Base64 keeps ids/hosts delimiter-safe without introducing another protobuf
-        // type just for internal log entries.
-        List<String> encoded = new ArrayList<>();
+    static byte[] joint(List<Peer> members) {
+        var builder = org.gautelis.raft.proto.JointConfigurationCommand.newBuilder();
         for (Peer peer : members) {
-            String host = "";
-            int port = -1;
+            var peerBuilder = org.gautelis.raft.proto.PeerSpec.newBuilder()
+                    .setId(peer.getId())
+                    .setRole(peer.getRole().name());
             if (peer.getAddress() != null) {
-                host = peer.getAddress().getHostString();
-                port = peer.getAddress().getPort();
+                peerBuilder.setHost(peer.getAddress().getHostString())
+                        .setPort(peer.getAddress().getPort());
             }
-            encoded.add(encode(peer.getId()) + "," + encode(host) + "," + port);
+            builder.addMembers(peerBuilder);
         }
-        return PREFIX + JOINT + String.join(";", encoded);
+        return org.gautelis.raft.proto.InternalRaftCommand.newBuilder()
+                .setJoint(builder.build())
+                .build()
+                .toByteArray();
     }
 
-    static String finalizeTransition() {
-        return PREFIX + FINALIZE;
+    static byte[] finalizeTransition() {
+        return org.gautelis.raft.proto.InternalRaftCommand.newBuilder()
+                .setFinalize(org.gautelis.raft.proto.FinalizeConfigurationCommand.newBuilder().build())
+                .build()
+                .toByteArray();
     }
 
-    static Optional<Parsed> parse(String command) {
-        if (command == null || !command.startsWith(PREFIX)) {
+    static Optional<Parsed> parse(byte[] command) {
+        if (command == null || command.length == 0) {
             return Optional.empty();
         }
-        String body = command.substring(PREFIX.length());
-        if (body.equals(FINALIZE)) {
-            return Optional.of(new Parsed(Type.FINALIZE, List.of()));
-        }
-        if (!body.startsWith(JOINT)) {
+        final org.gautelis.raft.proto.InternalRaftCommand parsed;
+        try {
+            parsed = org.gautelis.raft.proto.InternalRaftCommand.parseFrom(command);
+        } catch (InvalidProtocolBufferException e) {
             return Optional.empty();
         }
-
-        String payload = body.substring(JOINT.length());
-        if (payload.isBlank()) {
-            return Optional.empty();
-        }
-
-        List<Peer> members = new ArrayList<>();
-        for (String token : payload.split(";")) {
-            // Each member is encoded as id,host,port where id/host are Base64url.
-            String[] parts = token.split(",", 3);
-            if (parts.length != 3) {
-                return Optional.empty();
+        return switch (parsed.getCommandCase()) {
+            case JOINT -> {
+                List<Peer> members = new ArrayList<>();
+                for (org.gautelis.raft.proto.PeerSpec member : parsed.getJoint().getMembersList()) {
+                    InetSocketAddress address = member.getHost().isBlank() || member.getPort() <= 0
+                            ? null
+                            : new InetSocketAddress(member.getHost(), member.getPort());
+                    Peer.Role role = member.getRole().isBlank() ? Peer.Role.VOTER : Peer.Role.valueOf(member.getRole());
+                    members.add(new Peer(member.getId(), address, role));
+                }
+                yield Optional.of(new Parsed(Type.JOINT, members));
             }
-            String id = decode(parts[0]);
-            String host = decode(parts[1]);
-            int port = Integer.parseInt(parts[2]);
-            InetSocketAddress address = port < 0 || host.isBlank() ? null : new InetSocketAddress(host, port);
-            members.add(new Peer(id, address));
-        }
-        return Optional.of(new Parsed(Type.JOINT, members));
+            case FINALIZE -> Optional.of(new Parsed(Type.FINALIZE, List.of()));
+            case COMMAND_NOT_SET -> Optional.empty();
+        };
+    }
+
+    static boolean isInternalCommand(byte[] payload) {
+        return parse(payload).isPresent();
     }
 
     private static String encode(String value) {
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        throw new UnsupportedOperationException("No longer uses string encoding");
     }
 
     private static String decode(String value) {
-        return new String(Base64.getUrlDecoder().decode(value), java.nio.charset.StandardCharsets.UTF_8);
+        throw new UnsupportedOperationException("No longer uses string encoding");
     }
 }

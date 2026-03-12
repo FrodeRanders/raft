@@ -20,7 +20,14 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import org.gautelis.raft.MessageHandler;
 import org.gautelis.raft.protocol.AppendEntriesResponse;
+import org.gautelis.raft.protocol.ClientCommandResponse;
+import org.gautelis.raft.protocol.ClientQueryResponse;
+import org.gautelis.raft.protocol.ClusterSummaryResponse;
 import org.gautelis.raft.protocol.InstallSnapshotResponse;
+import org.gautelis.raft.protocol.JoinClusterResponse;
+import org.gautelis.raft.protocol.JoinClusterStatusResponse;
+import org.gautelis.raft.protocol.ReconfigureClusterResponse;
+import org.gautelis.raft.protocol.TelemetryResponse;
 import org.gautelis.raft.protocol.VoteResponse;
 import org.gautelis.raft.proto.Envelope;
 import org.gautelis.raft.serialization.ProtoMapper;
@@ -43,6 +50,13 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
     private final Map<String, CompletableFuture<VoteResponse>> inFlightRequests;
     private final Map<String, CompletableFuture<AppendEntriesResponse>> inFlightAppendEntries;
     private final Map<String, CompletableFuture<InstallSnapshotResponse>> inFlightInstallSnapshot;
+    private final Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands;
+    private final Map<String, CompletableFuture<ClientQueryResponse>> inFlightClientQueries;
+    private final Map<String, CompletableFuture<ClusterSummaryResponse>> inFlightClusterSummary;
+    private final Map<String, CompletableFuture<JoinClusterResponse>> inFlightJoinCluster;
+    private final Map<String, CompletableFuture<JoinClusterStatusResponse>> inFlightJoinStatus;
+    private final Map<String, CompletableFuture<ReconfigureClusterResponse>> inFlightReconfigureCluster;
+    private final Map<String, CompletableFuture<TelemetryResponse>> inFlightTelemetry;
     private final Map<String, RequestTiming> requestTimings;
     private final Map<String, ScheduledFuture<?>> requestTimeouts;
     private final Map<String, RunningStatistics> peerResponseStats;
@@ -51,6 +65,46 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
             Map<String, CompletableFuture<VoteResponse>> inFlightRequests,
             Map<String, CompletableFuture<AppendEntriesResponse>> inFlightAppendEntries,
             Map<String, CompletableFuture<InstallSnapshotResponse>> inFlightInstallSnapshot,
+            Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands,
+            Map<String, CompletableFuture<ClientQueryResponse>> inFlightClientQueries,
+            Map<String, CompletableFuture<JoinClusterResponse>> inFlightJoinCluster,
+            Map<String, CompletableFuture<JoinClusterStatusResponse>> inFlightJoinStatus,
+            Map<String, CompletableFuture<ReconfigureClusterResponse>> inFlightReconfigureCluster,
+            Map<String, CompletableFuture<TelemetryResponse>> inFlightTelemetry,
+            Map<String, RequestTiming> requestTimings,
+            Map<String, ScheduledFuture<?>> requestTimeouts,
+            Map<String, RunningStatistics> peerResponseStats,
+            MessageHandler messageHandler
+    ) {
+        this(
+                inFlightRequests,
+                inFlightAppendEntries,
+                inFlightInstallSnapshot,
+                inFlightClientCommands,
+                inFlightClientQueries,
+                new java.util.HashMap<>(),
+                inFlightJoinCluster,
+                inFlightJoinStatus,
+                inFlightReconfigureCluster,
+                inFlightTelemetry,
+                requestTimings,
+                requestTimeouts,
+                peerResponseStats,
+                messageHandler
+        );
+    }
+
+    public ClientResponseHandler(
+            Map<String, CompletableFuture<VoteResponse>> inFlightRequests,
+            Map<String, CompletableFuture<AppendEntriesResponse>> inFlightAppendEntries,
+            Map<String, CompletableFuture<InstallSnapshotResponse>> inFlightInstallSnapshot,
+            Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands,
+            Map<String, CompletableFuture<ClientQueryResponse>> inFlightClientQueries,
+            Map<String, CompletableFuture<ClusterSummaryResponse>> inFlightClusterSummary,
+            Map<String, CompletableFuture<JoinClusterResponse>> inFlightJoinCluster,
+            Map<String, CompletableFuture<JoinClusterStatusResponse>> inFlightJoinStatus,
+            Map<String, CompletableFuture<ReconfigureClusterResponse>> inFlightReconfigureCluster,
+            Map<String, CompletableFuture<TelemetryResponse>> inFlightTelemetry,
             Map<String, RequestTiming> requestTimings,
             Map<String, ScheduledFuture<?>> requestTimeouts,
             Map<String, RunningStatistics> peerResponseStats,
@@ -59,6 +113,13 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
         this.inFlightRequests = inFlightRequests;
         this.inFlightAppendEntries = inFlightAppendEntries;
         this.inFlightInstallSnapshot = inFlightInstallSnapshot;
+        this.inFlightClientCommands = inFlightClientCommands;
+        this.inFlightClientQueries = inFlightClientQueries;
+        this.inFlightClusterSummary = inFlightClusterSummary;
+        this.inFlightJoinCluster = inFlightJoinCluster;
+        this.inFlightJoinStatus = inFlightJoinStatus;
+        this.inFlightReconfigureCluster = inFlightReconfigureCluster;
+        this.inFlightTelemetry = inFlightTelemetry;
         this.requestTimings = requestTimings;
         this.requestTimeouts = requestTimeouts;
         this.peerResponseStats = peerResponseStats;
@@ -174,6 +235,159 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 } else {
                     // Benign race: request timeout/cleanup can remove the future before a late response arrives.
                     log.warn("No future found for InstallSnapshotResponse correlationId={}", correlationId);
+                }
+            }
+
+            case "JoinClusterResponse" -> {
+                var response = ProtoMapper.parseJoinClusterResponse(payload);
+                if (response.isEmpty()) {
+                    log.warn("Failed to parse JoinClusterResponse payload");
+                    return;
+                }
+                JoinClusterResponse joinClusterResponse = ProtoMapper.fromProto(response.get());
+
+                CompletableFuture<JoinClusterResponse> fut = inFlightJoinCluster.remove(correlationId);
+                requestTimings.remove(correlationId);
+                ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
+                if (timeoutTask != null) {
+                    timeoutTask.cancel(false);
+                }
+                if (fut != null) {
+                    fut.complete(joinClusterResponse);
+                    log.trace("Received JoinClusterResponse from {} for correlationId={}", joinClusterResponse.getPeerId(), correlationId);
+                } else {
+                    log.warn("No future found for JoinClusterResponse correlationId={}", correlationId);
+                }
+            }
+
+            case "ClientCommandResponse" -> {
+                var response = ProtoMapper.parseClientCommandResponse(payload);
+                if (response.isEmpty()) {
+                    log.warn("Failed to parse ClientCommandResponse payload");
+                    return;
+                }
+                ClientCommandResponse clientCommandResponse = ProtoMapper.fromProto(response.get());
+
+                CompletableFuture<ClientCommandResponse> fut = inFlightClientCommands.remove(correlationId);
+                requestTimings.remove(correlationId);
+                ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
+                if (timeoutTask != null) {
+                    timeoutTask.cancel(false);
+                }
+                if (fut != null) {
+                    fut.complete(clientCommandResponse);
+                    log.trace("Received ClientCommandResponse from {} for correlationId={}", clientCommandResponse.getPeerId(), correlationId);
+                } else {
+                    log.warn("No future found for ClientCommandResponse correlationId={}", correlationId);
+                }
+            }
+
+            case "ClientQueryResponse" -> {
+                var response = ProtoMapper.parseClientQueryResponse(payload);
+                if (response.isEmpty()) {
+                    log.warn("Failed to parse ClientQueryResponse payload");
+                    return;
+                }
+                ClientQueryResponse clientQueryResponse = ProtoMapper.fromProto(response.get());
+
+                CompletableFuture<ClientQueryResponse> fut = inFlightClientQueries.remove(correlationId);
+                requestTimings.remove(correlationId);
+                ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
+                if (timeoutTask != null) {
+                    timeoutTask.cancel(false);
+                }
+                if (fut != null) {
+                    fut.complete(clientQueryResponse);
+                    log.trace("Received ClientQueryResponse from {} for correlationId={}", clientQueryResponse.getPeerId(), correlationId);
+                } else {
+                    log.warn("No future found for ClientQueryResponse correlationId={}", correlationId);
+                }
+            }
+
+            case "ClusterSummaryResponse" -> {
+                var response = ProtoMapper.parseClusterSummaryResponse(payload);
+                if (response.isEmpty()) {
+                    log.warn("Failed to parse ClusterSummaryResponse payload");
+                    return;
+                }
+                ClusterSummaryResponse clusterSummaryResponse = ProtoMapper.fromProto(response.get());
+
+                CompletableFuture<ClusterSummaryResponse> fut = inFlightClusterSummary.remove(correlationId);
+                requestTimings.remove(correlationId);
+                ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
+                if (timeoutTask != null) {
+                    timeoutTask.cancel(false);
+                }
+                if (fut != null) {
+                    fut.complete(clusterSummaryResponse);
+                    log.trace("Received ClusterSummaryResponse from {} for correlationId={}", clusterSummaryResponse.getPeerId(), correlationId);
+                } else {
+                    log.warn("No future found for ClusterSummaryResponse correlationId={}", correlationId);
+                }
+            }
+
+            case "TelemetryResponse" -> {
+                var response = ProtoMapper.parseTelemetryResponse(payload);
+                if (response.isEmpty()) {
+                    log.warn("Failed to parse TelemetryResponse payload");
+                    return;
+                }
+                TelemetryResponse telemetryResponse = ProtoMapper.fromProto(response.get());
+
+                CompletableFuture<TelemetryResponse> fut = inFlightTelemetry.remove(correlationId);
+                requestTimings.remove(correlationId);
+                ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
+                if (timeoutTask != null) {
+                    timeoutTask.cancel(false);
+                }
+                if (fut != null) {
+                    fut.complete(telemetryResponse);
+                } else {
+                    log.warn("No future found for TelemetryResponse correlationId={}", correlationId);
+                }
+            }
+
+            case "JoinClusterStatusResponse" -> {
+                var response = ProtoMapper.parseJoinClusterStatusResponse(payload);
+                if (response.isEmpty()) {
+                    log.warn("Failed to parse JoinClusterStatusResponse payload");
+                    return;
+                }
+                JoinClusterStatusResponse joinClusterStatusResponse = ProtoMapper.fromProto(response.get());
+
+                CompletableFuture<JoinClusterStatusResponse> fut = inFlightJoinStatus.remove(correlationId);
+                requestTimings.remove(correlationId);
+                ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
+                if (timeoutTask != null) {
+                    timeoutTask.cancel(false);
+                }
+                if (fut != null) {
+                    fut.complete(joinClusterStatusResponse);
+                    log.trace("Received JoinClusterStatusResponse from {} for correlationId={}", joinClusterStatusResponse.getPeerId(), correlationId);
+                } else {
+                    log.warn("No future found for JoinClusterStatusResponse correlationId={}", correlationId);
+                }
+            }
+
+            case "ReconfigureClusterResponse" -> {
+                var response = ProtoMapper.parseReconfigureClusterResponse(payload);
+                if (response.isEmpty()) {
+                    log.warn("Failed to parse ReconfigureClusterResponse payload");
+                    return;
+                }
+                ReconfigureClusterResponse reconfigureClusterResponse = ProtoMapper.fromProto(response.get());
+
+                CompletableFuture<ReconfigureClusterResponse> fut = inFlightReconfigureCluster.remove(correlationId);
+                requestTimings.remove(correlationId);
+                ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
+                if (timeoutTask != null) {
+                    timeoutTask.cancel(false);
+                }
+                if (fut != null) {
+                    fut.complete(reconfigureClusterResponse);
+                    log.trace("Received ReconfigureClusterResponse from {} for correlationId={}", reconfigureClusterResponse.getPeerId(), correlationId);
+                } else {
+                    log.warn("No future found for ReconfigureClusterResponse correlationId={}", correlationId);
                 }
             }
 

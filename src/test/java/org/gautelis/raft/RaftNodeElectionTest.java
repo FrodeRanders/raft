@@ -124,6 +124,30 @@ class RaftNodeElectionTest {
             return future;
         }
 
+        @Override
+        public java.util.concurrent.CompletableFuture<Boolean> sendMessage(Peer peer, String type, byte[] payload) {
+            java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
+            queue.add(() -> {
+                RaftNode node = nodesById.get(peer.getId());
+                if (node == null || node.getMessageHandler() == null) {
+                    future.complete(false);
+                    return;
+                }
+                try {
+                    node.getMessageHandler().handle(java.util.UUID.randomUUID().toString(), type, payload, null);
+                    future.complete(true);
+                } catch (Exception e) {
+                    future.completeExceptionally(e);
+                }
+            });
+            return future;
+        }
+
+        @Override
+        public boolean isPeerReachable(String peerId) {
+            return peerId != null && nodesById.containsKey(peerId);
+        }
+
         void flush() {
             while (!queue.isEmpty()) {
                 queue.poll().run();

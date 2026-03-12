@@ -193,7 +193,7 @@ class FilePersistentStoresTest {
         persistentState.setCurrentTerm(7);
         logStore.append(List.of(
                 new LogEntry(7, "A", "noop".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-                new LogEntry(7, "A", ClusterConfigurationCommand.joint(List.of(a, b, d)).getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                new LogEntry(7, "A", ClusterConfigurationCommand.joint(List.of(a, b, d)))
         ));
 
         FilePersistentStateStore reloadedState = new FilePersistentStateStore(stateFile);
@@ -232,15 +232,15 @@ class FilePersistentStoresTest {
         FileLogStore logStoreB = new FileLogStore(logB);
         FileLogStore logStoreC = new FileLogStore(logC);
 
-        byte[] finalize = ClusterConfigurationCommand.finalizeTransition().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] finalize = ClusterConfigurationCommand.finalizeTransition();
         logStoreB.append(List.of(
                 new LogEntry(7, "A", new byte[0]),
-                new LogEntry(7, "A", ClusterConfigurationCommand.joint(List.of(b, c)).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                new LogEntry(7, "A", ClusterConfigurationCommand.joint(List.of(b, c))),
                 new LogEntry(7, "A", finalize)
         ));
         logStoreC.append(List.of(
                 new LogEntry(7, "A", new byte[0]),
-                new LogEntry(7, "A", ClusterConfigurationCommand.joint(List.of(b, c)).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                new LogEntry(7, "A", ClusterConfigurationCommand.joint(List.of(b, c))),
                 new LogEntry(7, "A", finalize)
         ));
         persistentStateB.setCurrentTerm(7);
@@ -306,8 +306,8 @@ class FilePersistentStoresTest {
         FileLogStore logStore = new FileLogStore(logFile);
         logStore.append(List.of(
                 new LogEntry(9, "A", new byte[0]),
-                new LogEntry(9, "A", ClusterConfigurationCommand.joint(List.of(b, c)).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-                new LogEntry(9, "A", ClusterConfigurationCommand.finalizeTransition().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                new LogEntry(9, "A", ClusterConfigurationCommand.joint(List.of(b, c))),
+                new LogEntry(9, "A", ClusterConfigurationCommand.finalizeTransition())
         ));
         persistentState.setCurrentTerm(9);
 

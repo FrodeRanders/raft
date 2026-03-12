@@ -14,8 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.gautelis.raft.statemachine;
+package org.gautelis.raft.protocol;
 
-public interface CommandHandler {
-    void handle(long myTerm, byte[] command);
-}
+public record TelemetryReplicationStatus(
+        String peerId,
+        long nextIndex,
+        long matchIndex,
+        boolean reachable,
+        long lastSuccessfulContactMillis,
+        int consecutiveFailures,
+        long lastFailedContactMillis
+) {}
