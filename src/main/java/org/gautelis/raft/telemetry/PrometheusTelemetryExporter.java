@@ -126,7 +126,7 @@ public final class PrometheusTelemetryExporter implements TelemetryExporter {
         }
 
         for (TelemetryPeerStats stats : peerStats) {
-            String labels = labels("peer_id", snapshot.peerId(), "remote_peer_id", stats.peerId());
+            String labels = labels("peer_id", snapshot.peerId(), "remote_peer_id", stats.peerId(), "rpc_type", stats.rpcType());
             appendGauge(out, "raft_transport_response_samples", stats.samples(), labels);
             appendGauge(out, "raft_transport_response_mean_millis", stats.meanMillis(), labels);
             appendGauge(out, "raft_transport_response_min_millis", stats.minMillis(), labels);

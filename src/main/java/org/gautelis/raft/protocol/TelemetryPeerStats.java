@@ -18,6 +18,7 @@ package org.gautelis.raft.protocol;
 
 public record TelemetryPeerStats(
         String peerId,
+        String rpcType,
         long samples,
         double meanMillis,
         double minMillis,

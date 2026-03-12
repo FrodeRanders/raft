@@ -227,6 +227,7 @@ message TelemetryPeerStats {
   double min_millis = 4;
   double max_millis = 5;
   double cv_percent = 6;
+  string rpc_type = 7;
 }
 
 message TelemetryReplicationStatus {

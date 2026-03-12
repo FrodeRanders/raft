@@ -734,6 +734,7 @@ public final class ProtoMapper {
                     .setMinMillis(stats.minMillis())
                     .setMaxMillis(stats.maxMillis())
                     .setCvPercent(stats.cvPercent())
+                    .setRpcType(stats.rpcType() == null ? "" : stats.rpcType())
                     .build());
         }
         for (ClusterMemberSummary member : response.getClusterMembers()) {
@@ -790,7 +791,15 @@ public final class ProtoMapper {
         }
         java.util.List<TelemetryPeerStats> peerStats = new java.util.ArrayList<>();
         for (var item : response.getPeerStatsList()) {
-            peerStats.add(new TelemetryPeerStats(item.getPeerId(), item.getSamples(), item.getMeanMillis(), item.getMinMillis(), item.getMaxMillis(), item.getCvPercent()));
+            peerStats.add(new TelemetryPeerStats(
+                    item.getPeerId(),
+                    item.getRpcType(),
+                    item.getSamples(),
+                    item.getMeanMillis(),
+                    item.getMinMillis(),
+                    item.getMaxMillis(),
+                    item.getCvPercent()
+            ));
         }
         java.util.List<ClusterMemberSummary> clusterMembers = new java.util.ArrayList<>();
         for (var member : response.getClusterMembersList()) {

@@ -100,14 +100,14 @@ class RaftClientKnownPeersTest {
             Field statsField = RaftClient.class.getDeclaredField("peerResponseStats");
             statsField.setAccessible(true);
             Map<String, RunningStatistics> stats = (Map<String, RunningStatistics>) statsField.get(client);
-            stats.put("B", new RunningStatistics());
-            stats.put("C", new RunningStatistics());
+            stats.put("B\tAppendEntriesRequest", new RunningStatistics());
+            stats.put("C\tAppendEntriesRequest", new RunningStatistics());
 
             client.setKnownPeers(List.of(peerC));
 
             assertEquals(1, stats.size());
-            assertFalse(stats.containsKey("B"));
-            assertTrue(stats.containsKey("C"));
+            assertFalse(stats.containsKey("B\tAppendEntriesRequest"));
+            assertTrue(stats.containsKey("C\tAppendEntriesRequest"));
         } finally {
             client.shutdown();
         }

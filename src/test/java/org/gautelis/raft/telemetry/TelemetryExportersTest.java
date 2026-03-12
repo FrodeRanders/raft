@@ -77,7 +77,7 @@ class TelemetryExportersTest {
                     List.of(),
                     List.of(new TelemetryReplicationStatus("B", 14L, 12L, true, 995L, 0, 0L))
             );
-            exporter.publish(snapshot, List.of(new TelemetryPeerStats("B", 5L, 1.5, 1.0, 2.0, 10.0)));
+            exporter.publish(snapshot, List.of(new TelemetryPeerStats("B", "AppendEntriesRequest", 5L, 1.5, 1.0, 2.0, 10.0)));
 
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
@@ -88,7 +88,7 @@ class TelemetryExportersTest {
 
             assertTrue(response.body().contains("raft_term{peer_id=\"A\"} 7"));
             assertTrue(response.body().contains("raft_replication_match_index{peer_id=\"A\",remote_peer_id=\"B\"} 12"));
-            assertTrue(response.body().contains("raft_transport_response_mean_millis{peer_id=\"A\",remote_peer_id=\"B\"} 1.500"));
+            assertTrue(response.body().contains("raft_transport_response_mean_millis{peer_id=\"A\",remote_peer_id=\"B\",rpc_type=\"AppendEntriesRequest\"} 1.500"));
             assertTrue(response.body().contains("raft_members_promoting{peer_id=\"A\"} 1"));
             assertTrue(response.body().contains("raft_members_demoting{peer_id=\"A\"} 1"));
             assertTrue(response.body().contains("raft_reconfiguration_age_millis{peer_id=\"A\"} 500"));
@@ -115,7 +115,7 @@ class TelemetryExportersTest {
         try {
             TelemetryExporter exporter = TelemetryExporters.createFromProperties();
             assertTrue(exporter.isEnabled());
-            exporter.publish(sampleSnapshot(), List.of(new TelemetryPeerStats("B", 5L, 1.5, 1.0, 2.0, 10.0)));
+            exporter.publish(sampleSnapshot(), List.of(new TelemetryPeerStats("B", "AppendEntriesRequest", 5L, 1.5, 1.0, 2.0, 10.0)));
             exporter.close();
 
             assertTrue(header.get().contains("Bearer demo-token"));
@@ -128,6 +128,8 @@ class TelemetryExportersTest {
             assertTrue(body.get().contains("\"name\":\"raft.reconfiguration.age.millis\""));
             assertTrue(body.get().contains("\"key\":\"remote.peer.id\""));
             assertTrue(body.get().contains("\"stringValue\":\"B\""));
+            assertTrue(body.get().contains("\"key\":\"rpc.type\""));
+            assertTrue(body.get().contains("\"stringValue\":\"AppendEntriesRequest\""));
         } finally {
             server.stop(0);
             restoreProperty("raft.telemetry.exporter", previousExporter);

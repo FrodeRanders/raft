@@ -166,6 +166,32 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
         this.messageHandler = messageHandler;
     }
 
+    private void recordResponseTime(RequestTiming timing) {
+        if (timing == null) {
+            return;
+        }
+        double elapsedMillis = (System.nanoTime() - timing.startNanos()) / 1_000_000.0;
+        // Transport stats are keyed by peer and RPC type so replication traffic
+        // does not get blended into election or admin latency buckets.
+        String key = timing.peerId() + "\t" + timing.rpcType();
+        RunningStatistics stats = peerResponseStats.computeIfAbsent(key, ignored -> new RunningStatistics());
+        synchronized (stats) {
+            stats.addSample(elapsedMillis);
+            if (log.isTraceEnabled()) {
+                log.trace(
+                        "Response time from {} {}: {} ms (n={}, mean={} ms, min={} ms, max={} ms)",
+                        timing.peerId(),
+                        timing.rpcType(),
+                        String.format(java.util.Locale.ROOT, "%.3f", elapsedMillis),
+                        stats.getCount(),
+                        String.format(java.util.Locale.ROOT, "%.3f", stats.getMean()),
+                        String.format(java.util.Locale.ROOT, "%.3f", stats.getMin()),
+                        String.format(java.util.Locale.ROOT, "%.3f", stats.getMax())
+                );
+            }
+        }
+    }
+
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Envelope envelope) throws Exception {
         String type = envelope.getType();
@@ -204,32 +230,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 } else {
                     log.warn("No future found for VoteResponse correlationId={}", correlationId);
                 }
-
-                if (timing != null) {
-                    double elapsedMillis = (System.nanoTime() - timing.startNanos()) / 1_000_000.0;
-                    RunningStatistics stats = peerResponseStats.computeIfAbsent(
-                            timing.peerId(),
-                            k -> new RunningStatistics()
-                    );
-                    if (log.isTraceEnabled()) {
-                        synchronized (stats) {
-                            stats.addSample(elapsedMillis);
-                            log.trace(
-                                    "Response time from {}: {} ms (n={}, mean={} ms, min={} ms, max={} ms)",
-                                    timing.peerId(),
-                                    String.format(java.util.Locale.ROOT, "%.3f", elapsedMillis),
-                                    stats.getCount(),
-                                    String.format(java.util.Locale.ROOT, "%.3f", stats.getMean()),
-                                    String.format(java.util.Locale.ROOT, "%.3f", stats.getMin()),
-                                    String.format(java.util.Locale.ROOT, "%.3f", stats.getMax())
-                            );
-                        }
-                    } else {
-                        synchronized (stats) {
-                            stats.addSample(elapsedMillis);
-                        }
-                    }
-                }
+                recordResponseTime(timing);
             }
 
             case "AppendEntriesResponse" -> {
@@ -241,7 +242,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 AppendEntriesResponse appendEntriesResponse = ProtoMapper.fromProto(response.get());
 
                 CompletableFuture<AppendEntriesResponse> fut = inFlightAppendEntries.remove(correlationId);
-                requestTimings.remove(correlationId);
+                RequestTiming timing = requestTimings.remove(correlationId);
                 ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
                 if (timeoutTask != null) {
                     timeoutTask.cancel(false);
@@ -253,6 +254,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                     // Benign race: request timeout/cleanup can remove the future before a late response arrives.
                     log.warn("No future found for AppendEntriesResponse correlationId={}", correlationId);
                 }
+                recordResponseTime(timing);
             }
 
             case "InstallSnapshotResponse" -> {
@@ -264,7 +266,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 InstallSnapshotResponse installSnapshotResponse = ProtoMapper.fromProto(response.get());
 
                 CompletableFuture<InstallSnapshotResponse> fut = inFlightInstallSnapshot.remove(correlationId);
-                requestTimings.remove(correlationId);
+                RequestTiming timing = requestTimings.remove(correlationId);
                 ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
                 if (timeoutTask != null) {
                     timeoutTask.cancel(false);
@@ -276,6 +278,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                     // Benign race: request timeout/cleanup can remove the future before a late response arrives.
                     log.warn("No future found for InstallSnapshotResponse correlationId={}", correlationId);
                 }
+                recordResponseTime(timing);
             }
 
             case "JoinClusterResponse" -> {
@@ -287,7 +290,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 JoinClusterResponse joinClusterResponse = ProtoMapper.fromProto(response.get());
 
                 CompletableFuture<JoinClusterResponse> fut = inFlightJoinCluster.remove(correlationId);
-                requestTimings.remove(correlationId);
+                RequestTiming timing = requestTimings.remove(correlationId);
                 ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
                 if (timeoutTask != null) {
                     timeoutTask.cancel(false);
@@ -298,6 +301,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 } else {
                     log.warn("No future found for JoinClusterResponse correlationId={}", correlationId);
                 }
+                recordResponseTime(timing);
             }
 
             case "ClientCommandResponse" -> {
@@ -309,7 +313,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 ClientCommandResponse clientCommandResponse = ProtoMapper.fromProto(response.get());
 
                 CompletableFuture<ClientCommandResponse> fut = inFlightClientCommands.remove(correlationId);
-                requestTimings.remove(correlationId);
+                RequestTiming timing = requestTimings.remove(correlationId);
                 ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
                 if (timeoutTask != null) {
                     timeoutTask.cancel(false);
@@ -320,6 +324,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 } else {
                     log.warn("No future found for ClientCommandResponse correlationId={}", correlationId);
                 }
+                recordResponseTime(timing);
             }
 
             case "ClientQueryResponse" -> {
@@ -331,7 +336,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 ClientQueryResponse clientQueryResponse = ProtoMapper.fromProto(response.get());
 
                 CompletableFuture<ClientQueryResponse> fut = inFlightClientQueries.remove(correlationId);
-                requestTimings.remove(correlationId);
+                RequestTiming timing = requestTimings.remove(correlationId);
                 ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
                 if (timeoutTask != null) {
                     timeoutTask.cancel(false);
@@ -342,6 +347,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 } else {
                     log.warn("No future found for ClientQueryResponse correlationId={}", correlationId);
                 }
+                recordResponseTime(timing);
             }
 
             case "ClusterSummaryResponse" -> {
@@ -353,7 +359,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 ClusterSummaryResponse clusterSummaryResponse = ProtoMapper.fromProto(response.get());
 
                 CompletableFuture<ClusterSummaryResponse> fut = inFlightClusterSummary.remove(correlationId);
-                requestTimings.remove(correlationId);
+                RequestTiming timing = requestTimings.remove(correlationId);
                 ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
                 if (timeoutTask != null) {
                     timeoutTask.cancel(false);
@@ -364,6 +370,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 } else {
                     log.warn("No future found for ClusterSummaryResponse correlationId={}", correlationId);
                 }
+                recordResponseTime(timing);
             }
 
             case "ReconfigurationStatusResponse" -> {
@@ -375,7 +382,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 ReconfigurationStatusResponse reconfigurationStatusResponse = ProtoMapper.fromProto(response.get());
 
                 CompletableFuture<ReconfigurationStatusResponse> fut = inFlightReconfigurationStatus.remove(correlationId);
-                requestTimings.remove(correlationId);
+                RequestTiming timing = requestTimings.remove(correlationId);
                 ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
                 if (timeoutTask != null) {
                     timeoutTask.cancel(false);
@@ -386,6 +393,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 } else {
                     log.warn("No future found for ReconfigurationStatusResponse correlationId={}", correlationId);
                 }
+                recordResponseTime(timing);
             }
 
             case "TelemetryResponse" -> {
@@ -397,7 +405,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 TelemetryResponse telemetryResponse = ProtoMapper.fromProto(response.get());
 
                 CompletableFuture<TelemetryResponse> fut = inFlightTelemetry.remove(correlationId);
-                requestTimings.remove(correlationId);
+                RequestTiming timing = requestTimings.remove(correlationId);
                 ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
                 if (timeoutTask != null) {
                     timeoutTask.cancel(false);
@@ -407,6 +415,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 } else {
                     log.warn("No future found for TelemetryResponse correlationId={}", correlationId);
                 }
+                recordResponseTime(timing);
             }
 
             case "JoinClusterStatusResponse" -> {
@@ -418,7 +427,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 JoinClusterStatusResponse joinClusterStatusResponse = ProtoMapper.fromProto(response.get());
 
                 CompletableFuture<JoinClusterStatusResponse> fut = inFlightJoinStatus.remove(correlationId);
-                requestTimings.remove(correlationId);
+                RequestTiming timing = requestTimings.remove(correlationId);
                 ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
                 if (timeoutTask != null) {
                     timeoutTask.cancel(false);
@@ -429,6 +438,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 } else {
                     log.warn("No future found for JoinClusterStatusResponse correlationId={}", correlationId);
                 }
+                recordResponseTime(timing);
             }
 
             case "ReconfigureClusterResponse" -> {
@@ -440,7 +450,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 ReconfigureClusterResponse reconfigureClusterResponse = ProtoMapper.fromProto(response.get());
 
                 CompletableFuture<ReconfigureClusterResponse> fut = inFlightReconfigureCluster.remove(correlationId);
-                requestTimings.remove(correlationId);
+                RequestTiming timing = requestTimings.remove(correlationId);
                 ScheduledFuture<?> timeoutTask = requestTimeouts.remove(correlationId);
                 if (timeoutTask != null) {
                     timeoutTask.cancel(false);
@@ -451,6 +461,7 @@ public class ClientResponseHandler extends SimpleChannelInboundHandler<Envelope>
                 } else {
                     log.warn("No future found for ReconfigureClusterResponse correlationId={}", correlationId);
                 }
+                recordResponseTime(timing);
             }
 
             default -> {

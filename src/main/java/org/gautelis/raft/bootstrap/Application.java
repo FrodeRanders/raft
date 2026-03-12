@@ -587,6 +587,7 @@ public class Application {
             out.append("Transport stats:\n");
             for (var stats : response.getPeerStats()) {
                 out.append("  ").append(stats.peerId())
+                        .append("/").append(stats.rpcType().isBlank() ? "unknown" : stats.rpcType())
                         .append(" n=").append(stats.samples())
                         .append(" mean=").append(String.format(Locale.ROOT, "%.3f", stats.meanMillis())).append("ms")
                         .append(" min=").append(String.format(Locale.ROOT, "%.3f", stats.minMillis())).append("ms")
@@ -893,7 +894,13 @@ public class Application {
 
         Map<String, org.gautelis.raft.protocol.TelemetryPeerStats> statsByPeer = new HashMap<>();
         for (var stats : response.getPeerStats()) {
-            statsByPeer.put(stats.peerId(), stats);
+            // The leader-side cluster view is mostly about replication health, so
+            // prefer AppendEntries latency when it is available for a peer.
+            if ("AppendEntriesRequest".equals(stats.rpcType())) {
+                statsByPeer.put(stats.peerId(), stats);
+            } else {
+                statsByPeer.putIfAbsent(stats.peerId(), stats);
+            }
         }
 
         out.append("Cluster view:\n");
@@ -1156,6 +1163,7 @@ public class Application {
             var stats = response.getPeerStats().get(i);
             indent(out, indent + 1).append("{ ")
                     .append("\"peerId\": \"").append(escapeJson(stats.peerId())).append('"')
+                    .append(", \"rpcType\": \"").append(escapeJson(stats.rpcType())).append('"')
                     .append(", \"samples\": ").append(stats.samples())
                     .append(", \"meanMillis\": ").append(String.format(Locale.ROOT, "%.3f", stats.meanMillis()))
                     .append(", \"minMillis\": ").append(String.format(Locale.ROOT, "%.3f", stats.minMillis()))

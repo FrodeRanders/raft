@@ -158,7 +158,7 @@ final class OtlpHttpTelemetryExporter implements TelemetryExporter {
         }
 
         for (TelemetryPeerStats stats : peerStats) {
-            Map<String, String> attrs = attrs("peer.id", snapshot.peerId(), "remote.peer.id", stats.peerId());
+            Map<String, String> attrs = attrs("peer.id", snapshot.peerId(), "remote.peer.id", stats.peerId(), "rpc.type", stats.rpcType());
             firstMetric = appendLongGauge(out, firstMetric, "raft.transport.response.samples", "Transport response sample count", "1", timeUnixNano, stats.samples(), attrs);
             firstMetric = appendDoubleGauge(out, firstMetric, "raft.transport.response.mean.millis", "Mean transport response time", "ms", timeUnixNano, stats.meanMillis(), attrs);
             firstMetric = appendDoubleGauge(out, firstMetric, "raft.transport.response.min.millis", "Minimum transport response time", "ms", timeUnixNano, stats.minMillis(), attrs);

@@ -51,6 +51,7 @@ public class RaftClient {
     private static final Logger statisticsLog = LoggerFactory.getLogger("STATISTICS");
     private static final int DEFAULT_STATS_INTERVAL_SECONDS = 120;
     private static final int DEFAULT_VOTE_REQUEST_TIMEOUT_MILLIS = 1_500;
+    private static final String STATS_KEY_SEPARATOR = "\t";
 
     protected final String clientId; // mostly for logging purposes
 
@@ -79,6 +80,18 @@ public class RaftClient {
     private final Map<String, RunningStatistics> peerResponseStats = new ConcurrentHashMap<>();
     private final ScheduledFuture<?> statisticsTask;
     private final int voteRequestTimeoutMillis;
+
+    private static String statsKey(String peerId, String rpcType) {
+        return peerId + STATS_KEY_SEPARATOR + (rpcType == null ? "" : rpcType);
+    }
+
+    private static String[] splitStatsKey(String key) {
+        int idx = key.indexOf(STATS_KEY_SEPARATOR);
+        if (idx < 0) {
+            return new String[] { key, "" };
+        }
+        return new String[] { key.substring(0, idx), key.substring(idx + STATS_KEY_SEPARATOR.length()) };
+    }
 
     private ChannelInitializer<SocketChannel> getChannelInitializer(MessageHandler messageHandler) {
         return new ChannelInitializer<>() {
@@ -133,7 +146,7 @@ public class RaftClient {
 
     public void setKnownPeers(Collection<Peer> peers) {
         // Replace, do not merge: membership changes should prune removed peers from
-        // broadcast targets, channels, and response-time bookkeeping.
+        // broadcast targets, channels, and all per-RPC response-time bookkeeping.
         Set<Peer> replacement = ConcurrentHashMap.newKeySet();
         if (peers != null) {
             for (Peer peer : peers) {
@@ -150,7 +163,11 @@ public class RaftClient {
                 if (removed != null) {
                     removed.close();
                 }
-                peerResponseStats.remove(existing.getId());
+                for (String key : new ArrayList<>(peerResponseStats.keySet())) {
+                    if (key.equals(existing.getId()) || key.startsWith(existing.getId() + STATS_KEY_SEPARATOR)) {
+                        peerResponseStats.remove(key);
+                    }
+                }
             }
         }
         knownPeers.addAll(replacement);
@@ -266,7 +283,7 @@ public class RaftClient {
 
         CompletableFuture<VoteResponse> future = new CompletableFuture<>();
         inFlightRequests.put(correlationId, future);
-        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), "VoteRequest", System.nanoTime()));
         ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
             if (future.isDone()) {
                 return;
@@ -370,7 +387,7 @@ public class RaftClient {
         String correlationId = java.util.UUID.randomUUID().toString();
         CompletableFuture<AppendEntriesResponse> future = new CompletableFuture<>();
         inFlightAppendEntries.put(correlationId, future);
-        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), "AppendEntriesRequest", System.nanoTime()));
 
         ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
             if (future.isDone()) {
@@ -745,7 +762,7 @@ public class RaftClient {
         String correlationId = java.util.UUID.randomUUID().toString();
         CompletableFuture<InstallSnapshotResponse> future = new CompletableFuture<>();
         inFlightInstallSnapshot.put(correlationId, future);
-        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), "InstallSnapshotRequest", System.nanoTime()));
 
         ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
             if (future.isDone()) {
@@ -810,7 +827,7 @@ public class RaftClient {
         String correlationId = java.util.UUID.randomUUID().toString();
         CompletableFuture<ClientCommandResponse> future = new CompletableFuture<>();
         inFlightClientCommands.put(correlationId, future);
-        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), "ClientCommandRequest", System.nanoTime()));
 
         ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
             if (future.isDone()) {
@@ -853,7 +870,7 @@ public class RaftClient {
         String correlationId = java.util.UUID.randomUUID().toString();
         CompletableFuture<ClientQueryResponse> future = new CompletableFuture<>();
         inFlightClientQueries.put(correlationId, future);
-        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), "ClientQueryRequest", System.nanoTime()));
 
         ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
             if (future.isDone()) {
@@ -896,7 +913,7 @@ public class RaftClient {
         String correlationId = java.util.UUID.randomUUID().toString();
         CompletableFuture<ClusterSummaryResponse> future = new CompletableFuture<>();
         inFlightClusterSummary.put(correlationId, future);
-        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), "ClusterSummaryRequest", System.nanoTime()));
 
         ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
             if (future.isDone()) {
@@ -939,7 +956,7 @@ public class RaftClient {
         String correlationId = java.util.UUID.randomUUID().toString();
         CompletableFuture<ReconfigurationStatusResponse> future = new CompletableFuture<>();
         inFlightReconfigurationStatus.put(correlationId, future);
-        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), "ReconfigurationStatusRequest", System.nanoTime()));
 
         ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
             if (future.isDone()) {
@@ -982,7 +999,7 @@ public class RaftClient {
         String correlationId = java.util.UUID.randomUUID().toString();
         CompletableFuture<JoinClusterResponse> future = new CompletableFuture<>();
         inFlightJoinCluster.put(correlationId, future);
-        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), "JoinClusterRequest", System.nanoTime()));
 
         ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
             if (future.isDone()) {
@@ -1025,7 +1042,7 @@ public class RaftClient {
         String correlationId = java.util.UUID.randomUUID().toString();
         CompletableFuture<JoinClusterStatusResponse> future = new CompletableFuture<>();
         inFlightJoinStatus.put(correlationId, future);
-        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), "JoinClusterStatusRequest", System.nanoTime()));
 
         ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
             if (future.isDone()) {
@@ -1068,7 +1085,7 @@ public class RaftClient {
         String correlationId = java.util.UUID.randomUUID().toString();
         CompletableFuture<ReconfigureClusterResponse> future = new CompletableFuture<>();
         inFlightReconfigureCluster.put(correlationId, future);
-        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), "ReconfigureClusterRequest", System.nanoTime()));
 
         ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
             if (future.isDone()) {
@@ -1111,7 +1128,7 @@ public class RaftClient {
         String correlationId = java.util.UUID.randomUUID().toString();
         CompletableFuture<TelemetryResponse> future = new CompletableFuture<>();
         inFlightTelemetry.put(correlationId, future);
-        requestTimings.put(correlationId, new RequestTiming(peer.getId(), System.nanoTime()));
+        requestTimings.put(correlationId, new RequestTiming(peer.getId(), "TelemetryRequest", System.nanoTime()));
 
         ScheduledFuture<?> timeoutTask = ch.eventLoop().schedule(() -> {
             if (future.isDone()) {
@@ -1220,17 +1237,21 @@ public class RaftClient {
     }
 
     public List<TelemetryPeerStats> snapshotResponseTimeStats() {
-        List<String> peerIds = new ArrayList<>(peerResponseStats.keySet());
-        Collections.sort(peerIds);
+        List<String> keys = new ArrayList<>(peerResponseStats.keySet());
+        Collections.sort(keys);
         List<TelemetryPeerStats> snapshot = new ArrayList<>();
-        for (String peerId : peerIds) {
-            RunningStatistics stats = peerResponseStats.get(peerId);
+        for (String key : keys) {
+            RunningStatistics stats = peerResponseStats.get(key);
             if (stats == null) {
                 continue;
             }
+            // Keys are stored as peer + rpcType so exporters and the CLI can
+            // present transport latency with enough context to be actionable.
+            String[] parts = splitStatsKey(key);
             synchronized (stats) {
                 snapshot.add(new TelemetryPeerStats(
-                        peerId,
+                        parts[0],
+                        parts[1],
                         stats.getCount(),
                         stats.getCount() == 0 ? 0.0 : stats.getMean(),
                         stats.getCount() == 0 ? 0.0 : stats.getMin(),
@@ -1269,25 +1290,27 @@ public class RaftClient {
             return;
         }
 
-        List<String> peerIds = new ArrayList<>(peerResponseStats.keySet());
-        Collections.sort(peerIds);
+        List<String> keys = new ArrayList<>(peerResponseStats.keySet());
+        Collections.sort(keys);
 
         StringBuilder line = new StringBuilder(clientId).append(": response-times");
-        for (String peerId : peerIds) {
-            RunningStatistics stats = peerResponseStats.get(peerId);
+        for (String key : keys) {
+            RunningStatistics stats = peerResponseStats.get(key);
             if (stats == null) {
                 continue;
             }
+            String[] parts = splitStatsKey(key);
             String fragment;
             synchronized (stats) {
                 if (stats.getCount() == 0) {
                     fragment = String.format(
-                            java.util.Locale.ROOT, " %s[n=0]", peerId);
+                            java.util.Locale.ROOT, " %s/%s[n=0]", parts[0], parts[1]);
                 } else {
                     fragment = String.format(
                             java.util.Locale.ROOT,
-                            " %s[n=%d mean=%.3fms min=%.3fms max=%.3fms cv=%.2f%%]",
-                            peerId,
+                            " %s/%s[n=%d mean=%.3fms min=%.3fms max=%.3fms cv=%.2f%%]",
+                            parts[0],
+                            parts[1],
                             stats.getCount(),
                             stats.getMean(),
                             stats.getMin(),

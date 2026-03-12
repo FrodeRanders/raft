@@ -1455,6 +1455,8 @@ public class RaftNode {
             return false;
         }
 
+        // This is a lease-style fast path: the leader may answer immediately if
+        // it has heard from a quorum of current voters recently enough.
         java.util.LinkedHashSet<String> freshVoters = new java.util.LinkedHashSet<>();
         freshVoters.add(me.getId());
         long now = timeSource.nowMillis();
@@ -1483,6 +1485,8 @@ public class RaftNode {
             if (state != State.LEADER || decommissioned) {
                 return false;
             }
+            // Freeze the leader/log view used for the read barrier so the
+            // quorum check is tied to a single term and commit position.
             termSnapshot = currentTerm;
             commitSnapshot = commitIndex;
             lastIndexSnapshot = logStore.lastIndex();
@@ -1497,6 +1501,9 @@ public class RaftNode {
         java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(targets.size());
 
         for (Peer peer : targets) {
+            // An empty AppendEntries works as a read barrier: if a quorum
+            // acknowledges it in this term, the leader can safely serve a
+            // linearizable read without appending a dedicated log entry.
             AppendEntriesRequest req = new AppendEntriesRequest(
                     termSnapshot,
                     me.getId(),
@@ -1523,6 +1530,8 @@ public class RaftNode {
             });
         }
 
+        // Use monotonic wall-clock time here instead of the node time source so
+        // tests with a frozen logical clock still time out correctly.
         long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(linearizableReadTimeoutMillis);
         while (System.nanoTime() <= deadlineNanos) {
             synchronized (this) {

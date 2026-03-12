@@ -62,6 +62,7 @@ final class OpenTelemetryJsonExporter implements TelemetryExporter {
             }
             out.append('{');
             appendString(out, "peerId", stats.peerId());
+            appendString(out, "rpcType", stats.rpcType());
             appendLong(out, "samples", stats.samples());
             appendDouble(out, "meanMillis", stats.meanMillis());
             appendDouble(out, "minMillis", stats.minMillis());

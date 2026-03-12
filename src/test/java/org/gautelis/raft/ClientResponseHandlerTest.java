@@ -26,6 +26,7 @@ import org.gautelis.raft.protocol.ClientCommandResponse;
 import org.gautelis.raft.protocol.ClientQueryResponse;
 import org.gautelis.raft.protocol.ClusterMemberSummary;
 import org.gautelis.raft.protocol.ClusterSummaryResponse;
+import org.gautelis.raft.protocol.AppendEntriesResponse;
 import org.gautelis.raft.protocol.JoinClusterResponse;
 import org.gautelis.raft.protocol.JoinClusterStatusResponse;
 import org.gautelis.raft.protocol.ReconfigureClusterResponse;
@@ -126,6 +127,56 @@ class ClientResponseHandlerTest {
         assertFalse(future.isCompletedExceptionally());
         assertEquals("B", future.get().getPeerId());
         assertNull(channel.readOutbound());
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void appendEntriesResponseAccumulatesTransportStatistics() throws Exception {
+        log.info("*** Testcase *** AppendEntriesResponse records transport statistics for replication traffic");
+
+        CompletableFuture<AppendEntriesResponse> future = new CompletableFuture<>();
+        Map<String, CompletableFuture<AppendEntriesResponse>> inFlightAppendEntries = new java.util.HashMap<>();
+        inFlightAppendEntries.put("corr-append-1", future);
+        @SuppressWarnings("rawtypes")
+        Map requestTimings = new java.util.HashMap<>();
+        Class<?> timingClass = Class.forName("org.gautelis.raft.transport.netty.RequestTiming");
+        java.lang.reflect.Constructor<?> ctor = timingClass.getDeclaredConstructor(String.class, String.class, long.class);
+        ctor.setAccessible(true);
+        requestTimings.put("corr-append-1", ctor.newInstance("B", "AppendEntriesRequest", System.nanoTime()));
+        Map<String, org.gautelis.vopn.statistics.RunningStatistics> peerStats = new java.util.HashMap<>();
+
+        ClientResponseHandler handler = new ClientResponseHandler(
+                new java.util.HashMap<>(),
+                inFlightAppendEntries,
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                new java.util.HashMap<>(),
+                requestTimings,
+                new java.util.HashMap<String, ScheduledFuture<?>>(),
+                peerStats,
+                null
+        );
+        EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+        AppendEntriesResponse resp = new AppendEntriesResponse(2L, "B", true, 5L);
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-append-1",
+                "AppendEntriesResponse",
+                ProtoMapper.toProto(resp).toByteString()
+        );
+
+        channel.writeInbound(envelope);
+
+        assertTrue(future.isDone());
+        var stats = peerStats.get("B\tAppendEntriesRequest");
+        assertNotNull(stats);
+        assertEquals(1L, stats.getCount());
         channel.finishAndReleaseAll();
     }
 

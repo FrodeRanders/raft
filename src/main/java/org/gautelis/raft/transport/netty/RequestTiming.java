@@ -18,15 +18,23 @@ package org.gautelis.raft.transport.netty;
 
 final class RequestTiming {
     private final String peerId;
+    // Keep the RPC type so transport stats can distinguish elections from
+    // replication, telemetry, and admin traffic for the same remote peer.
+    private final String rpcType;
     private final long startNanos;
 
-    RequestTiming(String peerId, long startNanos) {
+    RequestTiming(String peerId, String rpcType, long startNanos) {
         this.peerId = peerId;
+        this.rpcType = rpcType;
         this.startNanos = startNanos;
     }
 
     String peerId() {
         return peerId;
+    }
+
+    String rpcType() {
+        return rpcType;
     }
 
     long startNanos() {
