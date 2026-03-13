@@ -51,7 +51,6 @@ public interface RaftTransportClient {
     CompletableFuture<List<VoteResponse>> requestVoteFromAll(Collection<Peer> peers, VoteRequest req);
     CompletableFuture<AppendEntriesResponse> sendAppendEntries(Peer peer, AppendEntriesRequest req);
     CompletableFuture<InstallSnapshotResponse> sendInstallSnapshot(Peer peer, InstallSnapshotRequest req);
-    CompletableFuture<Boolean> sendMessage(Peer peer, String type, byte[] payload);
     CompletableFuture<JoinClusterResponse> sendJoinClusterRequest(Peer peer, JoinClusterRequest request);
     CompletableFuture<ClientCommandResponse> sendClientCommandRequest(Peer peer, ClientCommandRequest request);
     CompletableFuture<ClientQueryResponse> sendClientQueryRequest(Peer peer, ClientQueryRequest request);

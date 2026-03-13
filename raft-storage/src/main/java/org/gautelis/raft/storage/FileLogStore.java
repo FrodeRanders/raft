@@ -186,7 +186,7 @@ public final class FileLogStore implements LogStore {
         long previousSnapshotIndex = snapshotIndex;
         List<LogEntry> suffix = List.of();
         if (lastIncludedIndex < lastIndex()) {
-            if (lastIncludedIndex >= previousSnapshotIndex && termAt(lastIncludedIndex) == lastIncludedTerm) {
+            if (termAt(lastIncludedIndex) == lastIncludedTerm) {
                 suffix = entriesFrom(lastIncludedIndex + 1);
             }
         }

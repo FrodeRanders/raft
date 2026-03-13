@@ -88,9 +88,7 @@ public final class InMemoryLogStore implements LogStore {
 
     @Override
     public synchronized void append(List<LogEntry> entries) {
-        for (LogEntry entry : entries) {
-            log.add(entry);
-        }
+        log.addAll(entries);
     }
 
     @Override
@@ -165,7 +163,7 @@ public final class InMemoryLogStore implements LogStore {
         List<LogEntry> suffix = List.of();
         if (lastIncludedIndex < lastIndex()) {
             // Retaining the suffix is only safe when leader and follower agree at the cutover index.
-            if (lastIncludedIndex >= previousSnapshotIndex && termAt(lastIncludedIndex) == lastIncludedTerm) {
+            if (termAt(lastIncludedIndex) == lastIncludedTerm) {
                 suffix = entriesFrom(lastIncludedIndex + 1);
             }
         }

@@ -36,7 +36,6 @@ public interface MessageHandler {
      * @param correlationId
      * @param type
      * @param payload raw payload bytes (e.g., protobuf-encoded)
-     * @param ctx
      */
     void handle(String correlationId, String type, byte[] payload, MessageResponder responder) throws Exception;
 }
