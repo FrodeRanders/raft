@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 
-# Deduce target jar
-ARTIFACT=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)
 VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-JAR_NAME="target/${ARTIFACT}-${VERSION}.jar"
+JAR_NAME="raft-dist/target/raft-${VERSION}.jar"
 DATA_DIR="${RAFT_DATA_DIR:-./raft-data}"
 
 # Ensure local persistent data directory exists

@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 
-# Deduce target jar
-ARTIFACT=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)
 VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-JAR_NAME="target/${ARTIFACT}-${VERSION}.jar"
+JAR_NAME="raft-dist/target/raft-${VERSION}.jar"
 
 # Match java processes running this jar even when JVM properties precede -jar.
 PATTERN="java .* -jar ${JAR_NAME}"

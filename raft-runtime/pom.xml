@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.gautelis</groupId>
+        <artifactId>raft-parent</artifactId>
+        <version>1.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>raft-runtime</artifactId>
+    <name>raft-runtime</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.gautelis</groupId>
+            <artifactId>raft-wire</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.gautelis</groupId>
+            <artifactId>raft-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.gautelis</groupId>
+            <artifactId>raft-membership</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.gautelis</groupId>
+            <artifactId>raft-state-machine</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.gautelis</groupId>
+            <artifactId>raft-storage</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.gautelis</groupId>
+            <artifactId>raft-telemetry</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+        </dependency>
+    </dependencies>
+</project>

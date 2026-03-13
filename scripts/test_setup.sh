@@ -5,9 +5,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-ARTIFACT="$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)"
 VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
-JAR_NAME="target/${ARTIFACT}-${VERSION}.jar"
+JAR_NAME="raft-dist/target/raft-${VERSION}.jar"
 
 DATA_DIR="${RAFT_DATA_DIR:-./raft-data}"
 LOG_DIR="${RAFT_LOG_DIR:-./raft-demo}"

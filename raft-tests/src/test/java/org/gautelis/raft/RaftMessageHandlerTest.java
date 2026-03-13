@@ -1,0 +1,160 @@
+/*
+ * Copyright (C) 2025-2026 Frode Randers
+ * All rights reserved
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.gautelis.raft;
+
+import org.gautelis.raft.storage.*;
+import org.gautelis.raft.statemachine.*;
+import org.gautelis.raft.transport.MessageResponder;
+import org.gautelis.raft.transport.netty.*;
+import org.gautelis.raft.serialization.ProtoMapper;
+
+import io.netty.channel.embedded.EmbeddedChannel;
+import org.gautelis.raft.protocol.AppendEntriesRequest;
+import org.gautelis.raft.protocol.AppendEntriesResponse;
+import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.protocol.VoteRequest;
+import org.gautelis.raft.protocol.VoteResponse;
+import org.gautelis.raft.proto.Envelope;
+import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.List;
+import java.util.Arrays;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class RaftMessageHandlerTest {
+    private static final Logger log = LoggerFactory.getLogger(RaftMessageHandlerTest.class);
+
+    static class NoopRaftClient extends RaftClient {
+        NoopRaftClient() {
+            super("test", null);
+        }
+    }
+
+    static class CapturingMessageHandler implements MessageHandler {
+        String correlationId;
+        String type;
+        byte[] payload;
+
+        @Override
+        public void handle(String correlationId, String type, byte[] payload, MessageResponder responder) {
+            this.correlationId = correlationId;
+            this.type = type;
+            this.payload = payload;
+        }
+    }
+
+    private static RaftNode newMessageNode(Peer me, List<Peer> peers, MessageHandler messageHandler) {
+        return TestRaftNodeBuilder.forPeer(me)
+                .withPeers(peers)
+                .withTimeoutMillis(100)
+                .withMessageHandler(messageHandler)
+                .withStateMachine(null)
+                .withClient(new NoopRaftClient())
+                .withLogStore(new InMemoryLogStore())
+                .build();
+    }
+
+    @Test
+    void voteRequestProducesVoteResponse() throws Exception {
+        log.info("*** Testcase *** VoteRequest yields VoteResponse");
+
+        Peer a = new Peer("A", null);
+        Peer b = new Peer("B", null);
+        RaftNode nodeB = newMessageNode(b, List.of(a), null);
+
+        EmbeddedChannel channel = new EmbeddedChannel(new RaftMessageHandler(nodeB));
+        VoteRequest request = new VoteRequest(1, "A");
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-1",
+                "VoteRequest",
+                ProtoMapper.toProto(request).toByteString()
+        );
+        channel.writeInbound(envelope);
+
+        Envelope outbound = channel.readOutbound();
+        assertNotNull(outbound);
+        assertEquals("corr-1", outbound.getCorrelationId());
+        assertEquals("VoteResponse", outbound.getType());
+
+        var responseProto = ProtoMapper.parseVoteResponse(outbound.getPayload().toByteArray());
+        assertTrue(responseProto.isPresent());
+        VoteResponse response = ProtoMapper.fromProto(responseProto.get());
+        assertEquals("B", response.getPeerId());
+        assertEquals(1, response.getTerm());
+        assertTrue(response.isVoteGranted());
+        assertEquals(1, response.getCurrentTerm());
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void appendEntriesHeartbeatWritesResponseAndUpdatesTerm() throws Exception {
+        log.info("*** Testcase *** Empty AppendEntries heartbeat updates term and returns AppendEntriesResponse");
+
+        Peer a = new Peer("A", null);
+        Peer b = new Peer("B", null);
+        RaftNode nodeB = newMessageNode(b, List.of(a), null);
+
+        EmbeddedChannel channel = new EmbeddedChannel(new RaftMessageHandler(nodeB));
+        AppendEntriesRequest heartbeat = new AppendEntriesRequest(2, "A", 0, 0, 0, List.of());
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-2",
+                "AppendEntriesRequest",
+                ProtoMapper.toProto(heartbeat).toByteString()
+        );
+        channel.writeInbound(envelope);
+
+        Envelope outbound = channel.readOutbound();
+        assertNotNull(outbound);
+        assertEquals("corr-2", outbound.getCorrelationId());
+        assertEquals("AppendEntriesResponse", outbound.getType());
+        var responseProto = ProtoMapper.parseAppendEntriesResponse(outbound.getPayload().toByteArray());
+        assertTrue(responseProto.isPresent());
+        AppendEntriesResponse response = ProtoMapper.fromProto(responseProto.get());
+        assertTrue(response.isSuccess());
+        assertEquals(2, nodeB.getTerm());
+        assertEquals(RaftNode.State.FOLLOWER, nodeB.getStateForTest());
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void unknownTypeDelegatesToMessageHandler() throws Exception {
+        log.info("*** Testcase *** Unknown type delegates to message handler");
+
+        Peer a = new Peer("A", null);
+        Peer b = new Peer("B", null);
+        CapturingMessageHandler handler = new CapturingMessageHandler();
+        RaftNode nodeB = newMessageNode(b, List.of(a), handler);
+
+        EmbeddedChannel channel = new EmbeddedChannel(new RaftMessageHandler(nodeB));
+        byte[] payload = "hello".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Envelope envelope = ProtoMapper.wrap("corr-3", "CustomType", payload);
+        channel.writeInbound(envelope);
+
+        assertEquals("corr-3", handler.correlationId);
+        assertEquals("CustomType", handler.type);
+        assertNotNull(handler.payload);
+        assertTrue(Arrays.equals(payload, handler.payload));
+        assertNull(channel.readOutbound());
+        channel.finishAndReleaseAll();
+    }
+}

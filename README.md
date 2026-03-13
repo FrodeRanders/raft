@@ -2,6 +2,28 @@
 An asynchronous Raft implementation in Java, built on netty.io 4.2.
 This implementation supports Raft joint-consensus reconfiguration, persisted configuration state, and chunked `InstallSnapshot` transfer.
 
+## Build
+This repository now builds as a small Maven reactor:
+
+- `raft-core`
+- `raft-runtime`
+- `raft-app-kv`
+- `raft-app-reference`
+- `raft-dist`
+- `raft-tests`
+
+Build from the repository root:
+
+```text
+mvn -q package
+```
+
+The runnable shaded jar is produced at:
+
+```text
+raft-dist/target/raft-1.0-SNAPSHOT.jar
+```
+
 There are two different implementations: 
 - On the `'main'` branch, messages are packaged according to protobuf and sent/received through Netty.
 - On the `'json-on-the-wire'` branch, messages are exchanged using JSON envelopes (akin to MCP thinking) and sent through Netty.
@@ -49,6 +71,60 @@ This is the recommended topology for centrally managed reference data:
 
 Requests should normally be sent to the current leader. Followers forward typed cluster-management requests to the leader when they know who it is; decommissioned nodes reject them.
 
+### Adapter policies and authorization
+Raft itself still enforces the hard safety rule that only the leader appends client commands to the replicated log. On top of that, the runnable adapter layer can now apply an application-facing write-admission policy and a separate authorization check for client writes.
+
+The default `BasicAdapter` keeps the original demo behavior:
+
+- leaders accept writes
+- non-leaders redirect to the known leader when possible
+- otherwise the request is rejected
+
+For reference-data distribution there is now a dedicated adapter mode:
+
+- `ReferenceDataAdapter`
+- leader accepts writes
+- follower voters redirect to the leader
+- learners reject writes instead of redirecting them
+- an optional requester-id allow-list can reject writes before the leader submits them to Raft
+
+You can select the adapter at startup with:
+
+```text
+-Draft.adapter.mode=basic
+-Draft.adapter.mode=reference-data
+```
+
+The simple demo authorizer is configured with:
+
+```text
+-Draft.command.authorizer.allow-list=reference-admin,master-data-service
+```
+
+This allow-list uses `ClientCommandRequest.peerId` as the requester identity. That is useful for demos and for structuring the code correctly, but it is not a strong security boundary by itself. In a production setup, the request identity should come from an authenticated transport or gateway layer and then be mapped into the authorization decision.
+
+Optional request authentication is also available for client and admin requests:
+
+```text
+-Draft.request.auth.mode=none
+-Draft.request.auth.mode=shared-secret
+-Draft.request.auth.shared-secret=top-secret
+```
+
+The CLI side can send credentials with:
+
+```text
+-Draft.request.auth.client-scheme=shared-secret
+-Draft.request.auth.client-token=top-secret
+```
+
+Behavior by mode:
+
+- `none`: development/test default; no authentication is required
+- `shared-secret`: external requests must carry `auth_scheme=shared-secret` plus the configured token
+
+This authentication hook currently applies to ordinary writes, ordinary reads, join/join-status, reconfiguration, telemetry, cluster summary, and reconfiguration-status requests. It is intentionally kept above the Raft mechanics so development remains simple while production-style deployments can demand stronger request validation.
+
 ### Adding a new node
 A new node can be started with addresses of existing members so it can contact the cluster, but it is not part of the voting configuration until the leader commits a membership change through the Raft log.
 
@@ -65,7 +141,7 @@ You can poll progress with `JoinClusterStatusRequest`.
 There is also an explicit join startup mode:
 
 ```text
-java -jar target/raft.jar join 127.0.0.1:10085/learner 127.0.0.1:10081
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar join 127.0.0.1:10085/learner 127.0.0.1:10081
 ```
 
 In that mode the new node starts in passive join mode, repeatedly submits `JoinClusterRequest` through the seed member, and waits to become part of the committed configuration before it starts participating normally.
@@ -117,7 +193,7 @@ The response includes:
 For manual inspection from the prompt:
 
 ```text
-java -jar target/raft.jar telemetry 127.0.0.1:10080
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar telemetry 127.0.0.1:10080
 ```
 
 That prints a concise node summary to STDOUT, including replication and transport timing information when available.
@@ -125,18 +201,18 @@ That prints a concise node summary to STDOUT, including replication and transpor
 Typed admin helpers are also available from the jar:
 
 ```text
-java -jar target/raft.jar command put 127.0.0.1:10080 demo-key demo-value
-java -jar target/raft.jar command delete 127.0.0.1:10080 demo-key
-java -jar target/raft.jar command clear 127.0.0.1:10080
-java -jar target/raft.jar query get 127.0.0.1:10080 demo-key
-java -jar target/raft.jar cluster-summary --json 127.0.0.1:10080
-java -jar target/raft.jar reconfiguration-status --json 127.0.0.1:10080
-java -jar target/raft.jar join-request 127.0.0.1:10080 127.0.0.1:10085/learner
-java -jar target/raft.jar join-status 127.0.0.1:10080 server-10085
-java -jar target/raft.jar reconfigure joint 127.0.0.1:10080 10081 10082 10083 10085/learner
-java -jar target/raft.jar reconfigure finalize 127.0.0.1:10080
-java -jar target/raft.jar reconfigure promote 127.0.0.1:10080 server-10085
-java -jar target/raft.jar reconfigure demote 127.0.0.1:10080 server-10085
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command put 127.0.0.1:10080 demo-key demo-value
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command delete 127.0.0.1:10080 demo-key
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command clear 127.0.0.1:10080
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar query get 127.0.0.1:10080 demo-key
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar cluster-summary --json 127.0.0.1:10080
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfiguration-status --json 127.0.0.1:10080
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar join-request 127.0.0.1:10080 127.0.0.1:10085/learner
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar join-status 127.0.0.1:10080 server-10085
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfigure joint 127.0.0.1:10080 10081 10082 10083 10085/learner
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfigure finalize 127.0.0.1:10080
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfigure promote 127.0.0.1:10080 server-10085
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfigure demote 127.0.0.1:10080 server-10085
 ```
 
 Any peer spec in the CLI can use `/learner` or `/voter`. If omitted, `voter` is the default.
@@ -152,7 +228,7 @@ If that lease is stale, the leader first attempts a short quorum heartbeat barri
 For machine-readable inspection:
 
 ```text
-java -jar target/raft.jar telemetry --json 127.0.0.1:10080
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar telemetry --json 127.0.0.1:10080
 ```
 
 That emits the same telemetry view as structured JSON, including cluster health, quorum status, blocking peer ids, replication detail, and transport timing samples.
@@ -160,7 +236,7 @@ That emits the same telemetry view as structured JSON, including cluster health,
 For the dedicated cluster-wide status endpoint:
 
 ```text
-java -jar target/raft.jar cluster-summary --json 127.0.0.1:10080
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar cluster-summary --json 127.0.0.1:10080
 ```
 
 That emits a leader summary with:
@@ -173,7 +249,7 @@ That emits a leader summary with:
 For a narrower view focused only on membership change progress:
 
 ```text
-java -jar target/raft.jar reconfiguration-status --json 127.0.0.1:10080
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfiguration-status --json 127.0.0.1:10080
 ```
 
 That emits:
@@ -266,7 +342,7 @@ The previous README contained a long historical transcript from an older static-
 For a current local run:
 
 1. Build the runnable jar.
-2. Start the bootstrap cluster with `./scripts/demo_setup.sh` for the full demo view, or `./scripts/start_raft.sh` for the minimal launcher.
+2. Start the bootstrap cluster with `./scripts/cluster_demo_setup.sh` for the full cluster-management demo, or `./scripts/start_raft.sh` for the minimal launcher.
 3. Watch the node logs to see leader election and steady-state heartbeats.
 4. Send client commands and typed reconfiguration requests to the leader.
 5. Stop the local cluster with `./scripts/kill_raft.sh`.
@@ -280,15 +356,15 @@ Typical things to observe during a manual run:
 - a removed leader steps down and decommissions itself after finalized removal
 - followers that are too far behind switch from `AppendEntries` to chunked `InstallSnapshot`
 
-`./scripts/demo_setup.sh` also enables a background summary stream by default:
+`./scripts/cluster_demo_setup.sh` also enables a background summary stream by default:
 
 - `raft-demo/cluster-summary.jsonl` records periodic `cluster-summary --json` snapshots using a shared JSONL envelope
 - `raft-demo/node-<port>/telemetry.log` continues to hold the richer human-readable per-node view
 - `raft-demo/demo-events.jsonl` records timestamped scripted actions and milestones using the same schema version envelope
 - `raft-demo/telemetry-snapshots.jsonl` records typed telemetry snapshots captured by the demo flow
-- `./scripts/demo_timeline.sh raft-demo` merges those JSONL artifacts into a readable time-ordered view
+- `./scripts/cluster_demo_timeline.sh raft-demo` merges those JSONL artifacts into a readable time-ordered view
 - disable the summary loop with `RAFT_SUMMARY_INTERVAL_SECONDS=0`
-- by default it also runs `scripts/demo_reconfigure.sh`, which removes the initial leader through `JOINT` then `FINALIZE`, then starts a new join-mode node and waits for it to complete admission
+- by default it also runs `scripts/cluster_reconfiguration_demo.sh`, which removes the initial leader through `JOINT` then `FINALIZE`, then starts a new join-mode node and waits for it to complete admission
 - disable the automated reconfiguration flow with `RAFT_DEMO_AUTORUN=0`
 
 The integration tests exercise these flows in a more reliable and repeatable way than a pasted console transcript. In particular:
