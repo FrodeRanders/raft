@@ -145,117 +145,194 @@ public class RaftNode {
     private final long linearizableReadLeaseMillis;
     private final long linearizableReadTimeoutMillis;
 
+    public static Builder forPeer(Peer me) {
+        return new Builder(me);
+    }
+
+    /**
+     * @deprecated Prefer {@link #forPeer(Peer)} and {@link Builder#build()} for new code.
+     */
+    @Deprecated(forRemoval = false)
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, RaftTransportClient raftClient, LogStore logStore) {
-        this(me, peers, timeoutMillis, messageHandler, (SnapshotStateMachine) null, raftClient, logStore, new InMemoryPersistentStateStore(), System::currentTimeMillis, new Random());
+        this(builderFor(me, peers, timeoutMillis, messageHandler, raftClient, logStore)
+                .withPersistentStateStore(new InMemoryPersistentStateStore())
+                .withTimeSource(System::currentTimeMillis)
+                .withRandom(new Random()));
     }
 
+    /**
+     * @deprecated Prefer {@link #forPeer(Peer)} and {@link Builder#build()} for new code.
+     */
+    @Deprecated(forRemoval = false)
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, RaftTransportClient raftClient, LogStore logStore, PersistentStateStore persistentState) {
-        this(me, peers, timeoutMillis, messageHandler, (SnapshotStateMachine) null, raftClient, logStore, persistentState, System::currentTimeMillis, new Random());
+        this(builderFor(me, peers, timeoutMillis, messageHandler, raftClient, logStore)
+                .withPersistentStateStore(persistentState)
+                .withTimeSource(System::currentTimeMillis)
+                .withRandom(new Random()));
     }
 
+    /**
+     * @deprecated Prefer {@link #forPeer(Peer)} and {@link Builder#build()} for new code.
+     */
+    @Deprecated(forRemoval = false)
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, CommandHandler commandHandler, RaftTransportClient raftClient, LogStore logStore, PersistentStateStore persistentState) {
-        this(me, peers, timeoutMillis, messageHandler, commandHandler == null ? null : new CommandHandlerStateMachineAdapter(commandHandler), raftClient, logStore, persistentState, System::currentTimeMillis, new Random());
+        this(builderFor(me, peers, timeoutMillis, messageHandler, raftClient, logStore)
+                .withCommandHandler(commandHandler)
+                .withPersistentStateStore(persistentState)
+                .withTimeSource(System::currentTimeMillis)
+                .withRandom(new Random()));
     }
 
+    /**
+     * @deprecated Prefer {@link #forPeer(Peer)} and {@link Builder#build()} for new code.
+     */
+    @Deprecated(forRemoval = false)
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, SnapshotStateMachine snapshotStateMachine, RaftTransportClient raftClient, LogStore logStore, PersistentStateStore persistentState) {
-        this(me, peers, timeoutMillis, messageHandler, snapshotStateMachine, raftClient, logStore, persistentState, System::currentTimeMillis, new Random());
+        this(builderFor(me, peers, timeoutMillis, messageHandler, raftClient, logStore)
+                .withSnapshotStateMachine(snapshotStateMachine)
+                .withPersistentStateStore(persistentState)
+                .withTimeSource(System::currentTimeMillis)
+                .withRandom(new Random()));
     }
 
-    RaftNode(Peer me,
-             List<Peer> peers,
-             long timeoutMillis,
-             MessageHandler messageHandler,
-             SnapshotStateMachine snapshotStateMachine,
-             RaftTransportClient raftClient,
-             LogStore logStore,
-             TimeSource timeSource,
-             Random rng) {
-        this(me, peers, timeoutMillis, messageHandler, snapshotStateMachine, raftClient, logStore, new InMemoryPersistentStateStore(), timeSource, rng);
-    }
-
-    RaftNode(Peer me,
-             List<Peer> peers,
-             long timeoutMillis,
-             MessageHandler messageHandler,
-             RaftTransportClient raftClient,
-             LogStore logStore,
-             TimeSource timeSource,
-             Random rng) {
-        this(me, peers, timeoutMillis, messageHandler, (SnapshotStateMachine) null, raftClient, logStore, new InMemoryPersistentStateStore(), timeSource, rng);
-    }
-
-    RaftNode(Peer me,
-             List<Peer> peers,
-             long timeoutMillis,
-             MessageHandler messageHandler,
-             RaftTransportClient raftClient,
-             LogStore logStore,
-             PersistentStateStore persistentState,
-             TimeSource timeSource,
-             Random rng) {
-        this(me, peers, timeoutMillis, messageHandler, (SnapshotStateMachine) null, raftClient, logStore, persistentState, timeSource, rng);
-    }
-
-    RaftNode(Peer me,
-             List<Peer> peers,
-             long timeoutMillis,
-             MessageHandler messageHandler,
-             CommandHandler commandHandler,
-             RaftTransportClient raftClient,
-             LogStore logStore,
-             PersistentStateStore persistentState,
-             TimeSource timeSource,
-             Random rng) {
-        this(me, peers, timeoutMillis, messageHandler, commandHandler == null ? null : new CommandHandlerStateMachineAdapter(commandHandler), raftClient, logStore, persistentState, timeSource, rng);
-    }
-
-    RaftNode(Peer me,
-             List<Peer> peers,
-             long timeoutMillis,
-             MessageHandler messageHandler,
-             SnapshotStateMachine snapshotStateMachine,
-             RaftTransportClient raftClient,
-             LogStore logStore,
-             PersistentStateStore persistentState,
-             TimeSource timeSource,
-             Random rng) {
-        this.me = me;
+    private RaftNode(Builder builder) {
+        this.me = builder.me;
         if (me == null || me.getId() == null || me.getId().isBlank()) {
             throw new IllegalArgumentException("Local peer must have non-null, non-blank id");
         }
-        for (Peer peer : peers) {
+        for (Peer peer : builder.peers) {
             registerPeer(peer);
         }
-        this.timeoutMillis = timeoutMillis;
-        this.messageHandler = messageHandler;
-        this.snapshotStateMachine = snapshotStateMachine;
-        this.raftClient = raftClient;
-        this.logStore = logStore;
-        this.persistentState = persistentState;
-        this.timeSource = timeSource;
-        this.rng = rng;
+        this.timeoutMillis = builder.timeoutMillis;
+        this.messageHandler = builder.messageHandler;
+        this.snapshotStateMachine = builder.snapshotStateMachine;
+        this.raftClient = builder.raftClient;
+        this.logStore = builder.logStore;
+        this.persistentState = builder.persistentStateStore;
+        this.timeSource = builder.timeSource;
+        this.rng = builder.random;
         this.snapshotMinEntries = Integer.getInteger("raft.snapshot.min.entries", 1_000);
         this.snapshotChunkBytes = Integer.getInteger("raft.snapshot.chunk.bytes", 64 * 1024);
-        this.linearizableReadLeaseMillis = Long.getLong("raft.linearizable.read.lease.millis", Math.max(1L, timeoutMillis / 2L));
-        this.linearizableReadTimeoutMillis = Long.getLong("raft.linearizable.read.timeout.millis", Math.max(50L, Math.min(500L, timeoutMillis)));
+        this.linearizableReadLeaseMillis = Long.getLong("raft.linearizable.read.lease.millis", Math.max(1L, builder.timeoutMillis / 2L));
+        this.linearizableReadTimeoutMillis = Long.getLong("raft.linearizable.read.timeout.millis", Math.max(50L, Math.min(500L, builder.timeoutMillis)));
         this.clusterConfiguration = ClusterConfiguration.stable(allConfiguredMembers());
         this.snapshotConfiguration = clusterConfiguration;
-        var decodedSnapshot = ClusterConfigurationSnapshotCodec.decode(logStore.snapshotData());
+        var decodedSnapshot = ClusterConfigurationSnapshotCodec.decode(builder.logStore.snapshotData());
         if (decodedSnapshot.isPresent()) {
             this.snapshotConfiguration = decodedSnapshot.get().configuration();
             this.clusterConfiguration = snapshotConfiguration;
         }
-        this.clusterConfiguration = configurationAt(logStore.lastIndex());
+        this.clusterConfiguration = configurationAt(builder.logStore.lastIndex());
         this.decommissioned = !this.clusterConfiguration.contains(me.getId());
-        this.committedConfigurations.put(logStore.snapshotIndex(), clusterConfiguration);
-        this.raftClient.setKnownPeers(remoteReplicatedPeersFor(configurationAt(logStore.lastIndex())));
+        this.committedConfigurations.put(builder.logStore.snapshotIndex(), clusterConfiguration);
+        this.raftClient.setKnownPeers(remoteReplicatedPeersFor(configurationAt(builder.logStore.lastIndex())));
 
-        this.currentTerm = persistentState.currentTerm();
-        this.votedFor = persistentState.votedFor()
+        this.currentTerm = builder.persistentStateStore.currentTerm();
+        this.votedFor = builder.persistentStateStore.votedFor()
                 .map(this::resolvePeerById)
                 .orElse(null);
-        if (persistentState.votedFor().isPresent() && this.votedFor == null) {
-            persistentState.setVotedFor(null);
+        if (builder.persistentStateStore.votedFor().isPresent() && this.votedFor == null) {
+            builder.persistentStateStore.setVotedFor(null);
+        }
+    }
+
+    private static Builder builderFor(Peer me,
+                                      List<Peer> peers,
+                                      long timeoutMillis,
+                                      MessageHandler messageHandler,
+                                      RaftTransportClient raftClient,
+                                      LogStore logStore) {
+        return forPeer(me)
+                .withPeers(peers)
+                .withTimeoutMillis(timeoutMillis)
+                .withMessageHandler(messageHandler)
+                .withClient(raftClient)
+                .withLogStore(logStore);
+    }
+
+    public static final class Builder {
+        private final Peer me;
+        private List<Peer> peers = List.of();
+        private long timeoutMillis;
+        private MessageHandler messageHandler;
+        private SnapshotStateMachine snapshotStateMachine;
+        private RaftTransportClient raftClient;
+        private LogStore logStore;
+        private PersistentStateStore persistentStateStore = new InMemoryPersistentStateStore();
+        private TimeSource timeSource = System::currentTimeMillis;
+        private Random random = new Random();
+
+        private Builder(Peer me) {
+            this.me = me;
+        }
+
+        public Builder withPeers(List<Peer> peers) {
+            this.peers = peers == null ? List.of() : List.copyOf(peers);
+            return this;
+        }
+
+        public Builder withTimeoutMillis(long timeoutMillis) {
+            this.timeoutMillis = timeoutMillis;
+            return this;
+        }
+
+        public Builder withMessageHandler(MessageHandler messageHandler) {
+            this.messageHandler = messageHandler;
+            return this;
+        }
+
+        public Builder withSnapshotStateMachine(SnapshotStateMachine snapshotStateMachine) {
+            this.snapshotStateMachine = snapshotStateMachine;
+            return this;
+        }
+
+        public Builder withCommandHandler(CommandHandler commandHandler) {
+            this.snapshotStateMachine = commandHandler == null ? null : new CommandHandlerStateMachineAdapter(commandHandler);
+            return this;
+        }
+
+        public Builder withClient(RaftTransportClient raftClient) {
+            this.raftClient = raftClient;
+            return this;
+        }
+
+        public Builder withLogStore(LogStore logStore) {
+            this.logStore = logStore;
+            return this;
+        }
+
+        public Builder withPersistentStateStore(PersistentStateStore persistentStateStore) {
+            this.persistentStateStore = persistentStateStore;
+            return this;
+        }
+
+        public Builder withTimeSource(TimeSource timeSource) {
+            this.timeSource = timeSource;
+            return this;
+        }
+
+        public Builder withRandom(Random random) {
+            this.random = random;
+            return this;
+        }
+
+        public RaftNode build() {
+            if (raftClient == null) {
+                throw new IllegalArgumentException("Raft node requires a transport client");
+            }
+            if (logStore == null) {
+                throw new IllegalArgumentException("Raft node requires a log store");
+            }
+            if (persistentStateStore == null) {
+                throw new IllegalArgumentException("Raft node requires a persistent state store");
+            }
+            if (timeSource == null) {
+                throw new IllegalArgumentException("Raft node requires a time source");
+            }
+            if (random == null) {
+                throw new IllegalArgumentException("Raft node requires a random source");
+            }
+            return new RaftNode(this);
         }
     }
 

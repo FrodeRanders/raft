@@ -82,6 +82,13 @@ public record AdapterSpec(
         }
 
         public AdapterSpec build() {
+            if (transportFactory == null) {
+                throw new IllegalStateException("transportFactory must not be null for a runnable adapter");
+            }
+            return buildDetached();
+        }
+
+        public AdapterSpec buildDetached() {
             return new AdapterSpec(timeoutMillis, me, peers, joinSeed, runtimeConfiguration, transportFactory);
         }
     }

@@ -35,7 +35,7 @@ public class PolicyBasedAdapter extends BasicAdapter {
         this(AdapterSpec.forPeer(me)
                         .withTimeoutMillis(timeoutMillis)
                         .withPeers(peers)
-                        .build(),
+                        .buildDetached(),
                 writeAdmissionPolicy,
                 commandAuthorizer,
                 commandAuthenticator);
@@ -49,7 +49,7 @@ public class PolicyBasedAdapter extends BasicAdapter {
                         .withTimeoutMillis(timeoutMillis)
                         .withPeers(peers)
                         .withJoinSeed(joinSeed)
-                        .build(),
+                        .buildDetached(),
                 writeAdmissionPolicy,
                 commandAuthorizer,
                 commandAuthenticator);
@@ -64,7 +64,7 @@ public class PolicyBasedAdapter extends BasicAdapter {
                         .withPeers(peers)
                         .withJoinSeed(joinSeed)
                         .withRuntimeConfiguration(runtimeConfiguration)
-                        .build(),
+                        .buildDetached(),
                 writeAdmissionPolicy,
                 commandAuthorizer,
                 commandAuthenticator);

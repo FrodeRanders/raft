@@ -98,18 +98,17 @@ final class TestRaftNodeBuilder {
     }
 
     RaftNode build() {
-        return new RaftNode(
-                me,
-                peers,
-                timeoutMillis,
-                messageHandler,
-                snapshotStateMachine,
-                raftClient,
-                logStore,
-                persistentStateStore,
-                timeSource,
-                random
-        );
+        return RaftNode.forPeer(me)
+                .withPeers(peers)
+                .withTimeoutMillis(timeoutMillis)
+                .withMessageHandler(messageHandler)
+                .withSnapshotStateMachine(snapshotStateMachine)
+                .withClient(raftClient)
+                .withLogStore(logStore)
+                .withPersistentStateStore(persistentStateStore)
+                .withTimeSource(timeSource)
+                .withRandom(random)
+                .build();
     }
 
     private static final class NoopRaftClient extends RaftClient {

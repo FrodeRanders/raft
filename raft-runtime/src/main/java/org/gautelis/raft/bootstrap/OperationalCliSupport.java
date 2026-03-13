@@ -23,11 +23,9 @@ import org.gautelis.raft.protocol.ClusterSummaryResponse;
 import org.gautelis.raft.protocol.JoinClusterResponse;
 import org.gautelis.raft.protocol.JoinClusterStatusResponse;
 import org.gautelis.raft.protocol.Peer;
-import org.gautelis.raft.protocol.ReconfigurationStatusRequest;
 import org.gautelis.raft.protocol.ReconfigurationStatusResponse;
 import org.gautelis.raft.protocol.ReconfigureClusterRequest;
 import org.gautelis.raft.protocol.ReconfigureClusterResponse;
-import org.gautelis.raft.protocol.TelemetryRequest;
 import org.gautelis.raft.protocol.TelemetryResponse;
 import org.gautelis.raft.transport.RaftTransportClient;
 
@@ -38,8 +36,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -209,31 +205,6 @@ public final class OperationalCliSupport {
     }
 
 
-    private static String renderTelemetryHeadline(TelemetryResponse response) {
-        StringBuilder out = new StringBuilder();
-        out.append("node=").append(response.getPeerId())
-                .append(" state=").append(response.getState())
-                .append(" term=").append(response.getTerm());
-        if (!response.getLeaderId().isBlank()) {
-            out.append(" leader=").append(response.getLeaderId());
-        }
-        out.append(" commit=").append(response.getCommitIndex())
-                .append(" applied=").append(response.getLastApplied())
-                .append(" health=").append(response.getClusterHealth())
-                .append(" quorum=").append(response.isQuorumAvailable())
-                .append(" currentQuorum=").append(response.isCurrentQuorumAvailable())
-                .append(" nextQuorum=").append(response.isNextQuorumAvailable())
-                .append(" healthyVoters=").append(response.getHealthyVotingMembers()).append('/').append(response.getVotingMembers());
-        if (!response.getClusterStatusReason().isBlank()) {
-            out.append(" reason=").append(response.getClusterStatusReason());
-        }
-        return out.toString();
-    }
-
-    static String renderTelemetry(TelemetryResponse response) {
-        return TelemetryCliSupport.render(response);
-    }
-
     static String renderReconfigureResponse(ReconfigureClusterRequest.Action action, ReconfigureClusterResponse response) {
         return "Reconfigure action=" + action.name()
                 + " status=" + response.getStatus()
@@ -258,30 +229,6 @@ public final class OperationalCliSupport {
                 + " peer=" + response.getPeerId()
                 + (response.getLeaderId() == null || response.getLeaderId().isBlank() ? "" : " leader=" + response.getLeaderId())
                 + " message=\"" + response.getMessage() + "\"";
-    }
-
-    static String renderTelemetryJson(TelemetryResponse response) {
-        return TelemetryCliSupport.renderJson(response);
-    }
-
-    static String renderTelemetrySummaryJson(TelemetryResponse response) {
-        return TelemetryCliSupport.renderSummaryJson(response);
-    }
-
-    static String renderClusterSummary(ClusterSummaryResponse response) {
-        return ClusterAdminCliSupport.renderClusterSummary(response);
-    }
-
-    static String renderClusterSummaryJson(ClusterSummaryResponse response) {
-        return ClusterAdminCliSupport.renderClusterSummaryJson(response);
-    }
-
-    static String renderReconfigurationStatus(ReconfigurationStatusResponse response) {
-        return ClusterAdminCliSupport.renderReconfigurationStatus(response);
-    }
-
-    static String renderReconfigurationStatusJson(ReconfigurationStatusResponse response) {
-        return ClusterAdminCliSupport.renderReconfigurationStatusJson(response);
     }
 
     static void appendClusterView(StringBuilder out, TelemetryResponse response) {
@@ -325,69 +272,6 @@ public final class OperationalCliSupport {
             }
             out.append('\n');
         }
-    }
-
-    static TelemetryResponse fetchTelemetry(
-            RaftTransportClient client,
-            Peer target,
-            boolean includePeerStats,
-            Supplier<String> authScheme,
-            Supplier<String> authToken
-    ) throws Exception {
-        TelemetryResponse response = client.sendTelemetryRequest(
-                target,
-                new TelemetryRequest(0L, "telemetry-cli", includePeerStats, true, authScheme.get(), authToken.get())
-        ).get(5, TimeUnit.SECONDS);
-        if ("REDIRECT".equals(response.getStatus())) {
-            Peer redirectedLeader = resolveRedirectLeader(response);
-            if (redirectedLeader != null) {
-                response = client.sendTelemetryRequest(
-                        redirectedLeader,
-                        new TelemetryRequest(0L, "telemetry-cli", includePeerStats, true, authScheme.get(), authToken.get())
-                ).get(5, TimeUnit.SECONDS);
-            }
-        }
-        return response;
-    }
-
-    static ClusterSummaryResponse fetchClusterSummary(RaftTransportClient client, Peer target, Supplier<String> authScheme, Supplier<String> authToken) throws Exception {
-        ClusterSummaryResponse response = client.sendClusterSummaryRequest(
-                target,
-                new ClusterSummaryRequest(0L, "cluster-summary-cli", authScheme.get(), authToken.get())
-        ).get(5, TimeUnit.SECONDS);
-        if ("REDIRECT".equals(response.getStatus()) && !response.getRedirectLeaderHost().isBlank() && response.getRedirectLeaderPort() > 0) {
-            response = client.sendClusterSummaryRequest(
-                    new Peer(response.getRedirectLeaderId(), new InetSocketAddress(response.getRedirectLeaderHost(), response.getRedirectLeaderPort())),
-                    new ClusterSummaryRequest(0L, "cluster-summary-cli", authScheme.get(), authToken.get())
-            ).get(5, TimeUnit.SECONDS);
-        }
-        return response;
-    }
-
-    static ReconfigurationStatusResponse fetchReconfigurationStatus(RaftTransportClient client, Peer target, Supplier<String> authScheme, Supplier<String> authToken) throws Exception {
-        ReconfigurationStatusResponse response = client.sendReconfigurationStatusRequest(
-                target,
-                new ReconfigurationStatusRequest(0L, "reconfiguration-status-cli", authScheme.get(), authToken.get())
-        ).get(5, TimeUnit.SECONDS);
-        if ("REDIRECT".equals(response.getStatus()) && !response.getRedirectLeaderHost().isBlank() && response.getRedirectLeaderPort() > 0) {
-            response = client.sendReconfigurationStatusRequest(
-                    new Peer(response.getRedirectLeaderId(), new InetSocketAddress(response.getRedirectLeaderHost(), response.getRedirectLeaderPort())),
-                    new ReconfigurationStatusRequest(0L, "reconfiguration-status-cli", authScheme.get(), authToken.get())
-            ).get(5, TimeUnit.SECONDS);
-        }
-        return response;
-    }
-
-    private static Peer resolveRedirectLeader(TelemetryResponse response) {
-        if (response.getRedirectLeaderId().isBlank()) {
-            return null;
-        }
-        for (Peer peer : response.getKnownPeers()) {
-            if (response.getRedirectLeaderId().equals(peer.getId())) {
-                return peer;
-            }
-        }
-        return null;
     }
 
     static String renderPeers(List<Peer> peers) {

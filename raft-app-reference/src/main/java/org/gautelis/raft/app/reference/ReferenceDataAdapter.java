@@ -65,7 +65,7 @@ public class ReferenceDataAdapter extends PolicyBasedAdapter {
                         .withPeers(peers)
                         .withJoinSeed(joinSeed)
                         .withRuntimeConfiguration(runtimeConfiguration)
-                        .build(),
+                        .buildDetached(),
                 allowedRequesterIds,
                 commandAuthenticator);
     }
