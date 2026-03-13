@@ -41,7 +41,7 @@ public final class KeyValueCliSupport {
     public static void runCommand(String[] args,
                                   CliRuntimeContext context) {
         if (args.length < 3) {
-            System.err.println("Usage: java -jar target/raft.jar command <put|delete|clear> <target-port|target-host:port|id@target-host:port> [key] [value]");
+            System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command <put|delete|clear> <target-port|target-host:port|id@target-host:port> [key] [value]");
             System.exit(1);
         }
 
@@ -51,7 +51,7 @@ public final class KeyValueCliSupport {
         switch (action) {
             case "put" -> {
                 if (args.length != 5) {
-                    System.err.println("Usage: java -jar target/raft.jar command put <target> <key> <value>");
+                    System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command put <target> <key> <value>");
                     System.exit(1);
                     return;
                 }
@@ -59,7 +59,7 @@ public final class KeyValueCliSupport {
             }
             case "delete" -> {
                 if (args.length != 4) {
-                    System.err.println("Usage: java -jar target/raft.jar command delete <target> <key>");
+                    System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command delete <target> <key>");
                     System.exit(1);
                     return;
                 }
@@ -67,7 +67,7 @@ public final class KeyValueCliSupport {
             }
             case "clear" -> {
                 if (args.length != 3) {
-                    System.err.println("Usage: java -jar target/raft.jar command clear <target>");
+                    System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command clear <target>");
                     System.exit(1);
                     return;
                 }
@@ -109,7 +109,7 @@ public final class KeyValueCliSupport {
     public static void runQuery(String[] args,
                                 CliRuntimeContext context) {
         if (args.length != 4 || !"get".equalsIgnoreCase(args[1])) {
-            System.err.println("Usage: java -jar target/raft.jar query get <target-port|target-host:port|id@target-host:port> <key>");
+            System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar query get <target-port|target-host:port|id@target-host:port> <key>");
             System.exit(1);
         }
 

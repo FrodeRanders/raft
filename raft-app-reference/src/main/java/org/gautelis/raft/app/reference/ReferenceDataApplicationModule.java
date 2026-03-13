@@ -39,7 +39,7 @@ public final class ReferenceDataApplicationModule implements RaftApplicationModu
 
     @Override
     public void printUsage(PrintStream err) {
-        err.println("  java -jar target/raft.jar reference-data <upsert-product|remove-product|upsert-variant|remove-variant|variants> <target> ...");
+        err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reference-data <upsert-product|remove-product|upsert-variant|remove-variant|variants> <target> ...");
     }
 
     @Override

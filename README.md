@@ -5,7 +5,13 @@ This implementation supports Raft joint-consensus reconfiguration, persisted con
 ## Build
 This repository now builds as a small Maven reactor:
 
+- `raft-wire`
+- `raft-membership`
+- `raft-state-machine`
+- `raft-storage`
 - `raft-core`
+- `raft-transport-netty`
+- `raft-telemetry`
 - `raft-runtime`
 - `raft-app-kv`
 - `raft-app-reference`
@@ -23,6 +29,8 @@ The runnable shaded jar is produced at:
 ```text
 raft-dist/target/raft-1.0-SNAPSHOT.jar
 ```
+
+For a concise description of what each module contains, see [docs/module-overview.md](docs/module-overview.md).
 
 There are two different implementations: 
 - On the `'main'` branch, messages are packaged according to protobuf and sent/received through Netty.

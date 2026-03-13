@@ -166,11 +166,11 @@ public final class ReferenceDataCliSupport {
 
     private static void usageAndExit() {
         System.err.println("Usage:");
-        System.err.println("  java -jar target/raft.jar reference-data upsert-product <target> <product-id> <product-name>");
-        System.err.println("  java -jar target/raft.jar reference-data remove-product <target> <product-id>");
-        System.err.println("  java -jar target/raft.jar reference-data upsert-variant <target> <product-id> <variant-id> <variant-name>");
-        System.err.println("  java -jar target/raft.jar reference-data remove-variant <target> <product-id> <variant-id>");
-        System.err.println("  java -jar target/raft.jar reference-data variants <target> <product-id>");
+        System.err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reference-data upsert-product <target> <product-id> <product-name>");
+        System.err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reference-data remove-product <target> <product-id>");
+        System.err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reference-data upsert-variant <target> <product-id> <variant-id> <variant-name>");
+        System.err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reference-data remove-variant <target> <product-id> <variant-id>");
+        System.err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reference-data variants <target> <product-id>");
         System.exit(1);
     }
 }

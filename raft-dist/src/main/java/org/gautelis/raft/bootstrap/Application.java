@@ -49,8 +49,8 @@ public class Application {
         if (args.length < 2) {
             System.err.println("Usage:");
             System.err.println("  Peer specs may use an optional /learner or /voter suffix, for example id@host:port/learner");
-            System.err.println("  java -jar target/raft.jar <my-port|my-host:port|id@my-host:port[/role]> <peer-port|peer-host:port|id@peer-host:port[/role]> ...");
-            System.err.println("  java -jar target/raft.jar join <my-port|my-host:port|id@my-host:port[/role]> <seed-port|seed-host:port|id@seed-host:port[/role]>");
+            System.err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar <my-port|my-host:port|id@my-host:port[/role]> <peer-port|peer-host:port|id@peer-host:port[/role]> ...");
+            System.err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar join <my-port|my-host:port|id@my-host:port[/role]> <seed-port|seed-host:port|id@seed-host:port[/role]>");
             for (RaftApplicationModule module : APPLICATION_MODULES) {
                 module.printUsage(System.err);
             }

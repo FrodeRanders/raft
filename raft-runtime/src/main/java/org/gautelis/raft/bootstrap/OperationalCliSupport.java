@@ -50,32 +50,32 @@ public final class OperationalCliSupport {
     private static final List<CommandSpec> COMMANDS = List.of(
             new CommandSpec(
                     "cluster-summary",
-                    "  java -jar target/raft.jar cluster-summary [--json] <target-port|target-host:port|id@target-host:port[/role]>",
+                    "  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar cluster-summary [--json] <target-port|target-host:port|id@target-host:port[/role]>",
                     OperationalCliCommands::runClusterSummary
             ),
             new CommandSpec(
                     "reconfiguration-status",
-                    "  java -jar target/raft.jar reconfiguration-status [--json] <target-port|target-host:port|id@target-host:port[/role]>",
+                    "  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfiguration-status [--json] <target-port|target-host:port|id@target-host:port[/role]>",
                     OperationalCliCommands::runReconfigurationStatus
             ),
             new CommandSpec(
                     "telemetry",
-                    "  java -jar target/raft.jar telemetry [--json] [--summary] <target-port|target-host:port|id@target-host:port[/role]>",
+                    "  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar telemetry [--json] [--summary] <target-port|target-host:port|id@target-host:port[/role]>",
                     OperationalCliCommands::runTelemetry
             ),
             new CommandSpec(
                     "join-request",
-                    "  java -jar target/raft.jar join-request <target-port|target-host:port|id@target-host:port[/role]> <joining-port|joining-host:port|id@joining-host:port[/role]>",
+                    "  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar join-request <target-port|target-host:port|id@target-host:port[/role]> <joining-port|joining-host:port|id@joining-host:port[/role]>",
                     OperationalCliCommands::runJoinRequest
             ),
             new CommandSpec(
                     "join-status",
-                    "  java -jar target/raft.jar join-status <target-port|target-host:port|id@target-host:port[/role]> <joining-peer-id>",
+                    "  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar join-status <target-port|target-host:port|id@target-host:port[/role]> <joining-peer-id>",
                     OperationalCliCommands::runJoinStatus
             ),
             new CommandSpec(
                     "reconfigure",
-                    "  java -jar target/raft.jar reconfigure <joint|finalize|promote|demote> <target-port|target-host:port|id@target-host:port[/role]> [member-port|member-host:port|id@member-host:port[/role]]...",
+                    "  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfigure <joint|finalize|promote|demote> <target-port|target-host:port|id@target-host:port[/role]> [member-port|member-host:port|id@member-host:port[/role]]...",
                     OperationalCliCommands::runReconfigure
             )
     );
