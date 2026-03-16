@@ -613,6 +613,10 @@ public class RaftNode {
 
         LogEntry entry = new LogEntry(currentTerm, me.getId(), command);
         logStore.append(Collections.singletonList(entry));
+        if (log.isTraceEnabled()) {
+            log.trace("{}@{} appended client command locally at index {} (bytes={})",
+                    me.getId(), currentTerm, logStore.lastIndex(), command.length);
+        }
 
         // Figure 2 ("Leaders"): after local append, replicate to followers and eventually commit.
         advanceCommitIndexFromMajority();
@@ -640,6 +644,10 @@ public class RaftNode {
         if (clusterConfiguration.sameMembershipAs(proposedConfiguration)) {
             return true;
         }
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} scheduling joint-configuration transition: {} -> {}",
+                    me.getId(), currentTerm, describeConfiguration(clusterConfiguration), describeConfiguration(proposedConfiguration));
+        }
         configurationTransitionStartedMillis = timeSource.nowMillis();
         return submitInternalCommand(ClusterConfigurationCommand.joint(normalized));
     }
@@ -655,6 +663,10 @@ public class RaftNode {
         }
         if (!clusterConfiguration.isJointConsensus() && clusterConfiguration.contains(resolved.getId())) {
             pendingJoinIds.remove(resolved.getId());
+            if (log.isDebugEnabled()) {
+                log.debug("{}@{} join request for {} ignored: already part of stable configuration {}",
+                        me.getId(), currentTerm, resolved.getId(), describeConfiguration(clusterConfiguration));
+            }
             return true;
         }
         if (clusterConfiguration.isJointConsensus()) {
@@ -671,12 +683,20 @@ public class RaftNode {
         pendingJoinIds.add(resolved.getId());
         pendingAutoFinalizeMembers = finalMembers.stream().map(Peer::getId).toList();
         pendingAutoFinalizeFenceIndex = logStore.lastIndex();
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} accepted join request for {} and waiting for joint commit/finalize at log index {}",
+                    me.getId(), currentTerm, resolved.getId(), pendingAutoFinalizeFenceIndex);
+        }
         return true;
     }
 
     public synchronized boolean submitFinalizeConfigurationChange() {
         if (state != State.LEADER || decommissioned || !clusterConfiguration.isJointConsensus()) {
             return false;
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} scheduling finalize-configuration transition from {}",
+                    me.getId(), currentTerm, describeConfiguration(clusterConfiguration));
         }
         clearPendingAutoFinalize();
         return submitInternalCommand(ClusterConfigurationCommand.finalizeTransition());
@@ -713,6 +733,10 @@ public class RaftNode {
                 finalMembers.add(member);
             }
         }
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} scheduling role change for {}: {} -> {}",
+                    me.getId(), currentTerm, resolved.getId(), resolved.getRole(), targetRole);
+        }
         if (!submitJointConfigurationChange(finalMembers)) {
             return false;
         }
@@ -724,6 +748,10 @@ public class RaftNode {
     private boolean submitInternalCommand(byte[] command) {
         LogEntry entry = new LogEntry(currentTerm, me.getId(), command);
         logStore.append(Collections.singletonList(entry));
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} appended {} at log index {}",
+                    me.getId(), currentTerm, describeInternalCommand(command), logStore.lastIndex());
+        }
         advanceCommitIndexFromMajority();
         broadcastHeartbeat();
         return true;
@@ -732,13 +760,29 @@ public class RaftNode {
     public synchronized AppendEntriesResponse handleAppendEntries(AppendEntriesRequest request) {
         long leaderTerm = request.getTerm();
         String leaderId = request.getLeaderId();
+        List<LogEntry> entries = request.getEntries();
+        long firstIncomingIndex = request.getPrevLogIndex() + 1;
+        if (log.isTraceEnabled() && !entries.isEmpty()) {
+            log.trace("{}@{} received AppendEntries from {}@{} carrying {} (prev={}/{}, leaderCommit={})",
+                    me.getId(), currentTerm, leaderId, leaderTerm,
+                    describeEntryRange(firstIncomingIndex, entries),
+                    request.getPrevLogIndex(), request.getPrevLogTerm(), request.getLeaderCommit());
+        }
 
         // Figure 2 AppendEntries receiver step 1: reject stale leader term.
         if (leaderTerm < currentTerm) {
+            if (log.isTraceEnabled() && !entries.isEmpty()) {
+                log.trace("{}@{} rejected AppendEntries from {}@{}: stale term while carrying {}",
+                        me.getId(), currentTerm, leaderId, leaderTerm, describeEntryRange(firstIncomingIndex, entries));
+            }
             return new AppendEntriesResponse(currentTerm, me.getId(), false, logStore.lastIndex());
         }
         ClusterConfiguration effectiveConfiguration = activeConfiguration();
         if (!acceptsLeaderRpcFrom(leaderId, effectiveConfiguration)) {
+            if (log.isTraceEnabled() && !entries.isEmpty()) {
+                log.trace("{}@{} rejected AppendEntries from {}@{}: leader not accepted in {}",
+                        me.getId(), currentTerm, leaderId, leaderTerm, describeConfiguration(effectiveConfiguration));
+            }
             return new AppendEntriesResponse(currentTerm, me.getId(), false, logStore.lastIndex());
         }
 
@@ -763,20 +807,31 @@ public class RaftNode {
         // Snapshot boundary handling: if follower already compacted this prefix,
         // leader must switch to InstallSnapshot (instead of AppendEntries retry).
         if (prevLogIndex < logStore.snapshotIndex()) {
+            if (log.isTraceEnabled()) {
+                log.trace("{}@{} rejected AppendEntries from {}@{}: prev index {} is below snapshot boundary {}",
+                        me.getId(), currentTerm, leaderId, leaderTerm, prevLogIndex, logStore.snapshotIndex());
+            }
             return new AppendEntriesResponse(currentTerm, me.getId(), false, logStore.snapshotIndex());
         }
 
         // Figure 2 AppendEntries receiver step 2:
         // reject if no entry at prevLogIndex or term mismatch.
         if (prevLogIndex > logStore.lastIndex()) {
+            if (log.isTraceEnabled()) {
+                log.trace("{}@{} rejected AppendEntries from {}@{}: missing prev index {} (lastIndex={})",
+                        me.getId(), currentTerm, leaderId, leaderTerm, prevLogIndex, logStore.lastIndex());
+            }
             return new AppendEntriesResponse(currentTerm, me.getId(), false, logStore.lastIndex());
         }
         if (prevLogIndex > 0 && logStore.termAt(prevLogIndex) != prevLogTerm) {
+            if (log.isTraceEnabled()) {
+                log.trace("{}@{} rejected AppendEntries from {}@{}: prev term mismatch at index {} (expected {}, local {})",
+                        me.getId(), currentTerm, leaderId, leaderTerm, prevLogIndex, prevLogTerm, logStore.termAt(prevLogIndex));
+            }
             return new AppendEntriesResponse(currentTerm, me.getId(), false, prevLogIndex - 1);
         }
 
         long index = prevLogIndex + 1;
-        List<LogEntry> entries = request.getEntries();
 
         // Figure 2 AppendEntries receiver step 3:
         // delete conflicting existing entry and all that follow.
@@ -786,6 +841,10 @@ public class RaftNode {
             if (index <= logStore.lastIndex()) {
                 LogEntry local = logStore.entryAt(index);
                 if (!sameEntry(local, incoming)) {
+                    if (log.isTraceEnabled()) {
+                        log.trace("{}@{} truncating local log from index {} before applying entry from {}@{} (incomingTerm={}, localTerm={})",
+                                me.getId(), currentTerm, index, leaderId, leaderTerm, incoming.getTerm(), local.getTerm());
+                    }
                     logStore.truncateFrom(index);
                     break;
                 }
@@ -798,12 +857,23 @@ public class RaftNode {
         if (i < entries.size()) {
             // Figure 2 AppendEntries receiver step 4: append new entries.
             logStore.append(entries.subList(i, entries.size()));
+            if (log.isTraceEnabled()) {
+                log.trace("{}@{} appended {} from leader {}@{}",
+                        me.getId(), currentTerm,
+                        describeEntryRange(prevLogIndex + 1 + i, entries.subList(i, entries.size())),
+                        leaderId, leaderTerm);
+            }
         }
 
         // Figure 2 AppendEntries receiver step 5:
         // commit up to min(leaderCommit, lastIndex), then apply in-order.
         if (request.getLeaderCommit() > commitIndex) {
+            long previousCommitIndex = commitIndex;
             commitIndex = Math.min(request.getLeaderCommit(), logStore.lastIndex());
+            if (log.isTraceEnabled() && commitIndex > previousCommitIndex) {
+                log.trace("{}@{} advanced commit index from {} to {} from leader {}@{}",
+                        me.getId(), currentTerm, previousCommitIndex, commitIndex, leaderId, leaderTerm);
+            }
             applyCommittedEntries();
         }
         return new AppendEntriesResponse(currentTerm, me.getId(), true, logStore.lastIndex());
@@ -812,6 +882,12 @@ public class RaftNode {
     public synchronized InstallSnapshotResponse handleInstallSnapshot(InstallSnapshotRequest request) {
         long leaderTerm = request.getTerm();
         String leaderId = request.getLeaderId();
+        if (log.isTraceEnabled()) {
+            log.trace("{}@{} received InstallSnapshot chunk from {}@{} for snapshot {}/{} (offset={}, bytes={}, done={})",
+                    me.getId(), currentTerm, leaderId, leaderTerm,
+                    request.getLastIncludedIndex(), request.getLastIncludedTerm(),
+                    request.getOffset(), request.getSnapshotData().length, request.isDone());
+        }
 
         // Same term gate as AppendEntries receiver step 1 (Figure 2 semantics).
         if (leaderTerm < currentTerm) {
@@ -855,6 +931,11 @@ public class RaftNode {
                 request.getLastIncludedTerm(),
                 snapshotBytes
         );
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} installed snapshot from {}@{} at index {} term {} (bytes={})",
+                    me.getId(), currentTerm, leaderId, leaderTerm,
+                    request.getLastIncludedIndex(), request.getLastIncludedTerm(), snapshotBytes.length);
+        }
         byte[] stateMachineSnapshot = snapshotBytes;
         var decodedSnapshot = ClusterConfigurationSnapshotCodec.decode(snapshotBytes);
         if (decodedSnapshot.isPresent()) {
@@ -897,6 +978,11 @@ public class RaftNode {
             return false;
         }
         pendingSnapshot.data.writeBytes(request.getSnapshotData());
+        if (log.isTraceEnabled()) {
+            log.trace("{}@{} accepted snapshot chunk from {} for snapshot index {} at offset {} (bytes={}, buffered={})",
+                    me.getId(), currentTerm, request.getLeaderId(), request.getLastIncludedIndex(),
+                    request.getOffset(), request.getSnapshotData().length, pendingSnapshot.data.size());
+        }
         return true;
     }
 
@@ -1106,6 +1192,10 @@ public class RaftNode {
                 long configuredNext = nextIndex.getOrDefault(peer.getId(), logStore.lastIndex() + 1);
                 if (logStore.snapshotIndex() > 0 && configuredNext <= logStore.snapshotIndex()) {
                     // Follower is behind compacted prefix; switch to InstallSnapshot streaming.
+                    if (log.isTraceEnabled()) {
+                        log.trace("{}@{} switching replication for {} to InstallSnapshot because nextIndex {} is at/before snapshot index {}",
+                                me.getId(), currentTerm, peer.getId(), configuredNext, logStore.snapshotIndex());
+                    }
                     sendInstallSnapshotChunk(peer);
                     continue;
                 }
@@ -1124,6 +1214,11 @@ public class RaftNode {
                         commitIndex,
                         entries
                 );
+                if (log.isTraceEnabled() && !entries.isEmpty()) {
+                    log.trace("{}@{} sending AppendEntries to {} with {} (prev={}/{}, leaderCommit={})",
+                            me.getId(), currentTerm, peer.getId(),
+                            describeEntryRange(next, entries), prev, prevTerm, commitIndex);
+                }
                 raftClient.sendAppendEntries(peer, req).whenComplete((resp, error) -> {
                     if (error != null || resp == null) {
                         recordFollowerReplicationFailure(peer.getId());
@@ -1160,10 +1255,22 @@ public class RaftNode {
             long currentNext = nextIndex.getOrDefault(peer.getId(), logStore.lastIndex() + 1);
             if (logStore.snapshotIndex() > 0 && response.getMatchIndex() <= logStore.snapshotIndex()) {
                 nextIndex.put(peer.getId(), logStore.snapshotIndex());
+                if (log.isTraceEnabled()) {
+                    log.trace("{}@{} follower {} rejected {} and must receive snapshot catch-up (matchIndex={}, snapshotIndex={})",
+                            me.getId(), currentTerm, peer.getId(),
+                            describeEntryRange(request.getPrevLogIndex() + 1, request.getEntries()),
+                            response.getMatchIndex(), logStore.snapshotIndex());
+                }
                 return;
             }
             long floor = logStore.snapshotIndex() + 1;
             nextIndex.put(peer.getId(), Math.max(floor, currentNext - 1));
+            if (log.isTraceEnabled()) {
+                log.trace("{}@{} follower {} rejected {} so nextIndex backs off from {} to {} (matchIndex={})",
+                        me.getId(), currentTerm, peer.getId(),
+                        describeEntryRange(request.getPrevLogIndex() + 1, request.getEntries()),
+                        currentNext, nextIndex.get(peer.getId()), response.getMatchIndex());
+            }
             return;
         }
 
@@ -1173,6 +1280,12 @@ public class RaftNode {
         nextIndex.put(peer.getId(), advanced + 1);
         matchIndex.put(peer.getId(), advanced);
         recordFollowerReplicationSuccess(peer.getId());
+        if (log.isTraceEnabled() && !request.getEntries().isEmpty()) {
+            log.trace("{}@{} follower {} accepted {} -> matchIndex={}, nextIndex={}",
+                    me.getId(), currentTerm, peer.getId(),
+                    describeEntryRange(request.getPrevLogIndex() + 1, request.getEntries()),
+                    advanced, advanced + 1);
+        }
 
         // Figure 2 ("Leaders"): if replicated on majority and in current term, advance commitIndex.
         advanceCommitIndexFromMajority();
@@ -1197,12 +1310,22 @@ public class RaftNode {
 
         if (!response.isSuccess()) {
             recordFollowerReplicationFailure(peer.getId());
+            if (log.isTraceEnabled()) {
+                log.trace("{}@{} follower {} rejected InstallSnapshot chunk for snapshot {}/{} at offset {}",
+                        me.getId(), currentTerm, peer.getId(),
+                        request.getLastIncludedIndex(), request.getLastIncludedTerm(), request.getOffset());
+            }
             return;
         }
 
         if (!request.isDone()) {
             // Successful chunk ack advances the sender-side cursor for this follower.
             snapshotOffsets.put(peer.getId(), request.getOffset() + request.getSnapshotData().length);
+            if (log.isTraceEnabled()) {
+                log.trace("{}@{} follower {} acknowledged InstallSnapshot chunk for snapshot {} up to offset {}",
+                        me.getId(), currentTerm, peer.getId(),
+                        request.getLastIncludedIndex(), snapshotOffsets.get(peer.getId()));
+            }
             sendInstallSnapshotChunk(peer);
             return;
         }
@@ -1212,6 +1335,10 @@ public class RaftNode {
         nextIndex.put(peer.getId(), index + 1);
         matchIndex.put(peer.getId(), index);
         recordFollowerReplicationSuccess(peer.getId());
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} follower {} installed snapshot through index {} term {}",
+                    me.getId(), currentTerm, peer.getId(), index, request.getLastIncludedTerm());
+        }
 
         // After snapshot catch-up, follower contributes to majority replication accounting.
         advanceCommitIndexFromMajority();
@@ -1246,6 +1373,12 @@ public class RaftNode {
                 chunk,
                 done
         );
+        if (log.isTraceEnabled()) {
+            log.trace("{}@{} sending InstallSnapshot chunk to {} for snapshot {}/{} (offset={}, bytes={}, done={})",
+                    me.getId(), currentTerm, peer.getId(),
+                    logStore.snapshotIndex(), logStore.snapshotTerm(),
+                    offset, chunk.length, done);
+        }
         raftClient.sendInstallSnapshot(peer, installSnapshotRequest).whenComplete((resp, error) -> {
             if (error != null || resp == null) {
                 recordFollowerReplicationFailure(peer.getId());
@@ -1272,10 +1405,14 @@ public class RaftNode {
         // New leaders append a no-op entry in their own term so previously replicated
         // old-term entries can become committed once this term is established on a majority.
         logStore.append(Collections.singletonList(new LogEntry(currentTerm, me.getId(), new byte[0])));
+        if (log.isTraceEnabled()) {
+            log.trace("{}@{} appended leader no-op at index {}", me.getId(), currentTerm, logStore.lastIndex());
+        }
     }
 
     private synchronized void advanceCommitIndexFromMajority() {
         long candidateCommit = commitIndex;
+        java.util.Set<String> candidateReplicated = java.util.Set.of();
 
         // Figure 2 ("Leaders"): commit only entries from current term once stored on a majority.
         // This underpins Figure 3 safety (Leader Completeness + State Machine Safety).
@@ -1294,11 +1431,17 @@ public class RaftNode {
             ClusterConfiguration effectiveConfiguration = configurationAt(n);
             if (effectiveConfiguration.hasJointMajority(replicated)) {
                 candidateCommit = n;
+                candidateReplicated = new java.util.LinkedHashSet<>(replicated);
             }
         }
 
         if (candidateCommit > commitIndex) {
+            long previousCommitIndex = commitIndex;
             commitIndex = candidateCommit;
+            if (log.isTraceEnabled()) {
+                log.trace("{}@{} advanced leader commit index from {} to {} after quorum {}",
+                        me.getId(), currentTerm, previousCommitIndex, candidateCommit, candidateReplicated);
+            }
 
             // Figure 2 ("All Servers"): apply entries in commit order.
             applyCommittedEntries();
@@ -1313,6 +1456,9 @@ public class RaftNode {
             LogEntry entry = logStore.entryAt(lastApplied);
             byte[] data = entry.getData();
             if (data.length == 0) {
+                if (log.isTraceEnabled()) {
+                    log.trace("{}@{} applied no-op entry at index {}", me.getId(), currentTerm, lastApplied);
+                }
                 continue;
             }
 
@@ -1321,6 +1467,10 @@ public class RaftNode {
             }
             if (snapshotStateMachine == null) {
                 continue;
+            }
+            if (log.isTraceEnabled()) {
+                log.trace("{}@{} applying replicated command at index {} from {} term {} (bytes={})",
+                        me.getId(), currentTerm, lastApplied, entry.getPeerId(), entry.getTerm(), data.length);
             }
             snapshotStateMachine.apply(entry.getTerm(), data);
         }
@@ -1336,6 +1486,10 @@ public class RaftNode {
 
         clusterConfiguration = applyConfigurationCommand(clusterConfiguration, command, true);
         committedConfigurations.put(lastApplied, clusterConfiguration);
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} applied {} at log index {} -> {}",
+                    me.getId(), currentTerm, describeInternalCommand(command), lastApplied, describeConfiguration(clusterConfiguration));
+        }
         return true;
     }
 
@@ -1378,6 +1532,10 @@ public class RaftNode {
                 matchIndex.putIfAbsent(peer.getId(), logStore.snapshotIndex());
             }
         }
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} entered joint configuration: {} -> {}",
+                    me.getId(), currentTerm, describeConfiguration(baseConfiguration), describeConfiguration(updated));
+        }
         return updated;
     }
 
@@ -1414,6 +1572,10 @@ public class RaftNode {
             }
         }
         clearPendingAutoFinalize();
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} finalized configuration: {} -> {}",
+                    me.getId(), currentTerm, describeConfiguration(baseConfiguration), describeConfiguration(updated));
+        }
         return updated;
     }
 
@@ -1435,9 +1597,14 @@ public class RaftNode {
         // snapshot state machine + committed cluster configuration + compacted log prefix.
         long lastIncludedIndex = commitIndex;
         long lastIncludedTerm = logStore.termAt(lastIncludedIndex);
+        long previousSnapshotIndex = logStore.snapshotIndex();
         snapshotConfiguration = configurationAt(lastIncludedIndex);
         byte[] snapshotBytes = ClusterConfigurationSnapshotCodec.encode(snapshotConfiguration, snapshotStateMachine.snapshot());
         logStore.installSnapshot(lastIncludedIndex, lastIncludedTerm, snapshotBytes);
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} compacted local log into snapshot at index {} term {} (bytes={}, previousSnapshotIndex={})",
+                    me.getId(), currentTerm, lastIncludedIndex, lastIncludedTerm, snapshotBytes.length, previousSnapshotIndex);
+        }
         committedConfigurations.headMap(lastIncludedIndex, false).clear();
         committedConfigurations.put(lastIncludedIndex, snapshotConfiguration);
     }
@@ -1497,6 +1664,9 @@ public class RaftNode {
         persistVotedFor(null);
         electionSequenceCounter = 0;
         refreshTimeout();
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} entering join mode and waiting to be added to a cluster configuration", me.getId(), currentTerm);
+        }
     }
 
     public synchronized boolean isJoining() {
@@ -1773,8 +1943,46 @@ public class RaftNode {
                 return;
             }
         }
+        if (log.isDebugEnabled()) {
+            log.debug("{}@{} auto-finalizing joint configuration after all members replicated fence index {}: {}",
+                    me.getId(), currentTerm, fenceIndex, pendingAutoFinalizeMembers);
+        }
         clearPendingAutoFinalize();
         submitFinalizeConfigurationChange();
+    }
+
+    private String describeConfiguration(ClusterConfiguration configuration) {
+        if (configuration == null) {
+            return "<none>";
+        }
+        return configuration.allMembers().stream()
+                .map(peer -> peer.getId() + ":" + peer.getRole())
+                .sorted()
+                .toList()
+                + (configuration.isJointConsensus() ? " joint" : " stable");
+    }
+
+    private String describeInternalCommand(byte[] command) {
+        var parsed = ClusterConfigurationCommand.parse(command);
+        if (parsed.isEmpty()) {
+            return "internal-command[unknown]";
+        }
+        ClusterConfigurationCommand.Parsed configurationCommand = parsed.get();
+        return switch (configurationCommand.type()) {
+            case JOINT -> "joint-configuration command " + configurationCommand.members().stream()
+                    .map(peer -> peer.getId() + ":" + peer.getRole())
+                    .sorted()
+                    .toList();
+            case FINALIZE -> "finalize-configuration command";
+        };
+    }
+
+    private String describeEntryRange(long firstIndex, List<LogEntry> entries) {
+        if (entries == null || entries.isEmpty()) {
+            return "heartbeat";
+        }
+        long lastIndex = firstIndex + entries.size() - 1L;
+        return "entries[" + firstIndex + ".." + lastIndex + ", count=" + entries.size() + "]";
     }
 
     private void markDecommissioned() {

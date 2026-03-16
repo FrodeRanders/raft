@@ -39,7 +39,7 @@ class PeerTest {
 
     @Test
     void peersWithSameAddressAndRoleAreEqualAndShareHashCode() {
-        log.info("*** Testcase *** Peer identity equality: verifies peers with same id, address, and role compare equal and share hash code");
+        log.info("TC: Peer identity equality: verifies peers with same id, address, and role compare equal and share hash code");
         Peer first = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
         Peer second = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
 
@@ -49,7 +49,7 @@ class PeerTest {
 
     @Test
     void mapLookupWorksAcrossEquivalentPeerInstances() {
-        log.info("*** Testcase *** Peer map-key behavior: verifies fully equivalent peer instances resolve the same map entry");
+        log.info("TC: Peer map-key behavior: verifies fully equivalent peer instances resolve the same map entry");
         Peer key = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
         Peer equivalent = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
 
@@ -62,7 +62,7 @@ class PeerTest {
 
     @Test
     void peerRejectsNullOrBlankId() {
-        log.info("*** Testcase *** Peer id validation: verifies peer construction rejects null or blank ids");
+        log.info("TC: Peer id validation: verifies peer construction rejects null or blank ids");
         assertThrows(IllegalArgumentException.class, () -> new Peer(null, new InetSocketAddress("127.0.0.1", 10080)));
         assertThrows(IllegalArgumentException.class, () -> new Peer("   ", new InetSocketAddress("127.0.0.1", 10080)));
     }

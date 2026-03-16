@@ -184,7 +184,7 @@ class RaftNodeElectionTest {
 
     @Test
     void staleHeartbeatDoesNotRefreshTimeout() {
-        log.info("*** Testcase *** Stale heartbeat does not refresh timeout");
+        log.info("TC: Stale heartbeat does not refresh timeout");
 
         MutableTime time = new MutableTime(10_000);
 
@@ -208,7 +208,7 @@ class RaftNodeElectionTest {
 
     @Test
     void staleLogCandidateCannotWin() {
-        log.info("*** Testcase *** Stale log candidate cannot win");
+        log.info("TC: Stale log candidate cannot win");
         MutableTime time = new MutableTime(0);
 
         Peer a = peer("A");
@@ -240,7 +240,7 @@ class RaftNodeElectionTest {
 
     @Test
     void voteGrantedOncePerTermUnlessSameCandidate() {
-        log.info("*** Testcase *** Vote granted once per term unless same candidate");
+        log.info("TC: Vote granted once per term unless same candidate");
 
         MutableTime time = new MutableTime(0);
 
@@ -265,7 +265,7 @@ class RaftNodeElectionTest {
 
     @Test
     void staleVoteResponsesAreIgnored() {
-        log.info("*** Testcase *** Stale vote responses are ignored");
+        log.info("TC: Stale vote responses are ignored");
 
         MutableTime time = new MutableTime(0);
 
@@ -295,7 +295,7 @@ class RaftNodeElectionTest {
 
     @Test
     void majorityRequiredToBecomeLeader() {
-        log.info("*** Testcase *** Majority required to become leader");
+        log.info("TC: Majority required to become leader");
 
         MutableTime time = new MutableTime(0);
 
@@ -335,7 +335,7 @@ class RaftNodeElectionTest {
 
     @Test
     void leaderElectionAppendsAndCommitsNoopEntry() {
-        log.info("*** Testcase *** Leader election appends and commits a no-op entry");
+        log.info("TC: Leader election appends and commits a no-op entry");
 
         MutableTime time = new MutableTime(0);
 
@@ -391,7 +391,7 @@ class RaftNodeElectionTest {
 
     @Test
     void candidateStepsDownOnSameTermHeartbeat() {
-        log.info("*** Testcase *** Candidate steps down on same term heartbeat");
+        log.info("TC: Candidate steps down on same term heartbeat");
 
         MutableTime time = new MutableTime(0);
 
@@ -436,7 +436,7 @@ class RaftNodeElectionTest {
 
     @Test
     void higherTermInVoteResponsesForcesStepDownEvenIfVoteGranted() {
-        log.info("*** Testcase *** Higher term in vote responses forces stepdown even if vote is granted");
+        log.info("TC: Higher term in vote responses forces stepdown even if vote is granted");
 
         MutableTime time = new MutableTime(0);
 
@@ -466,7 +466,7 @@ class RaftNodeElectionTest {
 
     @Test
     void higherTermInRejectedVoteResponseForcesStepDown() {
-        log.info("*** Testcase *** Higher term in rejected vote response forces stepdown");
+        log.info("TC: Higher term in rejected vote response forces stepdown");
 
         MutableTime time = new MutableTime(0);
 
@@ -491,7 +491,7 @@ class RaftNodeElectionTest {
 
     @Test
     void unknownPeerAppendEntriesIsRejected() {
-        log.info("*** Testcase *** Unknown peer AppendEntries is rejected");
+        log.info("TC: Unknown peer AppendEntries is rejected");
 
         MutableTime time = new MutableTime(0);
 
@@ -516,7 +516,7 @@ class RaftNodeElectionTest {
 
     @Test
     void selfAppendEntriesIsRejected() {
-        log.info("*** Testcase *** Self-origin AppendEntries is rejected");
+        log.info("TC: Self-origin AppendEntries is rejected");
 
         MutableTime time = new MutableTime(0);
         Peer a = peer("A");
@@ -539,7 +539,7 @@ class RaftNodeElectionTest {
 
     @Test
     void electionTimeoutJitterIsSampledOncePerTimeoutWindow() {
-        log.info("*** Testcase *** Election timeout jitter sampled once per timeout window");
+        log.info("TC: Election timeout jitter sampled once per timeout window");
 
         MutableTime time = new MutableTime(0);
         CountingRandom rng = new CountingRandom(0.5);
@@ -568,7 +568,7 @@ class RaftNodeElectionTest {
 
     @Test
     void threeNodeElectionEventuallyElectsSingleLeader() {
-        log.info("*** Testcase *** Three nodes, election eventually elects single leader");
+        log.info("TC: Three nodes, election eventually elects single leader");
 
         MutableTime time = new MutableTime(0);
 

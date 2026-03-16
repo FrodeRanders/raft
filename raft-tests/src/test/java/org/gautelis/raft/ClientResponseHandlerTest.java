@@ -105,7 +105,7 @@ class ClientResponseHandlerTest {
 
     @Test
     void voteResponseCompletesFuture() throws Exception {
-        log.info("*** Testcase *** VoteResponse completes waiting future");
+        log.info("TC: VoteResponse completes waiting future");
 
         CompletableFuture<VoteResponse> future = new CompletableFuture<>();
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
@@ -133,7 +133,7 @@ class ClientResponseHandlerTest {
 
     @Test
     void appendEntriesResponseAccumulatesTransportStatistics() throws Exception {
-        log.info("*** Testcase *** AppendEntriesResponse records transport statistics for replication traffic");
+        log.info("TC: AppendEntriesResponse records transport statistics for replication traffic");
 
         CompletableFuture<AppendEntriesResponse> future = new CompletableFuture<>();
         Map<String, CompletableFuture<AppendEntriesResponse>> inFlightAppendEntries = new java.util.HashMap<>();
@@ -183,7 +183,7 @@ class ClientResponseHandlerTest {
 
     @Test
     void joinClusterResponseCompletesFuture() throws Exception {
-        log.info("*** Testcase *** JoinClusterResponse completes waiting future");
+        log.info("TC: JoinClusterResponse completes waiting future");
 
         CompletableFuture<JoinClusterResponse> future = new CompletableFuture<>();
         Map<String, CompletableFuture<JoinClusterResponse>> inFlightJoinCluster = new java.util.HashMap<>(Map.of("corr-admin-1", future));
@@ -208,7 +208,7 @@ class ClientResponseHandlerTest {
 
     @Test
     void clientCommandResponseCompletesFuture() throws Exception {
-        log.info("*** Testcase *** ClientCommandResponse completes waiting future");
+        log.info("TC: ClientCommandResponse completes waiting future");
 
         CompletableFuture<ClientCommandResponse> future = new CompletableFuture<>();
         Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands = new java.util.HashMap<>(Map.of("corr-command-1", future));
@@ -235,7 +235,7 @@ class ClientResponseHandlerTest {
 
     @Test
     void clientQueryResponseCompletesFuture() throws Exception {
-        log.info("*** Testcase *** ClientQueryResponse completes waiting future");
+        log.info("TC: ClientQueryResponse completes waiting future");
 
         CompletableFuture<ClientQueryResponse> future = new CompletableFuture<>();
 
@@ -261,7 +261,7 @@ class ClientResponseHandlerTest {
 
     @Test
     void clusterSummaryResponseCompletesFuture() throws Exception {
-        log.info("*** Testcase *** ClusterSummaryResponse completes waiting future");
+        log.info("TC: ClusterSummaryResponse completes waiting future");
 
         CompletableFuture<ClusterSummaryResponse> future = new CompletableFuture<>();
 
@@ -310,7 +310,7 @@ class ClientResponseHandlerTest {
 
     @Test
     void reconfigurationStatusResponseCompletesFuture() throws Exception {
-        log.info("*** Testcase *** ReconfigurationStatusResponse completes waiting future");
+        log.info("TC: ReconfigurationStatusResponse completes waiting future");
 
         CompletableFuture<ReconfigurationStatusResponse> future = new CompletableFuture<>();
         Map<String, CompletableFuture<ReconfigurationStatusResponse>> inFlightReconfigurationStatus =
@@ -359,7 +359,7 @@ class ClientResponseHandlerTest {
 
     @Test
     void telemetryResponseCompletesFuture() throws Exception {
-        log.info("*** Testcase *** TelemetryResponse completes waiting future");
+        log.info("TC: TelemetryResponse completes waiting future");
 
         CompletableFuture<TelemetryResponse> future = new CompletableFuture<>();
 
@@ -385,7 +385,7 @@ class ClientResponseHandlerTest {
 
     @Test
     void unknownTypeDelegatesToMessageHandler() throws Exception {
-        log.info("*** Testcase *** Unknown type delegates to message handler");
+        log.info("TC: Unknown type delegates to message handler");
 
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
         CapturingMessageHandler messageHandler = new CapturingMessageHandler();
@@ -406,7 +406,7 @@ class ClientResponseHandlerTest {
 
     @Test
     void missingFieldsAreIgnored() throws Exception {
-        log.info("*** Testcase *** Testing incomplete envelope; WARN logs expected for missing type/correlationId");
+        log.info("TC: Testing incomplete envelope; WARN logs expected for missing type/correlationId");
 
         Map<String, CompletableFuture<VoteResponse>> inFlight = new java.util.HashMap<>();
         ClientResponseHandler handler = newHandler(inFlight, Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), null);

@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RaftCompactionPolicyTest {
     private static final Logger log = LoggerFactory.getLogger(RaftCompactionPolicyTest.class);
     private static void announce(String message) {
-        System.out.println("*** Testcase *** " + message);
+        System.out.println("TC: " + message);
     }
 
     static class NoopRaftClient extends RaftClient {
@@ -101,7 +101,7 @@ class RaftCompactionPolicyTest {
 
     @Test
     void compactionPolicyCreatesSnapshotWhenThresholdReached() {
-        log.info("*** Testcase *** Automatic compaction policy: verifies reaching snapshot threshold creates local snapshot metadata and payload");
+        log.info("TC: Automatic compaction policy: verifies reaching snapshot threshold creates local snapshot metadata and payload");
         String prev = System.getProperty("raft.snapshot.min.entries");
         System.setProperty("raft.snapshot.min.entries", "1");
 

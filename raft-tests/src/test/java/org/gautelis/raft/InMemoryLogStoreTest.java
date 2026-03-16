@@ -36,7 +36,7 @@ class InMemoryLogStoreTest {
 
     @Test
     void emptyLogDefaults() {
-        log.info("*** Testcase *** Empty log defaults to zeros");
+        log.info("TC: Empty log defaults to zeros");
 
         InMemoryLogStore store = new InMemoryLogStore();
         assertEquals(0L, store.lastIndex());
@@ -46,7 +46,7 @@ class InMemoryLogStoreTest {
 
     @Test
     void appendUpdatesLastIndexAndTerm() {
-        log.info("*** Testcase *** Append updates last index/term and termAt");
+        log.info("TC: Append updates last index/term and termAt");
 
         InMemoryLogStore store = new InMemoryLogStore();
         store.append(List.of(
@@ -62,7 +62,7 @@ class InMemoryLogStoreTest {
 
     @Test
     void termAtOutOfBoundsThrows() {
-        log.info("*** Testcase *** termAt throws for out-of-bounds index");
+        log.info("TC: termAt throws for out-of-bounds index");
 
         InMemoryLogStore store = new InMemoryLogStore();
         store.append(List.of(new LogEntry(1, "A")));
@@ -72,7 +72,7 @@ class InMemoryLogStoreTest {
 
     @Test
     void compactionMaintainsSnapshotMetadataAndGlobalIndexing() {
-        log.info("*** Testcase *** In-memory compaction indexing: verifies snapshot metadata and global index continuity after prefix compaction");
+        log.info("TC: In-memory compaction indexing: verifies snapshot metadata and global index continuity after prefix compaction");
         InMemoryLogStore store = new InMemoryLogStore();
         store.append(List.of(
                 new LogEntry(1, "A"),

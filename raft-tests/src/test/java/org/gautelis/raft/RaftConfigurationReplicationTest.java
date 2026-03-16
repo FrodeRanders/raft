@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftConfigurationReplicationTest {
     private static void announce(String message) {
-        System.out.println("*** Testcase *** " + message);
+        System.out.println("TC: " + message);
     }
 
     private static Peer peer(String id) {

@@ -40,7 +40,7 @@ class TelemetryExportersTest {
 
     @Test
     void prometheusExporterServesLatestMetricsSnapshot() throws Exception {
-        System.out.println("*** Testcase *** Prometheus exporter: scrape endpoint exposes latest Raft metrics");
+        System.out.println("TC: Prometheus exporter: scrape endpoint exposes latest Raft metrics");
         PrometheusTelemetryExporter exporter = new PrometheusTelemetryExporter();
         try {
             ClusterConfiguration active = ClusterConfiguration.stable(List.of(
@@ -99,7 +99,7 @@ class TelemetryExportersTest {
 
     @Test
     void otlpExporterPostsMetricsPayloadToCollectorEndpoint() throws Exception {
-        System.out.println("*** Testcase *** OTLP exporter: configured mode posts OpenTelemetry metrics to collector endpoint");
+        System.out.println("TC: OTLP exporter: configured mode posts OpenTelemetry metrics to collector endpoint");
         AtomicReference<String> body = new AtomicReference<>("");
         AtomicReference<String> header = new AtomicReference<>("");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -140,7 +140,7 @@ class TelemetryExportersTest {
 
     @Test
     void otelLogExporterRemainsAvailableAsExplicitFallback() {
-        System.out.println("*** Testcase *** OpenTelemetry log exporter: explicit fallback mode remains available without collector infrastructure");
+        System.out.println("TC: OpenTelemetry log exporter: explicit fallback mode remains available without collector infrastructure");
         String previous = System.getProperty("raft.telemetry.exporter");
         System.setProperty("raft.telemetry.exporter", "otel-log");
         try {

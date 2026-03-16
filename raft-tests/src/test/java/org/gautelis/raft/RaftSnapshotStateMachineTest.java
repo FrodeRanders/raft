@@ -43,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 class RaftSnapshotStateMachineTest {
     private static final Logger log = LoggerFactory.getLogger(RaftSnapshotStateMachineTest.class);
     private static void announce(String message) {
-        System.out.println("*** Testcase *** " + message);
+        System.out.println("TC: " + message);
     }
 
     static class NoopRaftClient extends RaftClient {
@@ -116,7 +116,7 @@ class RaftSnapshotStateMachineTest {
 
     @Test
     void installSnapshotRestoresStateMachineAndSubsequentCommitAppliesCommands() {
-        log.info("*** Testcase *** Snapshot restore + post-snapshot apply: verifies InstallSnapshot restores state machine and later committed log entries still apply");
+        log.info("TC: Snapshot restore + post-snapshot apply: verifies InstallSnapshot restores state machine and later committed log entries still apply");
         Peer a = peer("A");
         Peer b = peer("B");
 

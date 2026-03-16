@@ -40,12 +40,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RaftClientKnownPeersTest {
     private static final Logger log = LoggerFactory.getLogger(RaftClientKnownPeersTest.class);
     private static void announce(String message) {
-        System.out.println("*** Testcase *** " + message);
+        System.out.println("TC: " + message);
     }
 
     @Test
     void broadcastReturnsKnownPeerAsUnreachableAfterExplicitRegistration() throws Exception {
-        log.info("*** Testcase *** Explicit known-peer broadcast path: verifies registered peers are tracked and reported unreachable when connect fails");
+        log.info("TC: Explicit known-peer broadcast path: verifies registered peers are tracked and reported unreachable when connect fails");
         RaftClient client = new RaftClient("test", null);
         try {
             Peer peer = new Peer("B", new InetSocketAddress("127.0.0.1", 1));

@@ -47,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RaftSnapshotTransferTest {
     private static final Logger log = LoggerFactory.getLogger(RaftSnapshotTransferTest.class);
     private static void announce(String message) {
-        System.out.println("*** Testcase *** " + message);
+        System.out.println("TC: " + message);
     }
 
     static final class MutableTime implements RaftNode.TimeSource {
@@ -118,7 +118,7 @@ class RaftSnapshotTransferTest {
 
     @Test
     void leaderFallsBackToInstallSnapshotForLaggingFollower() {
-        log.info("*** Testcase *** Snapshot fallback replication: verifies leader switches from AppendEntries to InstallSnapshot when follower is behind compacted prefix");
+        log.info("TC: Snapshot fallback replication: verifies leader switches from AppendEntries to InstallSnapshot when follower is behind compacted prefix");
         Peer a = new Peer("A", null);
         Peer b = new Peer("B", null);
         MutableTime time = new MutableTime(0);

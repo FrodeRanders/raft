@@ -39,7 +39,7 @@ class KeyValueStateMachineTest {
 
     @Test
     void applyAndSnapshotRestoreRoundtrip() {
-        log.info("*** Testcase *** KeyValue state machine roundtrip: verifies apply mutations survive snapshot/restore with deterministic state");
+        log.info("TC: KeyValue state machine roundtrip: verifies apply mutations survive snapshot/restore with deterministic state");
         KeyValueStateMachine sm = new KeyValueStateMachine();
         sm.apply(1, StateMachineCommand.put("a", "1").encode());
         sm.apply(1, StateMachineCommand.put("b", "hello").encode());
@@ -58,7 +58,7 @@ class KeyValueStateMachineTest {
 
     @Test
     void queryReturnsTypedGetResult() {
-        log.info("*** Testcase *** KeyValue query result: verifies structured get query returns found/value state");
+        log.info("TC: KeyValue query result: verifies structured get query returns found/value state");
         KeyValueStateMachine sm = new KeyValueStateMachine();
         sm.apply(1, StateMachineCommand.put("a", "1").encode());
 

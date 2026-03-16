@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FilePersistentStoresTest {
     private static final Logger log = LoggerFactory.getLogger(FilePersistentStoresTest.class);
     private static void announce(String message) {
-        System.out.println("*** Testcase *** " + message);
+        System.out.println("TC: " + message);
     }
 
     static class NoopRaftClient extends RaftClient {
@@ -82,7 +82,7 @@ class FilePersistentStoresTest {
 
     @Test
     void persistentStateStoreSurvivesReload(@TempDir Path tmp) {
-        log.info("*** Testcase *** Persistent state reload: verifies term and votedFor survive FilePersistentStateStore restart");
+        log.info("TC: Persistent state reload: verifies term and votedFor survive FilePersistentStateStore restart");
         Path stateFile = tmp.resolve("state.properties");
 
         FilePersistentStateStore store = new FilePersistentStateStore(stateFile);
@@ -96,7 +96,7 @@ class FilePersistentStoresTest {
 
     @Test
     void fileLogStoreSurvivesReload(@TempDir Path tmp) {
-        log.info("*** Testcase *** File log reload: verifies appended entries and terms survive FileLogStore restart");
+        log.info("TC: File log reload: verifies appended entries and terms survive FileLogStore restart");
         Path logFile = tmp.resolve("log.bin");
 
         FileLogStore store = new FileLogStore(logFile);
@@ -114,7 +114,7 @@ class FilePersistentStoresTest {
 
     @Test
     void fileLogStoreCompactionMetadataSurvivesReload(@TempDir Path tmp) {
-        log.info("*** Testcase *** Compaction metadata reload: verifies snapshot index/term metadata survives FileLogStore restart");
+        log.info("TC: Compaction metadata reload: verifies snapshot index/term metadata survives FileLogStore restart");
         Path logFile = tmp.resolve("log.bin");
 
         FileLogStore store = new FileLogStore(logFile);
@@ -135,7 +135,7 @@ class FilePersistentStoresTest {
 
     @Test
     void raftNodeLoadsTermVoteAndLogAfterRestart(@TempDir Path tmp) {
-        log.info("*** Testcase *** Node restart continuity: verifies RaftNode restores persisted term, vote, and log entries after restart");
+        log.info("TC: Node restart continuity: verifies RaftNode restores persisted term, vote, and log entries after restart");
         Path stateFile = tmp.resolve("node.state");
         Path logFile = tmp.resolve("node.log");
 

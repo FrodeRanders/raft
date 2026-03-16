@@ -155,7 +155,7 @@ class RaftClientIntegrationTest {
 
     @Test
     void requestVoteFromAllReceivesVoteResponse() throws Exception {
-        log.info("*** Testcase *** requestVoteFromAll receives VoteResponse from server");
+        log.info("TC: requestVoteFromAll receives VoteResponse from server");
 
         Assumptions.assumeTrue(Boolean.parseBoolean(System.getProperty("netty.it", "true")),
                 "Set -Dnetty.it=false to disable this integration test.");
@@ -209,7 +209,7 @@ class RaftClientIntegrationTest {
 
     @Test
     void requestVoteFromAllCompletesWhenPeerIsUnreachable() throws Exception {
-        log.info("*** Testcase *** Unreachable peer vote completion: verifies vote aggregation completes with synthetic negative vote when connect fails");
+        log.info("TC: Unreachable peer vote completion: verifies vote aggregation completes with synthetic negative vote when connect fails");
         Assumptions.assumeTrue(Boolean.parseBoolean(System.getProperty("netty.it", "true")),
                 "Set -Dnetty.it=false to disable this integration test.");
 
@@ -231,7 +231,7 @@ class RaftClientIntegrationTest {
 
     @Test
     void requestVoteFromAllTimesOutWhenPeerDoesNotRespond() throws Exception {
-        log.info("*** Testcase *** Vote request timeout fallback: verifies non-responding peer yields timeout-based synthetic negative vote");
+        log.info("TC: Vote request timeout fallback: verifies non-responding peer yields timeout-based synthetic negative vote");
         Assumptions.assumeTrue(Boolean.parseBoolean(System.getProperty("netty.it", "true")),
                 "Set -Dnetty.it=false to disable this integration test.");
 
@@ -283,7 +283,7 @@ class RaftClientIntegrationTest {
 
     @Test
     void sendAppendEntriesReconnectsToKnownPeerWithoutActiveChannel() throws Exception {
-        log.info("*** Testcase *** AppendEntries reconnect send: verifies sendAppendEntries reconnects and delivers to a known peer without active channel");
+        log.info("TC: AppendEntries reconnect send: verifies sendAppendEntries reconnects and delivers to a known peer without active channel");
         Assumptions.assumeTrue(Boolean.parseBoolean(System.getProperty("netty.it", "true")),
                 "Set -Dnetty.it=false to disable this integration test.");
 
@@ -347,7 +347,7 @@ class RaftClientIntegrationTest {
 
     @Test
     void broadcastReconnectsToKnownPeerWithoutActiveChannel() throws Exception {
-        log.info("*** Testcase *** Generic reconnect broadcast: verifies generic broadcast reconnects and delivers to a known peer without active channel");
+        log.info("TC: Generic reconnect broadcast: verifies generic broadcast reconnects and delivers to a known peer without active channel");
         Assumptions.assumeTrue(Boolean.parseBoolean(System.getProperty("netty.it", "true")),
                 "Set -Dnetty.it=false to disable this integration test.");
 

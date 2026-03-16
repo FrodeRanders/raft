@@ -71,7 +71,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 class BasicAdapterCommandTest {
     private static final Logger log = LoggerFactory.getLogger(BasicAdapterCommandTest.class);
     private static void announce(String message) {
-        System.out.println("*** Testcase *** " + message);
+        System.out.println("TC: " + message);
     }
 
     static final class MutableTime implements RaftNode.TimeSource {
@@ -287,7 +287,7 @@ class BasicAdapterCommandTest {
 
     @Test
     void leaderAcceptsValidClusterCommandAndAppliesThroughLog() {
-        log.info("*** Testcase *** Leader command ingestion: verifies typed client commands are submitted through Raft log and applied to state machine");
+        log.info("TC: Leader command ingestion: verifies typed client commands are submitted through Raft log and applied to state machine");
         Peer me = peer("A");
         MutableTime time = new MutableTime(0);
         KeyValueStateMachine kv = new KeyValueStateMachine();
@@ -314,7 +314,7 @@ class BasicAdapterCommandTest {
 
     @Test
     void invalidClusterCommandIsRejected() {
-        log.info("*** Testcase *** Command validation reject path: verifies malformed typed client commands are rejected without log mutation");
+        log.info("TC: Command validation reject path: verifies malformed typed client commands are rejected without log mutation");
         Peer me = peer("A");
         MutableTime time = new MutableTime(0);
         KeyValueStateMachine kv = new KeyValueStateMachine();
@@ -559,7 +559,7 @@ class BasicAdapterCommandTest {
 
     @Test
     void followerRejectsValidClusterCommand() {
-        log.info("*** Testcase *** Follower command rejection: verifies non-leader nodes reject typed client commands");
+        log.info("TC: Follower command rejection: verifies non-leader nodes reject typed client commands");
         Peer me = peer("A");
         KeyValueStateMachine kv = new KeyValueStateMachine();
         InMemoryLogStore store = new InMemoryLogStore();
