@@ -30,12 +30,12 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>21</maven.compiler.release>
-        <log4j.version>2.25.3</log4j.version>
+        <log4j.version>2.25.4</log4j.version>
         <slf4j.version>2.0.17</slf4j.version>
         <vopn.version>3.0-SNAPSHOT</vopn.version>
-        <junit.version>6.0.2</junit.version>
-        <netty.version>4.2.9.Final</netty.version>
-        <protobuf.version>4.33.5</protobuf.version>
+        <junit.version>6.0.3</junit.version>
+        <netty.version>4.2.12.Final</netty.version>
+        <protobuf.version>4.34.1</protobuf.version>
         <protobuf.plugin.version>0.6.1</protobuf.plugin.version>
     </properties>
 
