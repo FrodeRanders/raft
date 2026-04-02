@@ -27,6 +27,16 @@ public class JoinClusterResponse {
     private final String message;
     private final String leaderId;
 
+    /**
+     * Creates a join-cluster response.
+     *
+     * @param term responder term
+     * @param peerId responding peer identifier
+     * @param success whether the request succeeded
+     * @param status machine-readable status
+     * @param message human-readable detail
+     * @param leaderId known leader identifier for redirects
+     */
     public JoinClusterResponse(long term, String peerId, boolean success, String status, String message, String leaderId) {
         this.term = term;
         this.peerId = peerId;
@@ -36,26 +46,56 @@ public class JoinClusterResponse {
         this.leaderId = leaderId;
     }
 
+    /**
+     * Returns the responder term.
+     *
+     * @return responder term
+     */
     public long getTerm() {
         return term;
     }
 
+    /**
+     * Returns the responding peer identifier.
+     *
+     * @return responding peer identifier
+     */
     public String getPeerId() {
         return peerId;
     }
 
+    /**
+     * Indicates whether the request succeeded.
+     *
+     * @return {@code true} when the request succeeded
+     */
     public boolean isSuccess() {
         return success;
     }
 
+    /**
+     * Returns the machine-readable status.
+     *
+     * @return machine-readable status
+     */
     public String getStatus() {
         return status;
     }
 
+    /**
+     * Returns the human-readable detail.
+     *
+     * @return human-readable detail
+     */
     public String getMessage() {
         return message;
     }
 
+    /**
+     * Returns the known leader identifier for redirects.
+     *
+     * @return known leader identifier for redirects
+     */
     public String getLeaderId() {
         return leaderId;
     }

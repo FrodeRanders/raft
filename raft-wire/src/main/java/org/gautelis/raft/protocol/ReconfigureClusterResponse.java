@@ -27,6 +27,16 @@ public class ReconfigureClusterResponse {
     private final String message;
     private final String leaderId;
 
+    /**
+     * Creates a reconfigure-cluster response.
+     *
+     * @param term responder term
+     * @param peerId responding peer identifier
+     * @param success whether the request succeeded
+     * @param status machine-readable status
+     * @param message human-readable detail
+     * @param leaderId known leader identifier for redirects
+     */
     public ReconfigureClusterResponse(long term, String peerId, boolean success, String status, String message, String leaderId) {
         this.term = term;
         this.peerId = peerId;
@@ -36,26 +46,32 @@ public class ReconfigureClusterResponse {
         this.leaderId = leaderId;
     }
 
+    /** @return responder term */
     public long getTerm() {
         return term;
     }
 
+    /** @return responding peer identifier */
     public String getPeerId() {
         return peerId;
     }
 
+    /** @return {@code true} when the request succeeded */
     public boolean isSuccess() {
         return success;
     }
 
+    /** @return machine-readable status */
     public String getStatus() {
         return status;
     }
 
+    /** @return human-readable detail */
     public String getMessage() {
         return message;
     }
 
+    /** @return known leader identifier for redirects */
     public String getLeaderId() {
         return leaderId;
     }

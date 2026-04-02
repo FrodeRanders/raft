@@ -30,6 +30,17 @@ public class AppendEntriesRequest {
     private long prevLogTerm;
     private long leaderCommit;
     private List<LogEntry> entries;
+
+    /**
+     * Creates an append-entries request.
+     *
+     * @param term leader term
+     * @param leaderId leader peer identifier
+     * @param prevLogIndex index immediately preceding the supplied entries
+     * @param prevLogTerm term of {@code prevLogIndex}
+     * @param leaderCommit leader commit index
+     * @param entries entries to append, or an empty list for a heartbeat
+     */
     public AppendEntriesRequest(
             long term,
             String leaderId,
@@ -50,10 +61,45 @@ public class AppendEntriesRequest {
         this.entries = entries == null ? List.of() : new ArrayList<>(entries);
     }
 
+    /**
+     * Returns the leader term.
+     *
+     * @return leader term
+     */
     public long getTerm() { return term; }
+
+    /**
+     * Returns the leader peer identifier.
+     *
+     * @return leader peer identifier
+     */
     public String getLeaderId() { return leaderId; }
+
+    /**
+     * Returns the index immediately preceding the supplied entries.
+     *
+     * @return previous log index
+     */
     public long getPrevLogIndex() { return prevLogIndex; }
+
+    /**
+     * Returns the term of the previous log entry.
+     *
+     * @return previous log term
+     */
     public long getPrevLogTerm() { return prevLogTerm; }
+
+    /**
+     * Returns the leader commit index.
+     *
+     * @return leader commit index
+     */
     public long getLeaderCommit() { return leaderCommit; }
+
+    /**
+     * Returns the entries to append.
+     *
+     * @return immutable view of entries to append
+     */
     public List<LogEntry> getEntries() { return Collections.unmodifiableList(entries == null ? List.of() : entries); }
 }

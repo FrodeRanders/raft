@@ -28,10 +28,26 @@ public final class ClientQueryRequest {
     private final String authScheme;
     private final String authToken;
 
+    /**
+     * Creates an unauthenticated client query request.
+     *
+     * @param term sender term
+     * @param peerId requesting peer identifier
+     * @param query encoded query payload
+     */
     public ClientQueryRequest(long term, String peerId, byte[] query) {
         this(term, peerId, query, "", "");
     }
 
+    /**
+     * Creates a client query request.
+     *
+     * @param term sender term
+     * @param peerId requesting peer identifier
+     * @param query encoded query payload
+     * @param authScheme authentication scheme name
+     * @param authToken authentication token or credential
+     */
     public ClientQueryRequest(long term, String peerId, byte[] query, String authScheme, String authToken) {
         this.term = term;
         this.peerId = peerId;
@@ -40,22 +56,47 @@ public final class ClientQueryRequest {
         this.authToken = authToken == null ? "" : authToken;
     }
 
+    /**
+     * Returns the sender term.
+     *
+     * @return sender term
+     */
     public long getTerm() {
         return term;
     }
 
+    /**
+     * Returns the requesting peer identifier.
+     *
+     * @return requesting peer identifier
+     */
     public String getPeerId() {
         return peerId;
     }
 
+    /**
+     * Returns the encoded query payload.
+     *
+     * @return defensive copy of the query bytes
+     */
     public byte[] getQuery() {
         return Arrays.copyOf(query, query.length);
     }
 
+    /**
+     * Returns the authentication scheme.
+     *
+     * @return authentication scheme, or an empty string when absent
+     */
     public String getAuthScheme() {
         return authScheme;
     }
 
+    /**
+     * Returns the authentication token.
+     *
+     * @return authentication token, or an empty string when absent
+     */
     public String getAuthToken() {
         return authToken;
     }

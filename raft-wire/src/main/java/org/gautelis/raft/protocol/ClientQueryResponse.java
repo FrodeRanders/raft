@@ -32,6 +32,19 @@ public final class ClientQueryResponse {
     private final int leaderPort;
     private final byte[] result;
 
+    /**
+     * Creates a client query response.
+     *
+     * @param term responder term
+     * @param peerId responding peer identifier
+     * @param success whether the query succeeded
+     * @param status machine-readable status
+     * @param message human-readable detail
+     * @param leaderId known leader identifier for redirects
+     * @param leaderHost known leader host for redirects
+     * @param leaderPort known leader port for redirects
+     * @param result encoded query result payload
+     */
     public ClientQueryResponse(long term, String peerId, boolean success, String status, String message, String leaderId, String leaderHost, int leaderPort, byte[] result) {
         this.term = term;
         this.peerId = peerId;
@@ -44,38 +57,83 @@ public final class ClientQueryResponse {
         this.result = result == null ? new byte[0] : Arrays.copyOf(result, result.length);
     }
 
+    /**
+     * Returns the responder term.
+     *
+     * @return responder term
+     */
     public long getTerm() {
         return term;
     }
 
+    /**
+     * Returns the responding peer identifier.
+     *
+     * @return responding peer identifier
+     */
     public String getPeerId() {
         return peerId;
     }
 
+    /**
+     * Indicates whether the query succeeded.
+     *
+     * @return {@code true} when the query succeeded
+     */
     public boolean isSuccess() {
         return success;
     }
 
+    /**
+     * Returns the machine-readable status.
+     *
+     * @return machine-readable status
+     */
     public String getStatus() {
         return status;
     }
 
+    /**
+     * Returns the human-readable status detail.
+     *
+     * @return human-readable detail
+     */
     public String getMessage() {
         return message;
     }
 
+    /**
+     * Returns the known leader identifier for redirects.
+     *
+     * @return redirect leader identifier
+     */
     public String getLeaderId() {
         return leaderId;
     }
 
+    /**
+     * Returns the known leader host for redirects.
+     *
+     * @return redirect leader host
+     */
     public String getLeaderHost() {
         return leaderHost;
     }
 
+    /**
+     * Returns the known leader port for redirects.
+     *
+     * @return redirect leader port
+     */
     public int getLeaderPort() {
         return leaderPort;
     }
 
+    /**
+     * Returns the encoded query result.
+     *
+     * @return defensive copy of the result bytes
+     */
     public byte[] getResult() {
         return Arrays.copyOf(result, result.length);
     }

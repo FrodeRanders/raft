@@ -23,19 +23,17 @@ import org.gautelis.raft.transport.MessageResponder;
  */
 public interface MessageHandler {
     /**
-     * Handles reception of requests/messages for both server and
-     * client modes:
-     *  - In server mode, a request initiated by a peer would normally
-     *    result in the server issuing a response.
-     *  - In client mode, a message (possibly a request) initiated
-     *    by self could result in a response from a peer.
-     * The 'handle' method is called upon receiving data, either by
-     * 'RaftMessageHandler' (in server mode) or 'ClientResponseHandler'
-     * (in client mode).
-     * <p/>
-     * @param correlationId
-     * @param type
-     * @param payload raw payload bytes (e.g., protobuf-encoded)
+     * Handles a decoded request or response in either server or client mode.
+     *
+     * <p>In server mode, a request initiated by a peer normally results in a response written
+     * through the supplied responder. In client mode, the payload typically represents a response
+     * to an earlier request issued by the local peer.</p>
+     *
+     * @param correlationId request or response correlation identifier
+     * @param type logical message type
+     * @param payload raw payload bytes, for example protobuf-encoded data
+     * @param responder callback used to write a response when the transport supports one
+     * @throws Exception if the message cannot be processed
      */
     void handle(String correlationId, String type, byte[] payload, MessageResponder responder) throws Exception;
 }

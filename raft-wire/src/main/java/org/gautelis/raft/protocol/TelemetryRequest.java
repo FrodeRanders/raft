@@ -27,10 +27,28 @@ public final class TelemetryRequest {
     private final String authScheme;
     private final String authToken;
 
+    /**
+     * Creates an unauthenticated telemetry request.
+     *
+     * @param term sender term
+     * @param peerId requesting peer identifier
+     * @param includePeerStats whether peer latency statistics should be included
+     * @param requireLeaderSummary whether the request should be answered only by a leader
+     */
     public TelemetryRequest(long term, String peerId, boolean includePeerStats, boolean requireLeaderSummary) {
         this(term, peerId, includePeerStats, requireLeaderSummary, "", "");
     }
 
+    /**
+     * Creates a telemetry request.
+     *
+     * @param term sender term
+     * @param peerId requesting peer identifier
+     * @param includePeerStats whether peer latency statistics should be included
+     * @param requireLeaderSummary whether the request should be answered only by a leader
+     * @param authScheme authentication scheme name
+     * @param authToken authentication token or credential
+     */
     public TelemetryRequest(long term, String peerId, boolean includePeerStats, boolean requireLeaderSummary, String authScheme, String authToken) {
         this.term = term;
         this.peerId = peerId;
@@ -40,26 +58,32 @@ public final class TelemetryRequest {
         this.authToken = authToken == null ? "" : authToken;
     }
 
+    /** @return sender term */
     public long getTerm() {
         return term;
     }
 
+    /** @return requesting peer identifier */
     public String getPeerId() {
         return peerId;
     }
 
+    /** @return {@code true} when peer statistics should be included */
     public boolean isIncludePeerStats() {
         return includePeerStats;
     }
 
+    /** @return {@code true} when only a leader summary is acceptable */
     public boolean isRequireLeaderSummary() {
         return requireLeaderSummary;
     }
 
+    /** @return authentication scheme, or an empty string when absent */
     public String getAuthScheme() {
         return authScheme;
     }
 
+    /** @return authentication token, or an empty string when absent */
     public String getAuthToken() {
         return authToken;
     }

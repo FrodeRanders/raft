@@ -26,10 +26,26 @@ public class JoinClusterStatusRequest {
     private final String authScheme;
     private final String authToken;
 
+    /**
+     * Creates an unauthenticated join-status request.
+     *
+     * @param term sender term
+     * @param peerId requesting peer identifier
+     * @param targetPeerId joining peer identifier being queried
+     */
     public JoinClusterStatusRequest(long term, String peerId, String targetPeerId) {
         this(term, peerId, targetPeerId, "", "");
     }
 
+    /**
+     * Creates a join-status request.
+     *
+     * @param term sender term
+     * @param peerId requesting peer identifier
+     * @param targetPeerId joining peer identifier being queried
+     * @param authScheme authentication scheme name
+     * @param authToken authentication token or credential
+     */
     public JoinClusterStatusRequest(long term, String peerId, String targetPeerId, String authScheme, String authToken) {
         this.term = term;
         this.peerId = peerId;
@@ -38,22 +54,47 @@ public class JoinClusterStatusRequest {
         this.authToken = authToken == null ? "" : authToken;
     }
 
+    /**
+     * Returns the sender term.
+     *
+     * @return sender term
+     */
     public long getTerm() {
         return term;
     }
 
+    /**
+     * Returns the requesting peer identifier.
+     *
+     * @return requesting peer identifier
+     */
     public String getPeerId() {
         return peerId;
     }
 
+    /**
+     * Returns the joining peer identifier being queried.
+     *
+     * @return joining peer identifier being queried
+     */
     public String getTargetPeerId() {
         return targetPeerId;
     }
 
+    /**
+     * Returns the authentication scheme.
+     *
+     * @return authentication scheme, or an empty string when absent
+     */
     public String getAuthScheme() {
         return authScheme;
     }
 
+    /**
+     * Returns the authentication token.
+     *
+     * @return authentication token, or an empty string when absent
+     */
     public String getAuthToken() {
         return authToken;
     }

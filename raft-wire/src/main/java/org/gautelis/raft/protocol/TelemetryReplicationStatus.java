@@ -18,6 +18,14 @@ package org.gautelis.raft.protocol;
 
 /**
  * Summarizes the leader's replication state and recent contact history for one follower.
+ *
+ * @param peerId follower identifier
+ * @param nextIndex next log index the leader plans to send
+ * @param matchIndex highest index known replicated on the follower
+ * @param reachable whether the follower is currently considered reachable
+ * @param lastSuccessfulContactMillis timestamp of last successful contact
+ * @param consecutiveFailures number of consecutive replication failures
+ * @param lastFailedContactMillis timestamp of last failed contact
  */
 public record TelemetryReplicationStatus(
         String peerId,

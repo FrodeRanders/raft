@@ -29,6 +29,18 @@ public final class ClientCommandResponse {
     private final String leaderHost;
     private final int leaderPort;
 
+    /**
+     * Creates a client command response.
+     *
+     * @param term responder term
+     * @param peerId responding peer identifier
+     * @param success whether the command succeeded
+     * @param status machine-readable status
+     * @param message human-readable detail
+     * @param leaderId known leader identifier for redirects
+     * @param leaderHost known leader host for redirects
+     * @param leaderPort known leader port for redirects
+     */
     public ClientCommandResponse(long term, String peerId, boolean success, String status, String message, String leaderId, String leaderHost, int leaderPort) {
         this.term = term;
         this.peerId = peerId;
@@ -40,34 +52,74 @@ public final class ClientCommandResponse {
         this.leaderPort = Math.max(0, leaderPort);
     }
 
+    /**
+     * Returns the responder term.
+     *
+     * @return responder term
+     */
     public long getTerm() {
         return term;
     }
 
+    /**
+     * Returns the responding peer identifier.
+     *
+     * @return responding peer identifier
+     */
     public String getPeerId() {
         return peerId;
     }
 
+    /**
+     * Indicates whether the command succeeded.
+     *
+     * @return {@code true} when the command succeeded
+     */
     public boolean isSuccess() {
         return success;
     }
 
+    /**
+     * Returns the machine-readable status.
+     *
+     * @return machine-readable status
+     */
     public String getStatus() {
         return status;
     }
 
+    /**
+     * Returns the human-readable status detail.
+     *
+     * @return human-readable detail
+     */
     public String getMessage() {
         return message;
     }
 
+    /**
+     * Returns the known leader identifier for redirects.
+     *
+     * @return redirect leader identifier
+     */
     public String getLeaderId() {
         return leaderId;
     }
 
+    /**
+     * Returns the known leader host for redirects.
+     *
+     * @return redirect leader host
+     */
     public String getLeaderHost() {
         return leaderHost;
     }
 
+    /**
+     * Returns the known leader port for redirects.
+     *
+     * @return redirect leader port
+     */
     public int getLeaderPort() {
         return leaderPort;
     }

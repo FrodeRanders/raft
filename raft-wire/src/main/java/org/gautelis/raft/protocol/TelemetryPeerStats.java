@@ -18,6 +18,14 @@ package org.gautelis.raft.protocol;
 
 /**
  * Summarizes transport latency statistics for one remote peer and one RPC type.
+ *
+ * @param peerId peer identifier
+ * @param rpcType RPC type name
+ * @param samples number of latency samples included
+ * @param meanMillis mean latency in milliseconds
+ * @param minMillis minimum observed latency in milliseconds
+ * @param maxMillis maximum observed latency in milliseconds
+ * @param cvPercent coefficient of variation expressed as a percentage
  */
 public record TelemetryPeerStats(
         String peerId,

@@ -28,10 +28,26 @@ public final class ClientCommandRequest {
     private final String authScheme;
     private final String authToken;
 
+    /**
+     * Creates an unauthenticated client command request.
+     *
+     * @param term sender term
+     * @param peerId requesting peer identifier
+     * @param command encoded command payload
+     */
     public ClientCommandRequest(long term, String peerId, byte[] command) {
         this(term, peerId, command, "", "");
     }
 
+    /**
+     * Creates a client command request.
+     *
+     * @param term sender term
+     * @param peerId requesting peer identifier
+     * @param command encoded command payload
+     * @param authScheme authentication scheme name
+     * @param authToken authentication token or credential
+     */
     public ClientCommandRequest(long term, String peerId, byte[] command, String authScheme, String authToken) {
         this.term = term;
         this.peerId = peerId;
@@ -40,22 +56,47 @@ public final class ClientCommandRequest {
         this.authToken = authToken == null ? "" : authToken;
     }
 
+    /**
+     * Returns the sender term.
+     *
+     * @return sender term
+     */
     public long getTerm() {
         return term;
     }
 
+    /**
+     * Returns the requesting peer identifier.
+     *
+     * @return peer identifier
+     */
     public String getPeerId() {
         return peerId;
     }
 
+    /**
+     * Returns the encoded command payload.
+     *
+     * @return defensive copy of the command bytes
+     */
     public byte[] getCommand() {
         return Arrays.copyOf(command, command.length);
     }
 
+    /**
+     * Returns the authentication scheme.
+     *
+     * @return authentication scheme, or an empty string when absent
+     */
     public String getAuthScheme() {
         return authScheme;
     }
 
+    /**
+     * Returns the authentication token.
+     *
+     * @return authentication token, or an empty string when absent
+     */
     public String getAuthToken() {
         return authToken;
     }

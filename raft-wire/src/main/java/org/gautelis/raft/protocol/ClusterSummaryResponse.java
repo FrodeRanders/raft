@@ -46,6 +46,33 @@ public final class ClusterSummaryResponse {
     private final List<String> blockingNextQuorumPeerIds;
     private final List<ClusterMemberSummary> members;
 
+    /**
+     * Creates a cluster summary response.
+     *
+     * @param observedAtMillis capture time in milliseconds
+     * @param term responder term
+     * @param peerId responding peer identifier
+     * @param success whether the request succeeded
+     * @param status machine-readable status
+     * @param redirectLeaderId known leader identifier for redirects
+     * @param redirectLeaderHost known leader host for redirects
+     * @param redirectLeaderPort known leader port for redirects
+     * @param state local node state name
+     * @param leaderId known current leader identifier
+     * @param jointConsensus whether the configuration is in joint consensus
+     * @param clusterHealth summarized cluster health
+     * @param clusterStatusReason human-readable explanation for cluster state
+     * @param quorumAvailable whether any required quorum is currently available
+     * @param currentQuorumAvailable whether the current quorum is available
+     * @param nextQuorumAvailable whether the next quorum is available
+     * @param votingMembers number of voting members
+     * @param healthyVotingMembers number of healthy voting members
+     * @param reachableVotingMembers number of reachable voting members
+     * @param reconfigurationAgeMillis age of the current reconfiguration
+     * @param blockingCurrentQuorumPeerIds peers blocking the current quorum
+     * @param blockingNextQuorumPeerIds peers blocking the next quorum
+     * @param members per-member summary rows
+     */
     public ClusterSummaryResponse(long observedAtMillis, long term, String peerId, boolean success, String status,
                                   String redirectLeaderId, String redirectLeaderHost, int redirectLeaderPort,
                                   String state, String leaderId, boolean jointConsensus, String clusterHealth,
@@ -78,27 +105,142 @@ public final class ClusterSummaryResponse {
         this.members = members == null ? List.of() : List.copyOf(members);
     }
 
+    /**
+     * Returns the capture time.
+     *
+     * @return capture time in milliseconds
+     */
     public long getObservedAtMillis() { return observedAtMillis; }
+    /**
+     * Returns the responder term.
+     *
+     * @return responder term
+     */
     public long getTerm() { return term; }
+    /**
+     * Returns the responding peer identifier.
+     *
+     * @return responding peer identifier
+     */
     public String getPeerId() { return peerId; }
+    /**
+     * Indicates whether the request succeeded.
+     *
+     * @return {@code true} when the request succeeded
+     */
     public boolean isSuccess() { return success; }
+    /**
+     * Returns the machine-readable status.
+     *
+     * @return machine-readable status
+     */
     public String getStatus() { return status; }
+    /**
+     * Returns the redirect leader identifier.
+     *
+     * @return redirect leader identifier
+     */
     public String getRedirectLeaderId() { return redirectLeaderId; }
+    /**
+     * Returns the redirect leader host.
+     *
+     * @return redirect leader host
+     */
     public String getRedirectLeaderHost() { return redirectLeaderHost; }
+    /**
+     * Returns the redirect leader port.
+     *
+     * @return redirect leader port
+     */
     public int getRedirectLeaderPort() { return redirectLeaderPort; }
+    /**
+     * Returns the local node state name.
+     *
+     * @return local node state name
+     */
     public String getState() { return state; }
+    /**
+     * Returns the known leader identifier.
+     *
+     * @return known leader identifier
+     */
     public String getLeaderId() { return leaderId; }
+    /**
+     * Indicates whether the configuration is in joint consensus.
+     *
+     * @return {@code true} when in joint consensus
+     */
     public boolean isJointConsensus() { return jointConsensus; }
+    /**
+     * Returns the summarized cluster health.
+     *
+     * @return summarized cluster health
+     */
     public String getClusterHealth() { return clusterHealth; }
+    /**
+     * Returns the human-readable cluster status explanation.
+     *
+     * @return human-readable cluster status explanation
+     */
     public String getClusterStatusReason() { return clusterStatusReason; }
+    /**
+     * Indicates whether the required quorum is available.
+     *
+     * @return {@code true} when required quorum is available
+     */
     public boolean isQuorumAvailable() { return quorumAvailable; }
+    /**
+     * Indicates whether the current quorum is available.
+     *
+     * @return {@code true} when the current quorum is available
+     */
     public boolean isCurrentQuorumAvailable() { return currentQuorumAvailable; }
+    /**
+     * Indicates whether the next quorum is available.
+     *
+     * @return {@code true} when the next quorum is available
+     */
     public boolean isNextQuorumAvailable() { return nextQuorumAvailable; }
+    /**
+     * Returns the number of voting members.
+     *
+     * @return number of voting members
+     */
     public int getVotingMembers() { return votingMembers; }
+    /**
+     * Returns the number of healthy voting members.
+     *
+     * @return number of healthy voting members
+     */
     public int getHealthyVotingMembers() { return healthyVotingMembers; }
+    /**
+     * Returns the number of reachable voting members.
+     *
+     * @return number of reachable voting members
+     */
     public int getReachableVotingMembers() { return reachableVotingMembers; }
+    /**
+     * Returns the age of the current reconfiguration.
+     *
+     * @return age of the current reconfiguration in milliseconds
+     */
     public long getReconfigurationAgeMillis() { return reconfigurationAgeMillis; }
+    /**
+     * Returns the peer ids blocking the current quorum.
+     *
+     * @return peer ids blocking the current quorum
+     */
     public List<String> getBlockingCurrentQuorumPeerIds() { return blockingCurrentQuorumPeerIds; }
+    /**
+     * Returns the peer ids blocking the next quorum.
+     *
+     * @return peer ids blocking the next quorum
+     */
     public List<String> getBlockingNextQuorumPeerIds() { return blockingNextQuorumPeerIds; }
+    /**
+     * Returns the per-member summary rows.
+     *
+     * @return per-member summary rows
+     */
     public List<ClusterMemberSummary> getMembers() { return members; }
 }

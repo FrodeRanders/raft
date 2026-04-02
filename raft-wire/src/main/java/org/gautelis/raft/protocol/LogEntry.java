@@ -25,18 +25,47 @@ public class LogEntry {
     private long term;
     private String peerId;
     private byte[] data;
+
+    /**
+     * Creates a log entry with no payload bytes.
+     *
+     * @param term entry term
+     * @param peerId originating peer identifier
+     */
     public LogEntry(long term, String peerId) {
         this(term, peerId, new byte[0]);
     }
 
+    /**
+     * Creates a log entry.
+     *
+     * @param term entry term
+     * @param peerId originating peer identifier
+     * @param data entry payload
+     */
     public LogEntry(long term, String peerId, byte[] data) {
         this.term = term;
         this.peerId = peerId;
         this.data = data == null ? new byte[0] : Arrays.copyOf(data, data.length);
     }
 
+    /**
+     * Returns the entry term.
+     *
+     * @return entry term
+     */
     public long getTerm() { return term; }
+    /**
+     * Returns the originating peer identifier.
+     *
+     * @return originating peer identifier
+     */
     public String getPeerId() { return peerId; }
+    /**
+     * Returns the payload bytes.
+     *
+     * @return defensive copy of the payload bytes
+     */
     public byte[] getData() { return Arrays.copyOf(data, data.length); }
 
     @Override

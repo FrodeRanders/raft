@@ -16,7 +16,17 @@
  */
 package org.gautelis.raft.transport;
 
+/**
+ * Writes a transport-level response for a previously received message.
+ */
 @FunctionalInterface
 public interface MessageResponder {
+    /**
+     * Writes a response payload.
+     *
+     * @param correlationId correlation identifier shared with the triggering request
+     * @param type logical message type
+     * @param payload encoded response body
+     */
     void write(String correlationId, String type, byte[] payload);
 }

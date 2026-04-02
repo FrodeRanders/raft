@@ -128,6 +128,7 @@ public class RaftNode {
     // Netty-based approach might either
     //  - store channels for each peer, or
     //  - keep a separate client
+    /** Transport client used for outbound Raft and administrative RPCs. */
     protected final RaftTransportClient raftClient; // or similar
 
     @FunctionalInterface
@@ -145,12 +146,24 @@ public class RaftNode {
     private final long linearizableReadLeaseMillis;
     private final long linearizableReadTimeoutMillis;
 
+    /**
+     * Creates a builder for a local peer.
+     *
+     * @param me local peer descriptor
+     * @return a new builder initialized for the local peer
+     */
     public static Builder forPeer(Peer me) {
         return new Builder(me);
     }
 
     /**
      * @deprecated Prefer {@link #forPeer(Peer)} and {@link Builder#build()} for new code.
+     * @param me local peer descriptor
+     * @param peers initial cluster peers
+     * @param timeoutMillis election timeout base in milliseconds
+     * @param messageHandler application message handler
+     * @param raftClient transport client used for outbound RPCs
+     * @param logStore log persistence implementation
      */
     @Deprecated(forRemoval = false)
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, RaftTransportClient raftClient, LogStore logStore) {
@@ -162,6 +175,13 @@ public class RaftNode {
 
     /**
      * @deprecated Prefer {@link #forPeer(Peer)} and {@link Builder#build()} for new code.
+     * @param me local peer descriptor
+     * @param peers initial cluster peers
+     * @param timeoutMillis election timeout base in milliseconds
+     * @param messageHandler application message handler
+     * @param raftClient transport client used for outbound RPCs
+     * @param logStore log persistence implementation
+     * @param persistentState persistent term and vote store
      */
     @Deprecated(forRemoval = false)
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, RaftTransportClient raftClient, LogStore logStore, PersistentStateStore persistentState) {
@@ -173,6 +193,14 @@ public class RaftNode {
 
     /**
      * @deprecated Prefer {@link #forPeer(Peer)} and {@link Builder#build()} for new code.
+     * @param me local peer descriptor
+     * @param peers initial cluster peers
+     * @param timeoutMillis election timeout base in milliseconds
+     * @param messageHandler application message handler
+     * @param commandHandler command-only state machine adapter
+     * @param raftClient transport client used for outbound RPCs
+     * @param logStore log persistence implementation
+     * @param persistentState persistent term and vote store
      */
     @Deprecated(forRemoval = false)
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, CommandHandler commandHandler, RaftTransportClient raftClient, LogStore logStore, PersistentStateStore persistentState) {
@@ -185,6 +213,14 @@ public class RaftNode {
 
     /**
      * @deprecated Prefer {@link #forPeer(Peer)} and {@link Builder#build()} for new code.
+     * @param me local peer descriptor
+     * @param peers initial cluster peers
+     * @param timeoutMillis election timeout base in milliseconds
+     * @param messageHandler application message handler
+     * @param snapshotStateMachine snapshot-capable state machine
+     * @param raftClient transport client used for outbound RPCs
+     * @param logStore log persistence implementation
+     * @param persistentState persistent term and vote store
      */
     @Deprecated(forRemoval = false)
     public RaftNode(Peer me, List<Peer> peers, long timeoutMillis, MessageHandler messageHandler, SnapshotStateMachine snapshotStateMachine, RaftTransportClient raftClient, LogStore logStore, PersistentStateStore persistentState) {
@@ -250,6 +286,9 @@ public class RaftNode {
                 .withLogStore(logStore);
     }
 
+    /**
+     * Builder for constructing a {@link RaftNode} with explicit runtime dependencies.
+     */
     public static final class Builder {
         private final Peer me;
         private List<Peer> peers = List.of();
@@ -266,56 +305,121 @@ public class RaftNode {
             this.me = me;
         }
 
+        /**
+         * Sets the initially known peers.
+         *
+         * @param peers cluster peers excluding or including the local peer
+         * @return this builder
+         */
         public Builder withPeers(List<Peer> peers) {
             this.peers = peers == null ? List.of() : List.copyOf(peers);
             return this;
         }
 
+        /**
+         * Sets the base election timeout in milliseconds.
+         *
+         * @param timeoutMillis election timeout base
+         * @return this builder
+         */
         public Builder withTimeoutMillis(long timeoutMillis) {
             this.timeoutMillis = timeoutMillis;
             return this;
         }
 
+        /**
+         * Sets the application message handler.
+         *
+         * @param messageHandler message handler for inbound application traffic
+         * @return this builder
+         */
         public Builder withMessageHandler(MessageHandler messageHandler) {
             this.messageHandler = messageHandler;
             return this;
         }
 
+        /**
+         * Sets the snapshot-capable state machine.
+         *
+         * @param snapshotStateMachine state machine used for command application and snapshots
+         * @return this builder
+         */
         public Builder withSnapshotStateMachine(SnapshotStateMachine snapshotStateMachine) {
             this.snapshotStateMachine = snapshotStateMachine;
             return this;
         }
 
+        /**
+         * Sets a command-only state machine adapter.
+         *
+         * @param commandHandler command handler to wrap as a state machine
+         * @return this builder
+         */
         public Builder withCommandHandler(CommandHandler commandHandler) {
             this.snapshotStateMachine = commandHandler == null ? null : new CommandHandlerStateMachineAdapter(commandHandler);
             return this;
         }
 
+        /**
+         * Sets the outbound transport client.
+         *
+         * @param raftClient transport client implementation
+         * @return this builder
+         */
         public Builder withClient(RaftTransportClient raftClient) {
             this.raftClient = raftClient;
             return this;
         }
 
+        /**
+         * Sets the replicated log store.
+         *
+         * @param logStore log storage implementation
+         * @return this builder
+         */
         public Builder withLogStore(LogStore logStore) {
             this.logStore = logStore;
             return this;
         }
 
+        /**
+         * Sets the persistent term and vote store.
+         *
+         * @param persistentStateStore persistence implementation for term and vote metadata
+         * @return this builder
+         */
         public Builder withPersistentStateStore(PersistentStateStore persistentStateStore) {
             this.persistentStateStore = persistentStateStore;
             return this;
         }
 
+        /**
+         * Sets the time source used for scheduling and lease calculations.
+         *
+         * @param timeSource time source implementation
+         * @return this builder
+         */
         public Builder withTimeSource(TimeSource timeSource) {
             this.timeSource = timeSource;
             return this;
         }
 
+        /**
+         * Sets the random source used for election jitter.
+         *
+         * @param random random source
+         * @return this builder
+         */
         public Builder withRandom(Random random) {
             this.random = random;
             return this;
         }
 
+        /**
+         * Builds a fully initialized {@link RaftNode}.
+         *
+         * @return the constructed node
+         */
         public RaftNode build() {
             if (raftClient == null) {
                 throw new IllegalArgumentException("Raft node requires a transport client");
@@ -443,7 +547,41 @@ public class RaftNode {
         }
     }
 
+    /**
+     * Summarizes the outcome or progress of a join request for a peer.
+     *
+     * @param success whether the join request is known and valid
+     * @param status machine-readable lifecycle status
+     * @param message human-readable status detail
+     */
     public record JoinStatus(boolean success, String status, String message) {}
+
+    /**
+     * Snapshot of node state suitable for telemetry export.
+     *
+     * @param observedAtMillis capture time in milliseconds
+     * @param term current term
+     * @param peerId local peer identifier
+     * @param state local Raft state name
+     * @param leaderId known leader identifier when available
+     * @param votedFor candidate voted for in the current term
+     * @param joining whether the node is waiting to join a cluster
+     * @param decommissioned whether the node is no longer part of the active configuration
+     * @param commitIndex current commit index
+     * @param lastApplied last applied log index
+     * @param lastLogIndex local last log index
+     * @param lastLogTerm local last log term
+     * @param snapshotIndex installed snapshot index
+     * @param snapshotTerm installed snapshot term
+     * @param lastHeartbeatMillis timestamp of the last leader heartbeat observation
+     * @param nextElectionDeadlineMillis current election deadline
+     * @param configuration active cluster configuration
+     * @param latestKnownConfiguration latest configuration known from committed log or snapshot state
+     * @param configurationTransitionStartedMillis transition start time for joint consensus changes
+     * @param knownPeers known peer descriptors
+     * @param pendingJoinIds peer identifiers with accepted but unfinished joins
+     * @param replication leader-side replication status per peer
+     */
     public record TelemetrySnapshot(
             long observedAtMillis,
             long term,
@@ -469,30 +607,61 @@ public class RaftNode {
             List<TelemetryReplicationStatus> replication
     ) {}
 
+    /** Shuts down the outbound transport client associated with this node. */
     public void shutdown() {
         raftClient.shutdown();
     }
 
+    /**
+     * Registers a callback that runs when the node becomes decommissioned.
+     *
+     * @param decommissionListener callback invoked on decommissioning, or {@code null} to clear it
+     */
     public void setDecommissionListener(Runnable decommissionListener) {
         this.decommissionListener = decommissionListener == null ? () -> {} : decommissionListener;
     }
 
+    /**
+     * Returns the transport client used by this node.
+     *
+     * @return outbound transport client
+     */
     public RaftTransportClient getRaftClient() {
         return raftClient;
     }
 
+    /**
+     * Returns the current term.
+     *
+     * @return current term
+     */
     public long getTerm() {
         return currentTerm;
     }
 
+    /**
+     * Returns the local peer identifier.
+     *
+     * @return local peer id
+     */
     public String getId() {
         return me.getId();
     }
 
+    /**
+     * Indicates whether this node currently believes it is the leader.
+     *
+     * @return {@code true} when in leader state
+     */
     public boolean isLeader() {
         return state == State.LEADER;
     }
 
+    /**
+     * Returns the application message handler.
+     *
+     * @return configured message handler, or {@code null} when none is set
+     */
     public MessageHandler getMessageHandler() {
         return messageHandler;
     }
@@ -509,6 +678,12 @@ public class RaftNode {
         return req.getLastLogIndex() >= myLastIndex;
     }
 
+    /**
+     * Handles an incoming RequestVote RPC.
+     *
+     * @param req vote request
+     * @return vote response describing the local decision
+     */
     public synchronized VoteResponse handleVoteRequest(VoteRequest req) {
         log.debug("{}@{} received vote request for term {} from {}", me.getId(), currentTerm, req.getTerm(), req.getCandidateId());
         ClusterConfiguration effectiveConfiguration = activeConfiguration();
@@ -602,6 +777,12 @@ public class RaftNode {
         }
     }
 
+    /**
+     * Appends a client command when this node is the active leader.
+     *
+     * @param command encoded state-machine command
+     * @return {@code true} when the command was accepted for replication
+     */
     public synchronized boolean submitCommand(byte[] command) {
         // Figure 2 ("Leaders"): only the leader accepts client commands into the log.
         if (state != State.LEADER || decommissioned) {
@@ -624,6 +805,12 @@ public class RaftNode {
         return true;
     }
 
+    /**
+     * Starts a joint-consensus reconfiguration toward the supplied membership set.
+     *
+     * @param proposedMembers target cluster members for the joint configuration
+     * @return {@code true} when the change was accepted or already matches the target membership
+     */
     public synchronized boolean submitJointConfigurationChange(List<Peer> proposedMembers) {
         if (state != State.LEADER || decommissioned || proposedMembers == null || proposedMembers.isEmpty()) {
             return false;
@@ -652,6 +839,12 @@ public class RaftNode {
         return submitInternalCommand(ClusterConfigurationCommand.joint(normalized));
     }
 
+    /**
+     * Requests that a peer be added to the cluster.
+     *
+     * @param proposedMember peer to add
+     * @return {@code true} when the join was accepted or already completed
+     */
     public synchronized boolean submitJoinConfigurationChange(Peer proposedMember) {
         if (state != State.LEADER || decommissioned || proposedMember == null) {
             return false;
@@ -690,6 +883,11 @@ public class RaftNode {
         return true;
     }
 
+    /**
+     * Finalizes an active joint-consensus configuration change.
+     *
+     * @return {@code true} when the finalize command was accepted
+     */
     public synchronized boolean submitFinalizeConfigurationChange() {
         if (state != State.LEADER || decommissioned || !clusterConfiguration.isJointConsensus()) {
             return false;
@@ -702,10 +900,22 @@ public class RaftNode {
         return submitInternalCommand(ClusterConfigurationCommand.finalizeTransition());
     }
 
+    /**
+     * Promotes a learner to voter through joint consensus.
+     *
+     * @param peer peer to promote
+     * @return {@code true} when the change was accepted
+     */
     public synchronized boolean submitPromoteLearnerChange(Peer peer) {
         return submitRoleChange(peer, Peer.Role.VOTER);
     }
 
+    /**
+     * Demotes a voter to learner through joint consensus.
+     *
+     * @param peer peer to demote
+     * @return {@code true} when the change was accepted
+     */
     public synchronized boolean submitDemoteVoterChange(Peer peer) {
         return submitRoleChange(peer, Peer.Role.LEARNER);
     }
@@ -757,6 +967,12 @@ public class RaftNode {
         return true;
     }
 
+    /**
+     * Handles an incoming AppendEntries RPC.
+     *
+     * @param request append request from a leader
+     * @return append response indicating success and follower progress
+     */
     public synchronized AppendEntriesResponse handleAppendEntries(AppendEntriesRequest request) {
         long leaderTerm = request.getTerm();
         String leaderId = request.getLeaderId();
@@ -879,6 +1095,12 @@ public class RaftNode {
         return new AppendEntriesResponse(currentTerm, me.getId(), true, logStore.lastIndex());
     }
 
+    /**
+     * Handles an incoming InstallSnapshot RPC.
+     *
+     * @param request snapshot chunk or final snapshot transfer request
+     * @return install response indicating accepted progress
+     */
     public synchronized InstallSnapshotResponse handleInstallSnapshot(InstallSnapshotRequest request) {
         long leaderTerm = request.getTerm();
         String leaderId = request.getLeaderId();
@@ -992,6 +1214,11 @@ public class RaftNode {
                 && Arrays.equals(left.getData(), right.getData());
     }
 
+    /**
+     * Starts periodic election and heartbeat timers on the supplied scheduler.
+     *
+     * @param scheduler scheduler used to run timer tasks
+     */
     public void startTimers(ScheduledExecutorService scheduler) {
         // Periodically check election timeout:
         scheduler.scheduleAtFixedRate(this::checkTimeout, timeoutMillis, timeoutMillis, TimeUnit.MILLISECONDS);
@@ -1653,10 +1880,19 @@ public class RaftNode {
         return decommissioned;
     }
 
+    /**
+     * Resolves a known peer by identifier.
+     *
+     * @param peerId peer identifier
+     * @return matching peer, or {@code null} if unknown
+     */
     public Peer getPeerById(String peerId) {
         return resolvePeerById(peerId);
     }
 
+    /**
+     * Puts the node into joining mode so it waits to be admitted to a cluster configuration.
+     */
     public synchronized void enableJoiningMode() {
         joining = true;
         state = State.FOLLOWER;
@@ -1669,14 +1905,29 @@ public class RaftNode {
         }
     }
 
+    /**
+     * Indicates whether the node is waiting to join a cluster.
+     *
+     * @return {@code true} when joining mode is enabled
+     */
     public synchronized boolean isJoining() {
         return joining;
     }
 
+    /**
+     * Indicates whether the node has been removed from the active cluster configuration.
+     *
+     * @return {@code true} when decommissioned
+     */
     public synchronized boolean isDecommissioned() {
         return decommissioned;
     }
 
+    /**
+     * Returns the local member role in the active configuration.
+     *
+     * @return local role, or {@code null} when the node is not part of the configuration
+     */
     public synchronized Peer.Role getLocalMemberRole() {
         ClusterConfiguration effectiveConfiguration = activeConfiguration();
         if (effectiveConfiguration.isVoter(me.getId())) {
@@ -1688,6 +1939,11 @@ public class RaftNode {
         return null;
     }
 
+    /**
+     * Returns the best-known leader peer.
+     *
+     * @return leader peer, the local peer when leader, or {@code null} if unknown
+     */
     public synchronized Peer getKnownLeaderPeer() {
         if (state == State.LEADER) {
             return me;
@@ -1695,6 +1951,12 @@ public class RaftNode {
         return resolvePeerById(knownLeaderId);
     }
 
+    /**
+     * Executes a read-only query against the configured queryable state machine.
+     *
+     * @param request encoded query request
+     * @return encoded query response, or an empty array when querying is unsupported
+     */
     public synchronized byte[] queryStateMachine(byte[] request) {
         if (!(snapshotStateMachine instanceof org.gautelis.raft.statemachine.QueryableStateMachine queryableStateMachine)) {
             return new byte[0];
@@ -1702,6 +1964,11 @@ public class RaftNode {
         return queryableStateMachine.query(request);
     }
 
+    /**
+     * Checks whether the leader can currently satisfy a linearizable read using its read lease.
+     *
+     * @return {@code true} when a fresh quorum has been observed and committed state is applied
+     */
     public synchronized boolean canServeLinearizableRead() {
         if (state != State.LEADER || decommissioned) {
             return false;
@@ -1727,6 +1994,11 @@ public class RaftNode {
         return activeConfiguration().hasJointMajority(freshVoters);
     }
 
+    /**
+     * Waits for a quorum-confirmed read barrier before serving a linearizable read.
+     *
+     * @return {@code true} when the read barrier completed successfully within the timeout
+     */
     public boolean awaitLinearizableRead() {
         if (canServeLinearizableRead()) {
             return true;
@@ -1810,6 +2082,12 @@ public class RaftNode {
         }
     }
 
+    /**
+     * Returns the current join status for a peer.
+     *
+     * @param peerId peer identifier to inspect
+     * @return join status summary
+     */
     public synchronized JoinStatus getJoinStatus(String peerId) {
         if (peerId == null || peerId.isBlank()) {
             return new JoinStatus(false, "INVALID", "Peer id must not be blank");
@@ -1827,6 +2105,11 @@ public class RaftNode {
         return new JoinStatus(false, "UNKNOWN", "No known join request or committed membership for peer");
     }
 
+    /**
+     * Captures a telemetry snapshot of the node's current state.
+     *
+     * @return telemetry snapshot
+     */
     public synchronized TelemetrySnapshot telemetrySnapshot() {
         List<Peer> knownPeers = new java.util.ArrayList<>(peers.values());
         knownPeers.sort(java.util.Comparator.comparing(Peer::getId));

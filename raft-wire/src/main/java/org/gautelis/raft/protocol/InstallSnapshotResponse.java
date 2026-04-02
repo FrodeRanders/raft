@@ -24,6 +24,15 @@ public class InstallSnapshotResponse {
     private String peerId;
     private boolean success;
     private long lastIncludedIndex;
+
+    /**
+     * Creates an install-snapshot response.
+     *
+     * @param term responder term
+     * @param peerId responder peer identifier
+     * @param success whether the chunk was accepted
+     * @param lastIncludedIndex last snapshot index acknowledged by the follower
+     */
     public InstallSnapshotResponse(long term, String peerId, boolean success, long lastIncludedIndex) {
         this.term = term;
         this.peerId = peerId;
@@ -31,8 +40,28 @@ public class InstallSnapshotResponse {
         this.lastIncludedIndex = lastIncludedIndex;
     }
 
+    /**
+     * Returns the responder term.
+     *
+     * @return responder term
+     */
     public long getTerm() { return term; }
+    /**
+     * Returns the responder peer identifier.
+     *
+     * @return responder peer identifier
+     */
     public String getPeerId() { return peerId; }
+    /**
+     * Indicates whether the chunk was accepted.
+     *
+     * @return {@code true} when the chunk was accepted
+     */
     public boolean isSuccess() { return success; }
+    /**
+     * Returns the last included index acknowledged by the follower.
+     *
+     * @return last included index acknowledged by the follower
+     */
     public long getLastIncludedIndex() { return lastIncludedIndex; }
 }

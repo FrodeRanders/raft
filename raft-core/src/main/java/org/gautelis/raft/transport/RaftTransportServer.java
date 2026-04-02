@@ -16,9 +16,18 @@
  */
 package org.gautelis.raft.transport;
 
+/**
+ * Server-side transport abstraction that accepts inbound Raft RPC traffic.
+ */
 public interface RaftTransportServer extends AutoCloseable {
+    /**
+     * Starts the server and begins accepting requests.
+     *
+     * @throws InterruptedException if startup is interrupted
+     */
     void start() throws InterruptedException;
 
+    /** Closes the server and releases transport resources. */
     @Override
     void close();
 }

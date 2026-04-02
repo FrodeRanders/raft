@@ -19,8 +19,25 @@ package org.gautelis.raft.transport;
 import org.gautelis.raft.MessageHandler;
 import org.gautelis.raft.RaftNode;
 
+/**
+ * Factory for transport client and server implementations used by a {@link RaftNode}.
+ */
 public interface RaftTransportFactory {
+    /**
+     * Creates a transport client bound to the local peer identity.
+     *
+     * @param localPeerId local peer identifier
+     * @param messageHandler handler for inbound responses or messages
+     * @return transport client
+     */
     RaftTransportClient createClient(String localPeerId, MessageHandler messageHandler);
 
+    /**
+     * Creates a transport server for a node.
+     *
+     * @param stateMachine node instance that will receive inbound RPCs
+     * @param port local listening port
+     * @return transport server
+     */
     RaftTransportServer createServer(RaftNode stateMachine, int port);
 }
