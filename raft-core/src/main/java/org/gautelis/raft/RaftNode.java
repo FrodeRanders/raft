@@ -145,6 +145,7 @@ public class RaftNode {
     private final int snapshotChunkBytes;
     private final long linearizableReadLeaseMillis;
     private final long linearizableReadTimeoutMillis;
+    private final long commandCommitTimeoutMillis;
 
     /**
      * Creates a builder for a local peer.
@@ -251,6 +252,7 @@ public class RaftNode {
         this.snapshotChunkBytes = Integer.getInteger("raft.snapshot.chunk.bytes", 64 * 1024);
         this.linearizableReadLeaseMillis = Long.getLong("raft.linearizable.read.lease.millis", Math.max(1L, builder.timeoutMillis / 2L));
         this.linearizableReadTimeoutMillis = Long.getLong("raft.linearizable.read.timeout.millis", Math.max(50L, Math.min(500L, builder.timeoutMillis)));
+        this.commandCommitTimeoutMillis = Long.getLong("raft.command.commit.timeout.millis", Math.max(250L, builder.timeoutMillis * 5L));
         this.clusterConfiguration = ClusterConfiguration.stable(allConfiguredMembers());
         this.snapshotConfiguration = clusterConfiguration;
         var decodedSnapshot = ClusterConfigurationSnapshotCodec.decode(builder.logStore.snapshotData());
@@ -794,15 +796,17 @@ public class RaftNode {
 
         LogEntry entry = new LogEntry(currentTerm, me.getId(), command);
         logStore.append(Collections.singletonList(entry));
+        long appendedIndex = logStore.lastIndex();
+        long termAtSubmission = currentTerm;
         if (log.isTraceEnabled()) {
             log.trace("{}@{} appended client command locally at index {} (bytes={})",
-                    me.getId(), currentTerm, logStore.lastIndex(), command.length);
+                    me.getId(), currentTerm, appendedIndex, command.length);
         }
 
         // Figure 2 ("Leaders"): after local append, replicate to followers and eventually commit.
         advanceCommitIndexFromMajority();
         broadcastHeartbeat(); // replicate promptly instead of waiting for next tick
-        return true;
+        return waitForAppliedIndex(appendedIndex, termAtSubmission);
     }
 
     /**
@@ -1678,8 +1682,10 @@ public class RaftNode {
     private synchronized void applyCommittedEntries() {
         // Figure 2 ("All Servers"): if commitIndex > lastApplied, increment lastApplied and apply.
         // Figure 3 State Machine Safety: this monotonic, in-order apply sequence prevents divergent applies.
+        boolean progressed = false;
         while (lastApplied < commitIndex) {
             lastApplied++;
+            progressed = true;
             LogEntry entry = logStore.entryAt(lastApplied);
             byte[] data = entry.getData();
             if (data.length == 0) {
@@ -1703,6 +1709,41 @@ public class RaftNode {
         }
         maybeAutoFinalizeJointConfiguration();
         maybeCompactLocalSnapshot();
+        if (progressed) {
+            notifyAll();
+        }
+    }
+
+    private boolean waitForAppliedIndex(long targetIndex, long expectedTerm) {
+        if (targetIndex <= 0) {
+            return false;
+        }
+        if (lastApplied >= targetIndex) {
+            return true;
+        }
+
+        long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(commandCommitTimeoutMillis);
+        while (System.nanoTime() <= deadlineNanos) {
+            if (state != State.LEADER || decommissioned || currentTerm != expectedTerm) {
+                return false;
+            }
+            if (lastApplied >= targetIndex) {
+                return true;
+            }
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0L) {
+                break;
+            }
+            long waitMillis = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remainingNanos);
+            int waitNanos = (int) (remainingNanos - java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(waitMillis));
+            try {
+                wait(waitMillis, waitNanos);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return state == State.LEADER && !decommissioned && currentTerm == expectedTerm && lastApplied >= targetIndex;
     }
 
     private synchronized boolean applyConfigurationCommand(byte[] command) {

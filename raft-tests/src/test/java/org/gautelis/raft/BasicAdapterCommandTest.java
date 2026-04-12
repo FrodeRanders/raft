@@ -127,6 +127,35 @@ class BasicAdapterCommandTest {
         }
     }
 
+    static final class VoteOnlyRaftClient extends NoopRaftClient {
+        private final Map<String, RaftNode> nodesById;
+
+        VoteOnlyRaftClient(Map<String, RaftNode> nodesById) {
+            this.nodesById = nodesById;
+        }
+
+        @Override
+        public java.util.concurrent.CompletableFuture<List<VoteResponse>> requestVoteFromAll(java.util.Collection<Peer> peers, VoteRequest voteReq) {
+            java.util.concurrent.CompletableFuture<List<VoteResponse>> promise = new java.util.concurrent.CompletableFuture<>();
+            java.util.ArrayList<VoteResponse> responses = new java.util.ArrayList<>();
+            for (Peer peer : peers) {
+                RaftNode node = nodesById.get(peer.getId());
+                if (node != null) {
+                    responses.add(node.handleVoteRequest(voteReq));
+                }
+            }
+            promise.complete(responses);
+            return promise;
+        }
+
+        @Override
+        public java.util.concurrent.CompletableFuture<AppendEntriesResponse> sendAppendEntries(Peer peer, AppendEntriesRequest req) {
+            return java.util.concurrent.CompletableFuture.completedFuture(
+                    new AppendEntriesResponse(req.getTerm(), peer.getId(), false, -1)
+            );
+        }
+    }
+
     static final class ForwardingProbeRaftClient extends NoopRaftClient {
         private Peer forwardedPeer;
         private JoinClusterRequest forwardedJoinRequest;
@@ -308,6 +337,7 @@ class BasicAdapterCommandTest {
 
         assertTrue(response.isSuccess());
         assertEquals("ACCEPTED", response.getStatus());
+        assertEquals("Command committed and applied", response.getMessage());
         assertEquals("42", kv.get("x"));
         assertEquals(2, store.lastIndex());
     }
@@ -431,6 +461,7 @@ class BasicAdapterCommandTest {
 
         assertTrue(response.isSuccess());
         assertEquals("ACCEPTED", response.getStatus());
+        assertEquals("Command committed and applied", response.getMessage());
         assertNotNull(referenceData.getProduct("p1"));
         assertEquals(2, store.lastIndex());
     }
@@ -499,7 +530,45 @@ class BasicAdapterCommandTest {
 
         assertTrue(response.isSuccess());
         assertEquals("ACCEPTED", response.getStatus());
+        assertEquals("Command committed and applied", response.getMessage());
         assertNotNull(referenceData.getProduct("p1"));
+        assertEquals(2, store.lastIndex());
+    }
+
+    @Test
+    void leaderReturnsRetryWhenWriteCannotBeCommittedAndApplied() {
+        announce("Typed client command acknowledgement: leader does not acknowledge success before commit/apply");
+        Peer a = peer("A");
+        Peer b = peer("B");
+        MutableTime time = new MutableTime(0);
+        Map<String, RaftNode> nodes = new HashMap<>();
+        VoteOnlyRaftClient clientA = new VoteOnlyRaftClient(nodes);
+        VoteOnlyRaftClient clientB = new VoteOnlyRaftClient(nodes);
+        KeyValueStateMachine kv = new KeyValueStateMachine();
+        InMemoryLogStore store = new InMemoryLogStore();
+        RaftNode node = newTestNode(a, List.of(b), kv, clientA, store, new InMemoryPersistentStateStore(), time, 1);
+        RaftNode follower = newTestNode(b, List.of(a), new KeyValueStateMachine(), clientB, time, 2);
+        nodes.put("A", node);
+        nodes.put("B", follower);
+
+        node.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        node.electionTickForTest();
+        assertTrue(node.isLeader());
+
+        TestAdapter adapter = new TestAdapter(a, List.of(b));
+        adapter.bind(node);
+
+        ClientCommandResponse response = adapter.command(new ClientCommandRequest(
+                node.getTerm(), "client", StateMachineCommand.put("x", "42").encode()
+        ));
+
+        assertFalse(response.isSuccess());
+        assertEquals("RETRY", response.getStatus());
+        assertEquals("Command was not committed and applied before acknowledgement", response.getMessage());
+        assertNull(kv.get("x"));
+        assertEquals(0, node.getCommitIndexForTest());
+        assertEquals(0, node.getLastAppliedForTest());
         assertEquals(2, store.lastIndex());
     }
 

@@ -39,8 +39,8 @@ public final class KeyValueApplicationModule implements RaftApplicationModule {
 
     @Override
     public void printUsage(PrintStream err) {
-        err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command <put|delete|clear> <target-port|target-host:port|id@target-host:port[/role]> [key] [value]");
-        err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar query get <target-port|target-host:port|id@target-host:port[/role]> <key>");
+        err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command [--json] <put|delete|clear> <target-port|target-host:port|id@target-host:port[/role]> [key] [value]");
+        err.println("  java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar query [--json] get <target-port|target-host:port|id@target-host:port[/role]> <key>");
     }
 
     @Override

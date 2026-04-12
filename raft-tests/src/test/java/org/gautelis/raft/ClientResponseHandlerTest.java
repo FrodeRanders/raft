@@ -216,7 +216,7 @@ class ClientResponseHandlerTest {
         ClientResponseHandler handler = newHandler(Map.of(), inFlightClientCommands, Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), null);
         EmbeddedChannel channel = new EmbeddedChannel(handler);
 
-        ClientCommandResponse resp = new ClientCommandResponse(5, "A", true, "ACCEPTED", "Command accepted for replication", "A", "127.0.0.1", 10080);
+        ClientCommandResponse resp = new ClientCommandResponse(5, "A", true, "ACCEPTED", "Command committed and applied", "A", "127.0.0.1", 10080);
         Envelope envelope = ProtoMapper.wrap(
                 "corr-command-1",
                 "ClientCommandResponse",

@@ -87,10 +87,10 @@ final class ClientRequestHandler {
         }
         if (stateMachine.isLeader()) {
             if (!context.commandSubmitter().apply(command)) {
-                return new ClientCommandResponse(stateMachine.getTerm(), context.me().getId(), false, "REJECTED", "Command could not be applied", leaderId(leader), leaderHost(leader), leaderPort(leader));
+                return new ClientCommandResponse(stateMachine.getTerm(), context.me().getId(), false, "RETRY", "Command was not committed and applied before acknowledgement", leaderId(leader), leaderHost(leader), leaderPort(leader));
             }
             context.log().info("Accepted typed client command from {}", request.getPeerId());
-            return new ClientCommandResponse(stateMachine.getTerm(), context.me().getId(), true, "ACCEPTED", "Command accepted for replication", leaderId(leader), leaderHost(leader), leaderPort(leader));
+            return new ClientCommandResponse(stateMachine.getTerm(), context.me().getId(), true, "ACCEPTED", "Command committed and applied", leaderId(leader), leaderHost(leader), leaderPort(leader));
         }
         return new ClientCommandResponse(stateMachine.getTerm(), context.me().getId(), false, "REJECTED", "Node is not leader or command could not be applied", "", "", 0);
     }

@@ -40,34 +40,40 @@ public final class KeyValueCliSupport {
 
     public static void runCommand(String[] args,
                                   CliRuntimeContext context) {
-        if (args.length < 3) {
-            System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command <put|delete|clear> <target-port|target-host:port|id@target-host:port> [key] [value]");
+        boolean json = false;
+        int actionIndex = 1;
+        if (args.length > 1 && "--json".equalsIgnoreCase(args[1])) {
+            json = true;
+            actionIndex = 2;
+        }
+        if (args.length < actionIndex + 2) {
+            System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command [--json] <put|delete|clear> <target-port|target-host:port|id@target-host:port> [key] [value]");
             System.exit(1);
         }
 
-        String action = args[1].trim().toLowerCase(Locale.ROOT);
-        Peer target = context.parsePeer().apply(args[2]);
+        String action = args[actionIndex].trim().toLowerCase(Locale.ROOT);
+        Peer target = context.parsePeer().apply(args[actionIndex + 1]);
         byte[] command;
         switch (action) {
             case "put" -> {
-                if (args.length != 5) {
-                    System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command put <target> <key> <value>");
+                if (args.length != actionIndex + 4) {
+                    System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command [--json] put <target> <key> <value>");
                     System.exit(1);
                     return;
                 }
-                command = StateMachineCommand.put(args[3], args[4]).encode();
+                command = StateMachineCommand.put(args[actionIndex + 2], args[actionIndex + 3]).encode();
             }
             case "delete" -> {
-                if (args.length != 4) {
-                    System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command delete <target> <key>");
+                if (args.length != actionIndex + 3) {
+                    System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command [--json] delete <target> <key>");
                     System.exit(1);
                     return;
                 }
-                command = StateMachineCommand.delete(args[3]).encode();
+                command = StateMachineCommand.delete(args[actionIndex + 2]).encode();
             }
             case "clear" -> {
-                if (args.length != 3) {
-                    System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command clear <target>");
+                if (args.length != actionIndex + 2) {
+                    System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command [--json] clear <target>");
                     System.exit(1);
                     return;
                 }
@@ -94,7 +100,7 @@ public final class KeyValueCliSupport {
                 Peer leader = new Peer(response.getLeaderId(), new InetSocketAddress(response.getLeaderHost(), response.getLeaderPort()));
                 response = client.sendClientCommandRequest(leader, request).get(5, TimeUnit.SECONDS);
             }
-            System.out.println(renderClientCommandResponse(action, response));
+            System.out.println(json ? renderClientCommandResponseJson(action, response) : renderClientCommandResponse(action, response));
             if (!response.isSuccess()) {
                 System.exit(2);
             }
@@ -108,13 +114,19 @@ public final class KeyValueCliSupport {
 
     public static void runQuery(String[] args,
                                 CliRuntimeContext context) {
-        if (args.length != 4 || !"get".equalsIgnoreCase(args[1])) {
-            System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar query get <target-port|target-host:port|id@target-host:port> <key>");
+        boolean json = false;
+        int actionIndex = 1;
+        if (args.length > 1 && "--json".equalsIgnoreCase(args[1])) {
+            json = true;
+            actionIndex = 2;
+        }
+        if (args.length != actionIndex + 3 || !"get".equalsIgnoreCase(args[actionIndex])) {
+            System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar query [--json] get <target-port|target-host:port|id@target-host:port> <key>");
             System.exit(1);
         }
 
-        Peer target = context.parsePeer().apply(args[2]);
-        String key = args[3].trim();
+        Peer target = context.parsePeer().apply(args[actionIndex + 1]);
+        String key = args[actionIndex + 2].trim();
         if (key.isBlank()) {
             System.err.println("Query key must not be blank");
             System.exit(1);
@@ -134,7 +146,7 @@ public final class KeyValueCliSupport {
                 Peer leader = new Peer(response.getLeaderId(), new InetSocketAddress(response.getLeaderHost(), response.getLeaderPort()));
                 response = client.sendClientQueryRequest(leader, request).get(5, TimeUnit.SECONDS);
             }
-            System.out.println(renderClientQueryResponse(response));
+            System.out.println(json ? renderClientQueryResponseJson(response) : renderClientQueryResponse(response));
             if (!response.isSuccess()) {
                 System.exit(2);
             }
@@ -156,6 +168,21 @@ public final class KeyValueCliSupport {
                 ? ""
                 : " leaderEndpoint=" + response.getLeaderHost() + ":" + response.getLeaderPort())
                 + " message=\"" + response.getMessage() + "\"";
+    }
+
+    public static String renderClientCommandResponseJson(String action, ClientCommandResponse response) {
+        StringBuilder out = new StringBuilder();
+        out.append("{\n");
+        appendJsonField(out, "action", action, true, 1);
+        appendJsonField(out, "status", response.getStatus(), true, 1);
+        appendJsonField(out, "success", response.isSuccess(), true, 1);
+        appendJsonField(out, "peerId", response.getPeerId(), true, 1);
+        appendJsonField(out, "leaderId", response.getLeaderId(), true, 1);
+        appendJsonField(out, "leaderHost", response.getLeaderHost(), true, 1);
+        appendJsonField(out, "leaderPort", response.getLeaderPort(), true, 1);
+        appendJsonField(out, "message", response.getMessage(), false, 1);
+        out.append("}");
+        return out.toString();
     }
 
     public static String renderClientQueryResponse(ClientQueryResponse response) {
@@ -182,5 +209,94 @@ public final class KeyValueCliSupport {
             });
         }
         return out.toString();
+    }
+
+    public static String renderClientQueryResponseJson(ClientQueryResponse response) {
+        StringBuilder out = new StringBuilder();
+        out.append("{\n");
+        appendJsonField(out, "status", response.getStatus(), true, 1);
+        appendJsonField(out, "success", response.isSuccess(), true, 1);
+        appendJsonField(out, "peerId", response.getPeerId(), true, 1);
+        appendJsonField(out, "leaderId", response.getLeaderId(), true, 1);
+        appendJsonField(out, "leaderHost", response.getLeaderHost(), true, 1);
+        appendJsonField(out, "leaderPort", response.getLeaderPort(), true, 1);
+        appendJsonField(out, "message", response.getMessage(), true, 1);
+        appendJsonQueryResult(out, response, false, 1);
+        out.append("}");
+        return out.toString();
+    }
+
+    private static void appendJsonQueryResult(StringBuilder out, ClientQueryResponse response, boolean comma, int indent) {
+        indent(out, indent).append("\"result\": ");
+        if (!response.isSuccess()) {
+            out.append("null");
+        } else {
+            var decoded = StateMachineQueryResult.decode(response.getResult());
+            if (decoded.isEmpty() || decoded.get().getType() != StateMachineQueryResult.Type.GET) {
+                out.append("null");
+            } else {
+                StateMachineQueryResult result = decoded.get();
+                out.append("{ ");
+                out.append("\"type\": \"").append(escapeJson(result.getType().name())).append('"');
+                out.append(", \"key\": \"").append(escapeJson(result.getKey())).append('"');
+                out.append(", \"found\": ").append(result.isFound());
+                if (result.isFound()) {
+                    out.append(", \"value\": \"").append(escapeJson(result.getValue())).append('"');
+                }
+                out.append(" }");
+            }
+        }
+        if (comma) {
+            out.append(',');
+        }
+        out.append('\n');
+    }
+
+    private static void appendJsonField(StringBuilder out, String key, String value, boolean comma, int indent) {
+        indent(out, indent).append('"').append(escapeJson(key)).append("\": ")
+                .append('"').append(escapeJson(value == null ? "" : value)).append('"');
+        if (comma) {
+            out.append(',');
+        }
+        out.append('\n');
+    }
+
+    private static void appendJsonField(StringBuilder out, String key, boolean value, boolean comma, int indent) {
+        indent(out, indent).append('"').append(escapeJson(key)).append("\": ").append(value);
+        if (comma) {
+            out.append(',');
+        }
+        out.append('\n');
+    }
+
+    private static void appendJsonField(StringBuilder out, String key, int value, boolean comma, int indent) {
+        indent(out, indent).append('"').append(escapeJson(key)).append("\": ").append(value);
+        if (comma) {
+            out.append(',');
+        }
+        out.append('\n');
+    }
+
+    private static StringBuilder indent(StringBuilder out, int indent) {
+        for (int i = 0; i < indent; i++) {
+            out.append("  ");
+        }
+        return out;
+    }
+
+    private static String escapeJson(String value) {
+        StringBuilder escaped = new StringBuilder();
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            switch (ch) {
+                case '\\' -> escaped.append("\\\\");
+                case '"' -> escaped.append("\\\"");
+                case '\n' -> escaped.append("\\n");
+                case '\r' -> escaped.append("\\r");
+                case '\t' -> escaped.append("\\t");
+                default -> escaped.append(ch);
+            }
+        }
+        return escaped.toString();
     }
 }
