@@ -25,6 +25,13 @@ message PutCommand {
   string value = 2;
 }
 
+message CasCommand {
+  string key = 1;
+  bool expected_present = 2;
+  string expected_value = 3;
+  string new_value = 4;
+}
+
 message DeleteCommand {
   string key = 1;
 }
@@ -37,6 +44,23 @@ message StateMachineCommand {
     PutCommand put = 1;
     DeleteCommand delete = 2;
     ClearCommand clear = 3;
+    CasCommand cas = 4;
+  }
+}
+
+message CasCommandResult {
+  string key = 1;
+  bool matched = 2;
+  bool expected_present = 3;
+  string expected_value = 4;
+  string new_value = 5;
+  bool current_present = 6;
+  string current_value = 7;
+}
+
+message StateMachineCommandResult {
+  oneof result {
+    CasCommandResult cas = 1;
   }
 }
 
@@ -146,6 +170,7 @@ message ClientCommandResponse {
   string leader_id = 6;
   string leader_host = 7;
   int32 leader_port = 8;
+  bytes result = 9;
 }
 
 message ClientQueryRequest {

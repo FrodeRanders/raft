@@ -36,6 +36,17 @@
       (#{"RETRY" "REDIRECT"} status) (assoc op :type :fail :error status)
       :else (assoc op :type :fail :error (or status :query-failed)))))
 
+(defn- classify-cas [op exit response]
+  (let [status (:status response)
+        success? (and (zero? exit) (= "ACCEPTED" status) (:success response))
+        result (:result response)
+        matched? (= true (:matched result))]
+    (cond
+      (and success? matched?) (assoc op :type :ok)
+      (and success? (contains? result :matched)) (assoc op :type :fail :error :cas-mismatch)
+      (#{"RETRY" "REDIRECT"} status) (assoc op :type :fail :error status)
+      :else (assoc op :type :fail :error (or status :command-failed)))))
+
 (defn- maybe-capture! [test node op result]
   (when (#{:fail :info} (:type result))
     (observer/capture-safe! test "client-anomaly"
@@ -73,10 +84,22 @@
                                    (java-command jar-path "query" "--json" "get" target cli-key))
                       response (or (parse-json out) {})]
                   (let [result (-> op
-                                   (classify-read exit response key)
-                                   (assoc :raw-response response :stderr err))]
+                                    (classify-read exit response key)
+                                    (assoc :raw-response response :stderr err))]
                     (maybe-capture! test node op result)
                     result))
+          :cas (let [[expected new-value] (:value op)
+                     expected-arg (if (nil? expected) "__nil__" (str expected))
+                     new-value (str new-value)
+                     {:keys [exit out err]}
+                     (run-command repo-root
+                                  (java-command jar-path "command" "--json" "cas" target cli-key expected-arg new-value))
+                     response (or (parse-json out) {})]
+                 (let [result (-> op
+                                  (classify-cas exit response)
+                                  (assoc :raw-response response :stderr err))]
+                   (maybe-capture! test node op result)
+                   result))
           (assoc op :type :fail :error :unsupported-operation))
         (catch Throwable t
           (let [result (assoc op :type :info :error (.getMessage t))]

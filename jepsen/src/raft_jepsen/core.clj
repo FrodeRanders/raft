@@ -69,18 +69,36 @@
     "  --concurrency <n>     Client concurrency, default 10"
     "  --base-port <port>    First node port, default 10080"
     "  --node-count <n>      Number of local nodes, default 5"
-    "  --nemesis <mode>      none|crash-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote, default none"
+    "  --nemesis <mode>      none|crash-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower, default none"
     "  --nemesis-interval <sec> Nemesis interval, default 5"
     "  --workdir <path>      Local work directory, default ./work"]))
+
+(def cas-values ["v0" "v1" "v2" "v3" "v4"])
+
+(defn- random-value []
+  (rand-nth cas-values))
+
+(defn- random-expected []
+  (rand-nth (vec (cons nil cas-values))))
 
 (defn- write-op [_ _]
   {:type :invoke
    :f :write
-   :value (str (java.util.UUID/randomUUID))})
+   :value (random-value)})
 
 (defn- read-op [_ _]
   {:type :invoke
    :f :read})
+
+(defn- cas-op [_ _]
+  (let [expected (random-expected)
+        next-value (loop [candidate (random-value)]
+                     (if (= candidate expected)
+                       (recur (random-value))
+                       candidate))]
+    {:type :invoke
+     :f :cas
+     :value [expected next-value]}))
 
 (defn- filter-history-checker [inner-checker pred]
   (reify
@@ -91,10 +109,10 @@
 (defn- workload [opts]
   {:checker (checker/compose
              {:linearizable (filter-history-checker
-                             (checker/linearizable {:model (model/register)})
+                             (checker/linearizable {:model (model/cas-register)})
                              #(not= :nemesis (:process %)))
               :timeline (timeline/html)})
-   :generator (->> (gen/mix [write-op read-op])
+   :generator (->> (gen/mix [write-op read-op cas-op])
                    (gen/limit 100))})
 
 (defn- nemesis-object [opts]
@@ -105,12 +123,22 @@
     "partition-leader" (raft-nemesis/partition-leader)
     "partition-leader-minority" (raft-nemesis/partition-leader-minority)
     "membership-join-promote" (raft-nemesis/membership-join-promote)
+    "membership-demote" (raft-nemesis/membership-demote)
+    "membership-remove-follower" (raft-nemesis/membership-remove-follower)
     (throw (ex-info "Unknown nemesis mode" {:nemesis-mode (:nemesis-mode opts)}))))
 
 (defn- nemesis-generator [opts]
   (case (:nemesis-mode opts)
     "none" nil
     "membership-join-promote"
+    (gen/phases
+     (gen/sleep (:nemesis-interval opts))
+     (gen/once {:f :start}))
+    "membership-demote"
+    (gen/phases
+     (gen/sleep (:nemesis-interval opts))
+     (gen/once {:f :start}))
+    "membership-remove-follower"
     (gen/phases
      (gen/sleep (:nemesis-interval opts))
      (gen/once {:f :start}))

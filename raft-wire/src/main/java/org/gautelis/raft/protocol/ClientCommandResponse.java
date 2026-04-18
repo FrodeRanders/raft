@@ -28,6 +28,7 @@ public final class ClientCommandResponse {
     private final String leaderId;
     private final String leaderHost;
     private final int leaderPort;
+    private final byte[] result;
 
     /**
      * Creates a client command response.
@@ -42,6 +43,23 @@ public final class ClientCommandResponse {
      * @param leaderPort known leader port for redirects
      */
     public ClientCommandResponse(long term, String peerId, boolean success, String status, String message, String leaderId, String leaderHost, int leaderPort) {
+        this(term, peerId, success, status, message, leaderId, leaderHost, leaderPort, new byte[0]);
+    }
+
+    /**
+     * Creates a client command response with an optional typed command result payload.
+     *
+     * @param term responder term
+     * @param peerId responding peer identifier
+     * @param success whether the command succeeded
+     * @param status machine-readable status
+     * @param message human-readable detail
+     * @param leaderId known leader identifier for redirects
+     * @param leaderHost known leader host for redirects
+     * @param leaderPort known leader port for redirects
+     * @param result encoded typed command result, or empty when absent
+     */
+    public ClientCommandResponse(long term, String peerId, boolean success, String status, String message, String leaderId, String leaderHost, int leaderPort, byte[] result) {
         this.term = term;
         this.peerId = peerId;
         this.success = success;
@@ -50,6 +68,7 @@ public final class ClientCommandResponse {
         this.leaderId = leaderId;
         this.leaderHost = leaderHost == null ? "" : leaderHost;
         this.leaderPort = Math.max(0, leaderPort);
+        this.result = result == null ? new byte[0] : result.clone();
     }
 
     /**
@@ -122,5 +141,14 @@ public final class ClientCommandResponse {
      */
     public int getLeaderPort() {
         return leaderPort;
+    }
+
+    /**
+     * Returns the encoded typed command result payload, or an empty array when absent.
+     *
+     * @return encoded command result payload
+     */
+    public byte[] getResult() {
+        return result.clone();
     }
 }

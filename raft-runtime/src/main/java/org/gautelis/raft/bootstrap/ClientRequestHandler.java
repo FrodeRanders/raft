@@ -86,11 +86,12 @@ final class ClientRequestHandler {
             return new ClientCommandResponse(stateMachine.getTerm(), context.me().getId(), false, authorization.status(), authorization.message(), leaderId(leader), leaderHost(leader), leaderPort(leader));
         }
         if (stateMachine.isLeader()) {
-            if (!context.commandSubmitter().apply(command)) {
+            RaftNode.CommandApplication application = stateMachine.submitCommandWithResult(command);
+            if (!application.success()) {
                 return new ClientCommandResponse(stateMachine.getTerm(), context.me().getId(), false, "RETRY", "Command was not committed and applied before acknowledgement", leaderId(leader), leaderHost(leader), leaderPort(leader));
             }
             context.log().info("Accepted typed client command from {}", request.getPeerId());
-            return new ClientCommandResponse(stateMachine.getTerm(), context.me().getId(), true, "ACCEPTED", "Command committed and applied", leaderId(leader), leaderHost(leader), leaderPort(leader));
+            return new ClientCommandResponse(stateMachine.getTerm(), context.me().getId(), true, "ACCEPTED", "Command committed and applied", leaderId(leader), leaderHost(leader), leaderPort(leader), application.result());
         }
         return new ClientCommandResponse(stateMachine.getTerm(), context.me().getId(), false, "REJECTED", "Node is not leader or command could not be applied", "", "", 0);
     }

@@ -44,6 +44,7 @@ import org.gautelis.raft.protocol.ReconfigureClusterResponse;
 import org.gautelis.raft.protocol.StateMachineQuery;
 import org.gautelis.raft.protocol.StateMachineQueryResult;
 import org.gautelis.raft.protocol.StateMachineCommand;
+import org.gautelis.raft.protocol.StateMachineCommandResult;
 import org.gautelis.raft.protocol.TelemetryRequest;
 import org.gautelis.raft.protocol.TelemetryResponse;
 import org.gautelis.raft.protocol.VoteRequest;
@@ -340,6 +341,74 @@ class BasicAdapterCommandTest {
         assertEquals("Command committed and applied", response.getMessage());
         assertEquals("42", kv.get("x"));
         assertEquals(2, store.lastIndex());
+    }
+
+    @Test
+    void leaderAcceptsCasCommandAndReturnsTypedResult() {
+        log.info("TC: Leader CAS command: verifies adapter applies CAS through the normal client command API and returns typed result payload");
+        Peer me = peer("A");
+        MutableTime time = new MutableTime(0);
+        KeyValueStateMachine kv = new KeyValueStateMachine();
+        InMemoryLogStore store = new InMemoryLogStore();
+        RaftNode node = newTestNode(me, List.of(), kv, new NoopRaftClient(), store, new InMemoryPersistentStateStore(), time, 1);
+
+        node.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        node.electionTickForTest();
+        node.handleVoteResponsesForTest(List.of(), 1);
+        node.submitCommand(StateMachineCommand.put("x", "1").encode());
+
+        TestAdapter adapter = new TestAdapter(me, List.of());
+        adapter.bind(node);
+
+        ClientCommandResponse response = adapter.command(new ClientCommandRequest(
+                node.getTerm(), "client", StateMachineCommand.cas("x", "1", "2").encode()
+        ));
+
+        assertTrue(response.isSuccess());
+        assertEquals("ACCEPTED", response.getStatus());
+        StateMachineCommandResult result = StateMachineCommandResult.decode(response.getResult()).orElseThrow();
+        assertEquals(StateMachineCommandResult.Type.CAS, result.getType());
+        assertEquals("x", result.getKey());
+        assertTrue(result.isMatched());
+        assertTrue(result.isCurrentPresent());
+        assertEquals("2", result.getCurrentValue());
+        assertEquals("2", kv.get("x"));
+        assertEquals(3, store.lastIndex());
+    }
+
+    @Test
+    void leaderReturnsSuccessfulCasResponseWhenCompareFails() {
+        log.info("TC: Leader CAS mismatch: verifies applied CAS mismatch is reported through typed result while preserving state");
+        Peer me = peer("A");
+        MutableTime time = new MutableTime(0);
+        KeyValueStateMachine kv = new KeyValueStateMachine();
+        InMemoryLogStore store = new InMemoryLogStore();
+        RaftNode node = newTestNode(me, List.of(), kv, new NoopRaftClient(), store, new InMemoryPersistentStateStore(), time, 1);
+
+        node.setLastHeartbeatMillisForTest(0);
+        time.set(10_000);
+        node.electionTickForTest();
+        node.handleVoteResponsesForTest(List.of(), 1);
+        node.submitCommand(StateMachineCommand.put("x", "1").encode());
+
+        TestAdapter adapter = new TestAdapter(me, List.of());
+        adapter.bind(node);
+
+        ClientCommandResponse response = adapter.command(new ClientCommandRequest(
+                node.getTerm(), "client", StateMachineCommand.cas("x", "wrong", "2").encode()
+        ));
+
+        assertTrue(response.isSuccess());
+        assertEquals("ACCEPTED", response.getStatus());
+        StateMachineCommandResult result = StateMachineCommandResult.decode(response.getResult()).orElseThrow();
+        assertFalse(result.isMatched());
+        assertTrue(result.isExpectedPresent());
+        assertEquals("wrong", result.getExpectedValue());
+        assertTrue(result.isCurrentPresent());
+        assertEquals("1", result.getCurrentValue());
+        assertEquals("1", kv.get("x"));
+        assertEquals(3, store.lastIndex());
     }
 
     @Test

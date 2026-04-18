@@ -17,9 +17,11 @@
 package org.gautelis.raft.app.kv;
 
 import org.gautelis.raft.protocol.StateMachineCommand;
+import org.gautelis.raft.protocol.StateMachineCommandResult;
 import org.gautelis.raft.protocol.StateMachineQuery;
 import org.gautelis.raft.protocol.StateMachineQueryResult;
 import org.gautelis.raft.statemachine.QueryableStateMachine;
+import org.gautelis.raft.statemachine.ResultSnapshotStateMachine;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -34,24 +36,59 @@ import java.util.TreeMap;
 /**
  * Demo key-value application state machine kept outside the generic Raft runtime layer.
  */
-public class KeyValueStateMachine implements QueryableStateMachine {
+public class KeyValueStateMachine implements QueryableStateMachine, ResultSnapshotStateMachine {
     private final Map<String, String> values = new HashMap<>();
 
     @Override
     public synchronized void apply(long term, byte[] command) {
+        applyWithResult(term, command);
+    }
+
+    @Override
+    public synchronized byte[] applyWithResult(long term, byte[] command) {
         if (command == null || command.length == 0) {
-            return;
+            return new byte[0];
         }
         var parsed = StateMachineCommand.decode(command);
         if (parsed.isEmpty()) {
-            return;
+            return new byte[0];
         }
         StateMachineCommand decoded = parsed.get();
-        switch (decoded.getType()) {
-            case PUT -> values.put(decoded.getKey(), decoded.getValue());
-            case DELETE -> values.remove(decoded.getKey());
-            case CLEAR -> values.clear();
-        }
+        return switch (decoded.getType()) {
+            case PUT -> {
+                values.put(decoded.getKey(), decoded.getValue());
+                yield new byte[0];
+            }
+            case CAS -> {
+                boolean currentPresent = values.containsKey(decoded.getKey());
+                String currentValue = values.get(decoded.getKey());
+                boolean matched = decoded.isExpectedPresent()
+                        ? currentPresent && decoded.getExpectedValue().equals(currentValue)
+                        : !currentPresent;
+                if (matched) {
+                    values.put(decoded.getKey(), decoded.getValue());
+                    currentPresent = true;
+                    currentValue = decoded.getValue();
+                }
+                yield StateMachineCommandResult.cas(
+                        decoded.getKey(),
+                        decoded.isExpectedPresent(),
+                        decoded.getExpectedValue(),
+                        decoded.getValue(),
+                        matched,
+                        currentPresent,
+                        currentValue
+                ).encode();
+            }
+            case DELETE -> {
+                values.remove(decoded.getKey());
+                yield new byte[0];
+            }
+            case CLEAR -> {
+                values.clear();
+                yield new byte[0];
+            }
+        };
     }
 
     @Override

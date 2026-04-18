@@ -18,6 +18,7 @@ package org.gautelis.raft;
 
 import org.gautelis.raft.app.kv.KeyValueCliSupport;
 import org.gautelis.raft.protocol.ClientCommandResponse;
+import org.gautelis.raft.protocol.StateMachineCommandResult;
 import org.gautelis.raft.protocol.ClientQueryResponse;
 import org.gautelis.raft.protocol.StateMachineQueryResult;
 import org.junit.jupiter.api.Test;
@@ -47,6 +48,58 @@ class KeyValueCliSupportTest {
         assertTrue(json.contains("\"leaderHost\": \"127.0.0.1\""));
         assertTrue(json.contains("\"leaderPort\": 10080"));
         assertTrue(json.contains("\"message\": \"Command committed and applied\""));
+    }
+
+    @Test
+    void casCommandResponseJsonIncludesDecodedResult() {
+        ClientCommandResponse response = new ClientCommandResponse(
+                5L,
+                "A",
+                true,
+                "ACCEPTED",
+                "Command committed and applied",
+                "A",
+                "127.0.0.1",
+                10080,
+                StateMachineCommandResult.cas("x", true, "1", "2", true, true, "2").encode()
+        );
+
+        String json = KeyValueCliSupport.renderClientCommandResponseJson("cas", response);
+
+        assertTrue(json.contains("\"action\": \"cas\""));
+        assertTrue(json.contains("\"result\": {"));
+        assertTrue(json.contains("\"type\": \"CAS\""));
+        assertTrue(json.contains("\"key\": \"x\""));
+        assertTrue(json.contains("\"matched\": true"));
+        assertTrue(json.contains("\"expectedPresent\": true"));
+        assertTrue(json.contains("\"expectedValue\": \"1\""));
+        assertTrue(json.contains("\"newValue\": \"2\""));
+        assertTrue(json.contains("\"currentPresent\": true"));
+        assertTrue(json.contains("\"currentValue\": \"2\""));
+    }
+
+    @Test
+    void casCommandResponseTextIncludesDecodedResult() {
+        ClientCommandResponse response = new ClientCommandResponse(
+                5L,
+                "A",
+                true,
+                "ACCEPTED",
+                "Command committed and applied",
+                "A",
+                "127.0.0.1",
+                10080,
+                StateMachineCommandResult.cas("x", false, "", "2", false, false, "").encode()
+        );
+
+        String rendered = KeyValueCliSupport.renderClientCommandResponse("cas", response);
+
+        assertTrue(rendered.contains("result=CAS("));
+        assertTrue(rendered.contains("key=x"));
+        assertTrue(rendered.contains("matched=false"));
+        assertTrue(rendered.contains("expected=<missing>"));
+        assertTrue(rendered.contains("new=\"2\""));
+        assertTrue(rendered.contains("current=<missing>"));
     }
 
     @Test

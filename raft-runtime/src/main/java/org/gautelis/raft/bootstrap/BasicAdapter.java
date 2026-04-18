@@ -382,6 +382,7 @@ public class BasicAdapter {
         }
         return switch (decoded.get().getType()) {
             case PUT -> !decoded.get().getKey().isBlank();
+            case CAS -> !decoded.get().getKey().isBlank();
             case DELETE -> !decoded.get().getKey().isBlank();
             case CLEAR -> true;
         };

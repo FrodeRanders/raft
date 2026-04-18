@@ -6,8 +6,8 @@ This directory contains the first Jepsen harness for the repository: a local key
 
 - 5 local voter nodes by default
 - key-value application only
-- linearizable register workload over a single hot key
-- optional membership-change scenario for join and promote
+- linearizable CAS-register workload over a single hot key
+- optional membership-change scenarios for join, role changes, and explicit removal
 
 ## Prerequisites
 
@@ -38,6 +38,8 @@ Optional overrides:
 ./run-local.sh --node-count 5 --nemesis partition-leader
 ./run-local.sh --node-count 5 --nemesis partition-leader-minority
 ./run-local.sh --node-count 5 --nemesis membership-join-promote
+./run-local.sh --node-count 5 --nemesis membership-demote
+./run-local.sh --node-count 5 --nemesis membership-remove-follower
 ```
 
 Run local Jepsen tests serially, not in parallel.
@@ -50,7 +52,7 @@ Supported options:
 - `--concurrency <n>`: Jepsen client concurrency
 - `--base-port <port>`: first node port, default `10080`
 - `--node-count <n>`: number of local nodes, default `5`
-- `--nemesis <mode>`: `none`, `crash-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, or `membership-join-promote`
+- `--nemesis <mode>`: `none`, `crash-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, `membership-join-promote`, `membership-demote`, or `membership-remove-follower`
 - `--nemesis-interval <seconds>`: delay between crash/restart actions
 - `--workdir <path>`: local node state/log directory
 
@@ -65,14 +67,17 @@ Supported options:
 
 ## Notes
 
-- The harness relies on the repository’s `command --json` and `query --json` surfaces.
+- The harness relies on the repository’s `command --json` and `query --json` surfaces, including KV `cas`.
 - Successful writes are interpreted as committed/applied completions.
+- The default workload mixes `write`, `read`, and `cas` operations over a small value set so CAS paths are exercised with both matches and mismatches.
 - The harness defaults to 5 nodes now, but `--node-count 3` is still useful for faster local debugging.
 - `crash-restart` stops a node process without deleting its state directory, then starts it again from the same persisted data.
 - `partition-one` isolates one random node by blocking its local TCP port through a dedicated `pfctl` anchor on macOS or `iptables` on Linux.
 - `partition-leader` first discovers the current Raft leader through `cluster-summary --json`, then isolates that node.
 - `partition-leader-minority` isolates the current leader together with one additional node, cutting the leader into a 2-node minority against the remaining 3-node majority.
 - `membership-join-promote` starts a sixth local node in join mode as a learner, waits for the join to stabilize, then promotes it to voter while the workload continues against the original client nodes.
+- `membership-demote` demotes one existing non-leader voter to learner under load and waits for the role transition to appear in cluster-summary state.
+- `membership-remove-follower` removes one existing non-leader follower through an explicit `reconfigure joint ...` plus `reconfigure finalize` flow and waits until the member disappears from stable cluster-summary state.
 - The partition helper re-execs itself through `sudo -n` when needed. Jepsen invokes it non-interactively, so passwordless sudo must be configured for the helper path.
 - On macOS, a practical sudoers entry is:
 

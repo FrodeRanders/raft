@@ -237,6 +237,7 @@ public final class ProtoMapper {
                 .setLeaderId(response.getLeaderId() == null ? "" : response.getLeaderId())
                 .setLeaderHost(response.getLeaderHost() == null ? "" : response.getLeaderHost())
                 .setLeaderPort(response.getLeaderPort())
+                .setResult(ByteString.copyFrom(response.getResult()))
                 .build();
     }
 
@@ -249,7 +250,8 @@ public final class ProtoMapper {
                 response.getMessage(),
                 response.getLeaderId(),
                 response.getLeaderHost(),
-                response.getLeaderPort()
+                response.getLeaderPort(),
+                response.getResult().toByteArray()
         );
     }
 

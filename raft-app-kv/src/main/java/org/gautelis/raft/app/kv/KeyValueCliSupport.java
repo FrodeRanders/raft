@@ -22,6 +22,7 @@ import org.gautelis.raft.protocol.ClientQueryRequest;
 import org.gautelis.raft.protocol.ClientQueryResponse;
 import org.gautelis.raft.protocol.Peer;
 import org.gautelis.raft.protocol.StateMachineCommand;
+import org.gautelis.raft.protocol.StateMachineCommandResult;
 import org.gautelis.raft.protocol.StateMachineQuery;
 import org.gautelis.raft.protocol.StateMachineQueryResult;
 import org.gautelis.raft.transport.RaftTransportClient;
@@ -47,7 +48,7 @@ public final class KeyValueCliSupport {
             actionIndex = 2;
         }
         if (args.length < actionIndex + 2) {
-            System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command [--json] <put|delete|clear> <target-port|target-host:port|id@target-host:port> [key] [value]");
+            System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command [--json] <put|cas|delete|clear> <target-port|target-host:port|id@target-host:port> [key] [value]");
             System.exit(1);
         }
 
@@ -62,6 +63,17 @@ public final class KeyValueCliSupport {
                     return;
                 }
                 command = StateMachineCommand.put(args[actionIndex + 2], args[actionIndex + 3]).encode();
+            }
+            case "cas" -> {
+                if (args.length != actionIndex + 5) {
+                    System.err.println("Usage: java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command [--json] cas <target> <key> <expected-value|__nil__> <new-value>");
+                    System.exit(1);
+                    return;
+                }
+                String expected = args[actionIndex + 3];
+                command = "__nil__".equals(expected)
+                        ? StateMachineCommand.casMissing(args[actionIndex + 2], args[actionIndex + 4]).encode()
+                        : StateMachineCommand.cas(args[actionIndex + 2], expected, args[actionIndex + 4]).encode();
             }
             case "delete" -> {
                 if (args.length != actionIndex + 3) {
@@ -159,15 +171,40 @@ public final class KeyValueCliSupport {
     }
 
     public static String renderClientCommandResponse(String action, ClientCommandResponse response) {
-        return "Command action=" + action
-                + " status=" + response.getStatus()
-                + " success=" + response.isSuccess()
-                + " peer=" + response.getPeerId()
-                + (response.getLeaderId() == null || response.getLeaderId().isBlank() ? "" : " leader=" + response.getLeaderId())
-                + (response.getLeaderHost() == null || response.getLeaderHost().isBlank() || response.getLeaderPort() <= 0
-                ? ""
-                : " leaderEndpoint=" + response.getLeaderHost() + ":" + response.getLeaderPort())
-                + " message=\"" + response.getMessage() + "\"";
+        StringBuilder out = new StringBuilder();
+        out.append("Command action=").append(action)
+                .append(" status=").append(response.getStatus())
+                .append(" success=").append(response.isSuccess())
+                .append(" peer=").append(response.getPeerId());
+        if (response.getLeaderId() != null && !response.getLeaderId().isBlank()) {
+            out.append(" leader=").append(response.getLeaderId());
+        }
+        if (response.getLeaderHost() != null && !response.getLeaderHost().isBlank() && response.getLeaderPort() > 0) {
+            out.append(" leaderEndpoint=").append(response.getLeaderHost()).append(':').append(response.getLeaderPort());
+        }
+        out.append(" message=\"").append(response.getMessage()).append('"');
+        StateMachineCommandResult.decode(response.getResult()).ifPresent(result -> {
+            if (result.getType() == StateMachineCommandResult.Type.CAS) {
+                out.append(" result=CAS(")
+                        .append("key=").append(result.getKey())
+                        .append(", matched=").append(result.isMatched())
+                        .append(", expected=");
+                if (result.isExpectedPresent()) {
+                    out.append('"').append(result.getExpectedValue()).append('"');
+                } else {
+                    out.append("<missing>");
+                }
+                out.append(", new=\"").append(result.getNewValue()).append('"')
+                        .append(", current=");
+                if (result.isCurrentPresent()) {
+                    out.append('"').append(result.getCurrentValue()).append('"');
+                } else {
+                    out.append("<missing>");
+                }
+                out.append(')');
+            }
+        });
+        return out.toString();
     }
 
     public static String renderClientCommandResponseJson(String action, ClientCommandResponse response) {
@@ -180,7 +217,8 @@ public final class KeyValueCliSupport {
         appendJsonField(out, "leaderId", response.getLeaderId(), true, 1);
         appendJsonField(out, "leaderHost", response.getLeaderHost(), true, 1);
         appendJsonField(out, "leaderPort", response.getLeaderPort(), true, 1);
-        appendJsonField(out, "message", response.getMessage(), false, 1);
+        appendJsonField(out, "message", response.getMessage(), true, 1);
+        appendJsonCommandResult(out, response, false, 1);
         out.append("}");
         return out.toString();
     }
@@ -245,6 +283,34 @@ public final class KeyValueCliSupport {
                 }
                 out.append(" }");
             }
+        }
+        if (comma) {
+            out.append(',');
+        }
+        out.append('\n');
+    }
+
+    private static void appendJsonCommandResult(StringBuilder out, ClientCommandResponse response, boolean comma, int indent) {
+        indent(out, indent).append("\"result\": ");
+        var decoded = StateMachineCommandResult.decode(response.getResult());
+        if (decoded.isEmpty() || decoded.get().getType() != StateMachineCommandResult.Type.CAS) {
+            out.append("null");
+        } else {
+            StateMachineCommandResult result = decoded.get();
+            out.append("{ ");
+            out.append("\"type\": \"CAS\"");
+            out.append(", \"key\": \"").append(escapeJson(result.getKey())).append('"');
+            out.append(", \"matched\": ").append(result.isMatched());
+            out.append(", \"expectedPresent\": ").append(result.isExpectedPresent());
+            if (result.isExpectedPresent()) {
+                out.append(", \"expectedValue\": \"").append(escapeJson(result.getExpectedValue())).append('"');
+            }
+            out.append(", \"newValue\": \"").append(escapeJson(result.getNewValue())).append('"');
+            out.append(", \"currentPresent\": ").append(result.isCurrentPresent());
+            if (result.isCurrentPresent()) {
+                out.append(", \"currentValue\": \"").append(escapeJson(result.getCurrentValue())).append('"');
+            }
+            out.append(" }");
         }
         if (comma) {
             out.append(',');

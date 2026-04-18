@@ -26,30 +26,43 @@ import java.util.Optional;
 public final class StateMachineCommand {
     public enum Type {
         PUT,
+        CAS,
         DELETE,
         CLEAR
     }
 
     private final Type type;
     private final String key;
+    private final boolean expectedPresent;
+    private final String expectedValue;
     private final String value;
 
-    private StateMachineCommand(Type type, String key, String value) {
+    private StateMachineCommand(Type type, String key, boolean expectedPresent, String expectedValue, String value) {
         this.type = type;
         this.key = key == null ? "" : key;
+        this.expectedPresent = expectedPresent;
+        this.expectedValue = expectedValue == null ? "" : expectedValue;
         this.value = value == null ? "" : value;
     }
 
     public static StateMachineCommand put(String key, String value) {
-        return new StateMachineCommand(Type.PUT, key, value);
+        return new StateMachineCommand(Type.PUT, key, false, "", value);
+    }
+
+    public static StateMachineCommand cas(String key, String expectedValue, String newValue) {
+        return new StateMachineCommand(Type.CAS, key, true, expectedValue, newValue);
+    }
+
+    public static StateMachineCommand casMissing(String key, String newValue) {
+        return new StateMachineCommand(Type.CAS, key, false, "", newValue);
     }
 
     public static StateMachineCommand delete(String key) {
-        return new StateMachineCommand(Type.DELETE, key, "");
+        return new StateMachineCommand(Type.DELETE, key, false, "", "");
     }
 
     public static StateMachineCommand clear() {
-        return new StateMachineCommand(Type.CLEAR, "", "");
+        return new StateMachineCommand(Type.CLEAR, "", false, "", "");
     }
 
     public Type getType() {
@@ -58,6 +71,14 @@ public final class StateMachineCommand {
 
     public String getKey() {
         return key;
+    }
+
+    public boolean isExpectedPresent() {
+        return expectedPresent;
+    }
+
+    public String getExpectedValue() {
+        return expectedValue;
     }
 
     public String getValue() {
@@ -71,6 +92,12 @@ public final class StateMachineCommand {
                     .setKey(key)
                     .setValue(value)
                     .build());
+            case CAS -> builder.setCas(org.gautelis.raft.proto.CasCommand.newBuilder()
+                    .setKey(key)
+                    .setExpectedPresent(expectedPresent)
+                    .setExpectedValue(expectedValue)
+                    .setNewValue(value)
+                    .build());
             case DELETE -> builder.setDelete(org.gautelis.raft.proto.DeleteCommand.newBuilder()
                     .setKey(key)
                     .build());
@@ -83,6 +110,9 @@ public final class StateMachineCommand {
     public String toString() {
         return switch (type) {
             case PUT -> "PUT(" + key + "=" + value + ")";
+            case CAS -> "CAS(" + key + ", expected="
+                    + (expectedPresent ? expectedValue : "<missing>")
+                    + ", new=" + value + ")";
             case DELETE -> "DELETE(" + key + ")";
             case CLEAR -> "CLEAR";
         };
@@ -93,6 +123,9 @@ public final class StateMachineCommand {
             var parsed = org.gautelis.raft.proto.StateMachineCommand.parseFrom(payload == null ? new byte[0] : payload);
             return switch (parsed.getCommandCase()) {
                 case PUT -> Optional.of(put(parsed.getPut().getKey(), parsed.getPut().getValue()));
+                case CAS -> Optional.of(parsed.getCas().getExpectedPresent()
+                        ? cas(parsed.getCas().getKey(), parsed.getCas().getExpectedValue(), parsed.getCas().getNewValue())
+                        : casMissing(parsed.getCas().getKey(), parsed.getCas().getNewValue()));
                 case DELETE -> Optional.of(delete(parsed.getDelete().getKey()));
                 case CLEAR -> Optional.of(clear());
                 case COMMAND_NOT_SET -> Optional.empty();

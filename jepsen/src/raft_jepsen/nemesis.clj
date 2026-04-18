@@ -84,6 +84,16 @@
                       {:node node :exit exit :out out :err err})))
     response))
 
+(defn- telemetry-summary [test node]
+  (let [{:keys [exit out err]}
+        (shell! (:repo-root test)
+                (java-command (:jar-path test) "telemetry" "--json" "--summary" (target-spec test node)))
+        response (parse-json out)]
+    (when-not (zero? exit)
+      (throw (ex-info "Telemetry summary command failed"
+                      {:node node :exit exit :out out :err err})))
+    response))
+
 (defn- reconfiguration-status [test node]
   (let [{:keys [exit out err]}
         (shell! (:repo-root test)
@@ -166,6 +176,46 @@
        :reconfig reconfig
        :member member-state})))
 
+(defn- demotion-progress-state [summary reconfig member]
+  (let [member-state (member-summary summary member)]
+    (when (and (:success summary)
+               (:success reconfig)
+               member-state
+               (= "LEARNER" (:role member-state))
+               (or
+                (and (not (:jointConsensus summary))
+                     (not (:reconfigurationActive reconfig))
+                     (= "LEARNER" (:currentRole member-state))
+                     (= "steady" (:roleTransition member-state)))
+                (and (:jointConsensus summary)
+                     (= "VOTER" (:currentRole member-state))
+                     (= "LEARNER" (:nextRole member-state))
+                     (= "demoting" (:roleTransition member-state)))))
+      {:summary summary
+       :reconfig reconfig
+       :member member-state})))
+
+(defn- removal-progress-state [summary reconfig member]
+  (let [member-state (member-summary summary member)]
+    (when (and (:success summary)
+               (:success reconfig)
+               member-state
+               (:jointConsensus summary)
+               (:reconfigurationActive reconfig)
+               (:currentMember member-state)
+               (not (:nextMember member-state)))
+      {:summary summary
+       :reconfig reconfig
+       :member member-state})))
+
+(defn- removed-final-state [telemetry summary member expected-voters]
+  (when (and telemetry
+             (not (:jointConsensus telemetry))
+             (:quorumAvailable telemetry)
+             (= expected-voters (:votingMembers telemetry)))
+    {:telemetry telemetry
+     :summary summary}))
+
 (defn- wait-for! [timeout-ms interval-ms pred]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
@@ -235,6 +285,46 @@
 
 (defn partition-leader-minority []
   (partition-nemesis leader-minority-nodes "nemesis-partition-leader-minority"))
+
+(defn- demote-member! [test leader member]
+  (let [{:keys [exit out err]}
+        (shell! (:repo-root test)
+                (java-command (:jar-path test)
+                              "reconfigure"
+                              "demote"
+                              (target-spec test leader)
+                              (target-spec test member)))]
+    (when-not (zero? exit)
+      (throw (ex-info "Demote request failed"
+                      {:leader leader :member member :exit exit :out out :err err})))
+    out))
+
+(defn- joint-reconfigure! [test leader members]
+  (let [member-specs (mapv #(target-spec test %) members)
+        {:keys [exit out err]}
+        (shell! (:repo-root test)
+                (apply java-command
+                       (:jar-path test)
+                       "reconfigure"
+                       "joint"
+                       (target-spec test leader)
+                       member-specs))]
+    (when-not (zero? exit)
+      (throw (ex-info "Joint reconfiguration request failed"
+                      {:leader leader :members members :exit exit :out out :err err})))
+    out))
+
+(defn- finalize-reconfigure! [test leader]
+  (let [{:keys [exit out err]}
+        (shell! (:repo-root test)
+                (java-command (:jar-path test)
+                              "reconfigure"
+                              "finalize"
+                              (target-spec test leader)))]
+    (when-not (zero? exit)
+      (throw (ex-info "Finalize reconfiguration request failed"
+                      {:leader leader :exit exit :out out :err err})))
+    out))
 
 (defn- promote-member! [test leader member]
   (let [{:keys [exit out err]}
@@ -332,3 +422,156 @@
       (teardown! [_ test]
         (when-let [member (:member @membership-state)]
           (raft-db/stop-node! test member))))))
+
+(defn membership-demote []
+  (let [demotion-state (atom {:started? false})]
+    (reify
+      jepsen.nemesis/Nemesis
+      (setup! [this _test] this)
+      (invoke! [_ test op]
+        (case (:f op)
+          :start
+          (locking demotion-state
+            (cond
+              (:started? @demotion-state)
+              (assoc op :type :info :value :already-started)
+
+              :else
+              (if-let [leader (leader-node test)]
+                (if-let [member (first (remove #(= leader %) (:nodes test)))]
+                  (do
+                    (demote-member! test leader member)
+                    (observer/capture-safe! test "nemesis-membership-demote"
+                                            {:node member
+                                             :op {:f :demote}
+                                             :extra {:leader leader :phase :demotion-requested}})
+                    (let [demoted-summary
+                          (wait-for! 30000 500
+                                     #(when-let [current-leader (leader-node test)]
+                                        (try
+                                          (let [summary (cluster-summary test current-leader)
+                                                reconfig (reconfiguration-status test current-leader)
+                                                progress (demotion-progress-state summary reconfig member)]
+                                            (when progress
+                                              {:leader current-leader
+                                               :summary summary
+                                               :reconfig reconfig
+                                               :member (:member progress)}))
+                                          (catch Throwable _
+                                            nil))))]
+                      (when-not demoted-summary
+                        (throw (ex-info "Timed out waiting for demoted learner to stabilize"
+                                        {:member member})))
+                      (reset! demotion-state {:started? true
+                                              :member member
+                                              :leader (:leader demoted-summary)})
+                      (observer/capture-safe! test "nemesis-membership-demote"
+                                              {:node member
+                                               :op {:f :completed}
+                                               :extra {:leader (:leader demoted-summary)
+                                                       :phase :stable-learner}})
+                      (assoc op :type :info
+                             :value {:member member
+                                     :leader (:leader demoted-summary)
+                                     :status :stable-learner})))
+                  (assoc op :type :info :value :no-target))
+                (assoc op :type :info :value :no-leader))))
+
+          :stop (assoc op :type :info :value :noop)
+          (assoc op :type :info :error :unsupported-nemesis-op)))
+      (teardown! [_ _test]
+        nil))))
+
+(defn membership-remove-follower []
+  (let [removal-state (atom {:started? false})]
+    (reify
+      jepsen.nemesis/Nemesis
+      (setup! [this _test] this)
+      (invoke! [_ test op]
+        (case (:f op)
+          :start
+          (locking removal-state
+            (cond
+              (:started? @removal-state)
+              (assoc op :type :info :value :already-started)
+
+              :else
+              (if-let [leader (leader-node test)]
+                (if-let [member (first (remove #(= leader %) (:nodes test)))]
+                  (let [remaining-members (vec (remove #(= member %) (:nodes test)))]
+                    (joint-reconfigure! test leader remaining-members)
+                    (observer/capture-safe! test "nemesis-membership-remove-follower"
+                                            {:node member
+                                             :op {:f :joint}
+                                             :extra {:leader leader
+                                                     :members remaining-members
+                                                     :phase :joint-requested}})
+                    (let [joint-summary
+                          (wait-for! 30000 500
+                                     #(when-let [current-leader (leader-node test)]
+                                        (try
+                                          (let [summary (cluster-summary test current-leader)
+                                                reconfig (reconfiguration-status test current-leader)
+                                                progress (removal-progress-state summary reconfig member)]
+                                            (when progress
+                                              {:leader current-leader
+                                               :summary summary
+                                               :reconfig reconfig
+                                               :member (:member progress)}))
+                                          (catch Throwable _
+                                            nil))))]
+                      (when-not joint-summary
+                        (throw (ex-info "Timed out waiting for removal joint configuration"
+                                        {:member member :remaining-members remaining-members})))
+                      (finalize-reconfigure! test (:leader joint-summary))
+                      (observer/capture-safe! test "nemesis-membership-remove-follower"
+                                              {:node member
+                                               :op {:f :finalize}
+                                               :extra {:leader (:leader joint-summary)
+                                                       :members remaining-members
+                                                       :phase :finalize-requested}})
+                      (let [expected-voters (count remaining-members)
+                            removed-summary
+                            (wait-for! 30000 500
+                                       #(some (fn [node]
+                                                (try
+                                                  (let [telemetry (telemetry-summary test node)
+                                                        summary (try
+                                                                  (cluster-summary test node)
+                                                                  (catch Throwable _
+                                                                    nil))
+                                                        progress (removed-final-state telemetry
+                                                                                      summary
+                                                                                      member
+                                                                                      expected-voters)]
+                                                    (when progress
+                                                      {:leader (:leaderId telemetry)
+                                                       :observer node
+                                                       :telemetry telemetry
+                                                       :summary summary}))
+                                                  (catch Throwable _
+                                                    nil)))
+                                              remaining-members))]
+                        (when-not removed-summary
+                          (throw (ex-info "Timed out waiting for follower removal to finalize"
+                                          {:member member :remaining-members remaining-members})))
+                        (reset! removal-state {:started? true
+                                               :member member
+                                               :leader (:leader removed-summary)})
+                        (observer/capture-safe! test "nemesis-membership-remove-follower"
+                                                {:node member
+                                                 :op {:f :completed}
+                                                 :extra {:leader (:leader removed-summary)
+                                                         :members remaining-members
+                                                         :phase :stable-removed}})
+                        (assoc op :type :info
+                               :value {:member member
+                                       :leader (:leader removed-summary)
+                                       :status :stable-removed}))))
+                  (assoc op :type :info :value :no-target))
+                (assoc op :type :info :value :no-leader))))
+
+          :stop (assoc op :type :info :value :noop)
+          (assoc op :type :info :error :unsupported-nemesis-op)))
+      (teardown! [_ _test]
+        nil))))

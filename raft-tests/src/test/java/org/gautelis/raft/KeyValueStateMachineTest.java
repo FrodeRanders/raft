@@ -18,6 +18,7 @@ package org.gautelis.raft;
 
 import org.gautelis.raft.app.kv.KeyValueStateMachine;
 import org.gautelis.raft.protocol.StateMachineCommand;
+import org.gautelis.raft.protocol.StateMachineCommandResult;
 import org.gautelis.raft.protocol.StateMachineQuery;
 import org.gautelis.raft.protocol.StateMachineQueryResult;
 import org.gautelis.raft.storage.*;
@@ -69,5 +70,62 @@ class KeyValueStateMachineTest {
         assertEquals("1", result.getValue());
         assertTrue(result.isFound());
         assertFalse(missing.isFound());
+    }
+
+    @Test
+    void casAppliesAndReturnsTypedSuccessResult() {
+        log.info("TC: KeyValue CAS success: verifies matching compare-and-set mutates state and returns structured result");
+        KeyValueStateMachine sm = new KeyValueStateMachine();
+        sm.apply(1, StateMachineCommand.put("a", "1").encode());
+
+        StateMachineCommandResult result = StateMachineCommandResult.decode(
+                sm.applyWithResult(1, StateMachineCommand.cas("a", "1", "2").encode())
+        ).orElseThrow();
+
+        assertEquals(StateMachineCommandResult.Type.CAS, result.getType());
+        assertEquals("a", result.getKey());
+        assertTrue(result.isMatched());
+        assertTrue(result.isExpectedPresent());
+        assertEquals("1", result.getExpectedValue());
+        assertEquals("2", result.getNewValue());
+        assertTrue(result.isCurrentPresent());
+        assertEquals("2", result.getCurrentValue());
+        assertEquals("2", sm.get("a"));
+    }
+
+    @Test
+    void casMismatchReturnsCurrentValueWithoutMutatingState() {
+        log.info("TC: KeyValue CAS mismatch: verifies non-matching compare-and-set returns current value and preserves state");
+        KeyValueStateMachine sm = new KeyValueStateMachine();
+        sm.apply(1, StateMachineCommand.put("a", "1").encode());
+
+        StateMachineCommandResult result = StateMachineCommandResult.decode(
+                sm.applyWithResult(1, StateMachineCommand.cas("a", "wrong", "2").encode())
+        ).orElseThrow();
+
+        assertFalse(result.isMatched());
+        assertTrue(result.isExpectedPresent());
+        assertEquals("wrong", result.getExpectedValue());
+        assertEquals("2", result.getNewValue());
+        assertTrue(result.isCurrentPresent());
+        assertEquals("1", result.getCurrentValue());
+        assertEquals("1", sm.get("a"));
+    }
+
+    @Test
+    void casMissingCanCreateValueWhenKeyIsAbsent() {
+        log.info("TC: KeyValue CAS missing: verifies missing-key compare-and-set can insert a new value");
+        KeyValueStateMachine sm = new KeyValueStateMachine();
+
+        StateMachineCommandResult result = StateMachineCommandResult.decode(
+                sm.applyWithResult(1, StateMachineCommand.casMissing("a", "1").encode())
+        ).orElseThrow();
+
+        assertTrue(result.isMatched());
+        assertFalse(result.isExpectedPresent());
+        assertEquals("1", result.getNewValue());
+        assertTrue(result.isCurrentPresent());
+        assertEquals("1", result.getCurrentValue());
+        assertEquals("1", sm.get("a"));
     }
 }

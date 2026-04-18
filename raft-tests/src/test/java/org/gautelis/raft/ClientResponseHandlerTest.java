@@ -32,6 +32,7 @@ import org.gautelis.raft.protocol.JoinClusterResponse;
 import org.gautelis.raft.protocol.JoinClusterStatusResponse;
 import org.gautelis.raft.protocol.ReconfigureClusterResponse;
 import org.gautelis.raft.protocol.ReconfigurationStatusResponse;
+import org.gautelis.raft.protocol.StateMachineCommandResult;
 import org.gautelis.raft.protocol.TelemetryResponse;
 import org.gautelis.raft.protocol.VoteRequest;
 import org.gautelis.raft.protocol.VoteResponse;
@@ -230,6 +231,35 @@ class ClientResponseHandlerTest {
         assertEquals("A", future.get().getLeaderId());
         assertEquals("127.0.0.1", future.get().getLeaderHost());
         assertEquals(10080, future.get().getLeaderPort());
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void clientCommandResponseRoundTripsTypedResultPayload() throws Exception {
+        log.info("TC: ClientCommandResponse preserves typed command result payload through transport mapping");
+
+        CompletableFuture<ClientCommandResponse> future = new CompletableFuture<>();
+        Map<String, CompletableFuture<ClientCommandResponse>> inFlightClientCommands = new java.util.HashMap<>(Map.of("corr-command-result-1", future));
+
+        ClientResponseHandler handler = newHandler(Map.of(), inFlightClientCommands, Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), null);
+        EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+        byte[] result = StateMachineCommandResult.cas("x", true, "1", "2", true, true, "2").encode();
+        ClientCommandResponse resp = new ClientCommandResponse(5, "A", true, "ACCEPTED", "Command committed and applied", "A", "127.0.0.1", 10080, result);
+        Envelope envelope = ProtoMapper.wrap(
+                "corr-command-result-1",
+                "ClientCommandResponse",
+                ProtoMapper.toProto(resp).toByteString()
+        );
+
+        channel.writeInbound(envelope);
+
+        assertTrue(future.isDone());
+        StateMachineCommandResult decoded = StateMachineCommandResult.decode(future.get().getResult()).orElseThrow();
+        assertEquals(StateMachineCommandResult.Type.CAS, decoded.getType());
+        assertEquals("x", decoded.getKey());
+        assertTrue(decoded.isMatched());
+        assertEquals("2", decoded.getCurrentValue());
         channel.finishAndReleaseAll();
     }
 

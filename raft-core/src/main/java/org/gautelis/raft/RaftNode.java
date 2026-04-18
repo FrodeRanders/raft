@@ -124,6 +124,7 @@ public class RaftNode {
     //
     private final MessageHandler messageHandler;
     private final SnapshotStateMachine snapshotStateMachine;
+    private final java.util.NavigableMap<Long, byte[]> appliedCommandResults = new java.util.TreeMap<>();
 
     // Netty-based approach might either
     //  - store channels for each peer, or
@@ -786,12 +787,26 @@ public class RaftNode {
      * @return {@code true} when the command was accepted for replication
      */
     public synchronized boolean submitCommand(byte[] command) {
+        return submitCommandWithResult(command).success();
+    }
+
+    public record CommandApplication(boolean success, byte[] result) {
+        public CommandApplication {
+            result = result == null ? new byte[0] : result.clone();
+        }
+
+        public byte[] result() {
+            return result.clone();
+        }
+    }
+
+    public synchronized CommandApplication submitCommandWithResult(byte[] command) {
         // Figure 2 ("Leaders"): only the leader accepts client commands into the log.
         if (state != State.LEADER || decommissioned) {
-            return false;
+            return new CommandApplication(false, new byte[0]);
         }
         if (command == null || command.length == 0) {
-            return false;
+            return new CommandApplication(false, new byte[0]);
         }
 
         LogEntry entry = new LogEntry(currentTerm, me.getId(), command);
@@ -806,7 +821,8 @@ public class RaftNode {
         // Figure 2 ("Leaders"): after local append, replicate to followers and eventually commit.
         advanceCommitIndexFromMajority();
         broadcastHeartbeat(); // replicate promptly instead of waiting for next tick
-        return waitForAppliedIndex(appendedIndex, termAtSubmission);
+        boolean success = waitForAppliedIndex(appendedIndex, termAtSubmission);
+        return new CommandApplication(success, success ? appliedCommandResult(appendedIndex) : new byte[0]);
     }
 
     /**
@@ -1705,7 +1721,14 @@ public class RaftNode {
                 log.trace("{}@{} applying replicated command at index {} from {} term {} (bytes={})",
                         me.getId(), currentTerm, lastApplied, entry.getPeerId(), entry.getTerm(), data.length);
             }
-            snapshotStateMachine.apply(entry.getTerm(), data);
+            byte[] applyResult = new byte[0];
+            if (snapshotStateMachine instanceof org.gautelis.raft.statemachine.ResultSnapshotStateMachine resultSnapshotStateMachine) {
+                applyResult = resultSnapshotStateMachine.applyWithResult(entry.getTerm(), data);
+            } else {
+                snapshotStateMachine.apply(entry.getTerm(), data);
+            }
+            appliedCommandResults.put(lastApplied, applyResult == null ? new byte[0] : applyResult.clone());
+            trimAppliedCommandResults();
         }
         maybeAutoFinalizeJointConfiguration();
         maybeCompactLocalSnapshot();
@@ -1759,6 +1782,16 @@ public class RaftNode {
                     me.getId(), currentTerm, describeInternalCommand(command), lastApplied, describeConfiguration(clusterConfiguration));
         }
         return true;
+    }
+
+    private byte[] appliedCommandResult(long index) {
+        byte[] result = appliedCommandResults.get(index);
+        return result == null ? new byte[0] : result.clone();
+    }
+
+    private void trimAppliedCommandResults() {
+        long keepFromIndex = Math.max(logStore.snapshotIndex(), lastApplied - 1024L);
+        appliedCommandResults.headMap(keepFromIndex, false).clear();
     }
 
     private ClusterConfiguration applyConfigurationCommand(ClusterConfiguration baseConfiguration, byte[] command, boolean updateTransport) {
