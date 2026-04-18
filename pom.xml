@@ -37,6 +37,7 @@
         <netty.version>4.2.12.Final</netty.version>
         <protobuf.version>4.34.1</protobuf.version>
         <protobuf.plugin.version>0.6.1</protobuf.plugin.version>
+        <skipJepsenTests>false</skipJepsenTests>
     </properties>
 
     <dependencyManagement>

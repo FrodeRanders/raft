@@ -67,7 +67,7 @@
                 <version>3.2.1</version>
                 <executions>
                     <execution>
-                        <phase>package</phase>
+                        <phase>process-test-classes</phase>
                         <goals>
                             <goal>shade</goal>
                         </goals>

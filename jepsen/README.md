@@ -14,11 +14,24 @@ This directory contains the first Jepsen harness for the repository: a local key
 - Java 21
 - Clojure CLI
 - built runnable jar
+- non-interactive `sudo` for partition tests
 
 Build the jar from the repository root:
 
 ```text
 mvn -q -pl raft-dist -am package
+```
+
+The default Maven test path now also invokes a small Jepsen smoke suite through Surefire:
+
+```text
+mvn test
+```
+
+That smoke suite runs baseline, crash/restart, and partition Jepsen checks. If you need to skip them temporarily:
+
+```text
+mvn test -DskipJepsenTests=true
 ```
 
 ## Run
@@ -79,6 +92,7 @@ Supported options:
 - `membership-demote` demotes one existing non-leader voter to learner under load and waits for the role transition to appear in cluster-summary state.
 - `membership-remove-follower` removes one existing non-leader follower through an explicit `reconfigure joint ...` plus `reconfigure finalize` flow and waits until the member disappears from stable cluster-summary state.
 - The partition helper re-execs itself through `sudo -n` when needed. Jepsen invokes it non-interactively, so passwordless sudo must be configured for the helper path.
+- `mvn test` now includes a partition Jepsen smoke test, so the `sudo -n` prerequisite applies to normal Maven testing as well.
 - On macOS, a practical sudoers entry is:
 
 ```text

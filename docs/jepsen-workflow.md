@@ -2,6 +2,19 @@
 
 This note keeps the classic Maven test loop and the local Jepsen loop aligned.
 
+`mvn test` now includes a small Jepsen smoke suite through Surefire:
+
+- baseline 5-node Jepsen smoke run
+- 5-node crash/restart smoke run
+- 5-node partition smoke run
+
+That means the default Maven test path now depends on:
+
+- Java 21
+- Clojure CLI
+- a working local Jepsen environment
+- non-interactive `sudo` for the partition helper
+
 ### 1. Fast Java feedback
 
 Run the focused unit and adapter tests first when changing the KV, protocol, or runtime layers:
@@ -14,6 +27,12 @@ Use the full module test suite when touching broader Raft behavior:
 
 ```text
 mvn -q -pl raft-tests -am test
+```
+
+If you need to skip the Jepsen smoke tests temporarily:
+
+```text
+mvn test -DskipJepsenTests=true
 ```
 
 ### 2. Build the runnable jar
@@ -46,6 +65,8 @@ Then run one fault mode at a time:
 
 Run local Jepsen tests serially, not in parallel. The harness shares host-local ports and packet-filter state.
 
+The Surefire-driven Jepsen tests already do this and use fixed private port ranges.
+
 ### 4. Check results
 
 Look at the latest Jepsen result file:
@@ -76,3 +97,5 @@ The partition nemeses need non-interactive privilege for `jepsen/scripts/partiti
 ```text
 sudo -n /Users/froran/Projects/gautelis/raft/jepsen/scripts/partition.sh heal
 ```
+
+Without that setup, the partition Jepsen smoke test inside `mvn test` will fail with an explicit prerequisite message.

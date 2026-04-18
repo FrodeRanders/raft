@@ -91,6 +91,8 @@
                     <useModulePath>false</useModulePath>
                     <systemPropertyVariables>
                         <netty.it>true</netty.it>
+                        <raft.repoRoot>${maven.multiModuleProjectDirectory}</raft.repoRoot>
+                        <skipJepsenTests>${skipJepsenTests}</skipJepsenTests>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>
