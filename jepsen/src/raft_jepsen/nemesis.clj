@@ -66,6 +66,11 @@
       (catch Throwable _
         nil))))
 
+(defn- parse-status [text]
+  (some->> text
+           (re-find #"status=([A-Z_]+)")
+           second))
+
 (defn- target-spec [test node]
   (str node "@127.0.0.1:" (raft-db/node-port test node)))
 
@@ -79,15 +84,96 @@
                       {:node node :exit exit :out out :err err})))
     response))
 
+(defn- reconfiguration-status [test node]
+  (let [{:keys [exit out err]}
+        (shell! (:repo-root test)
+                (java-command (:jar-path test) "reconfiguration-status" "--json" (target-spec test node)))
+        response (parse-json out)]
+    (when-not (zero? exit)
+      (throw (ex-info "Reconfiguration status command failed"
+                      {:node node :exit exit :out out :err err})))
+    response))
+
+(defn- join-status [test node joining-peer-id]
+  (let [{:keys [exit out err]}
+        (shell! (:repo-root test)
+                (java-command (:jar-path test) "join-status" (target-spec test node) joining-peer-id))
+        status (parse-status out)]
+    (when-not (zero? exit)
+      (throw (ex-info "Join status command failed"
+                      {:node node :joining-peer-id joining-peer-id :exit exit :out out :err err})))
+    {:status status
+     :stdout out}))
+
+(defn- join-request! [test node joining-peer-id]
+  (let [{:keys [exit out err]}
+        (shell! (:repo-root test)
+                (java-command (:jar-path test)
+                              "join-request"
+                              (target-spec test node)
+                              (str (target-spec test joining-peer-id) "/learner")))
+        status (parse-status out)]
+    (when-not (zero? exit)
+      (throw (ex-info "Join request command failed"
+                      {:node node :joining-peer-id joining-peer-id :exit exit :out out :err err})))
+    {:status status
+     :stdout out}))
+
 (defn- leader-node [test]
-  (some (fn [node]
-          (when-let [response (cluster-summary test node)]
-            (let [leader-id (some-> (:leaderId response) str/trim not-empty)]
-              (when (and (:success response)
-                         leader-id
-                         (some #(= leader-id %) (:nodes test)))
-                leader-id))))
-        (:nodes test)))
+  (let [known-nodes (conj (vec (:nodes test)) (raft-db/membership-node test))]
+    (some (fn [node]
+            (try
+              (when-let [response (cluster-summary test node)]
+                (let [leader-id (some-> (:leaderId response) str/trim not-empty)]
+                  (when (and (:success response)
+                             leader-id
+                             (some #(= leader-id %) known-nodes))
+                    leader-id)))
+              (catch Throwable _
+                nil)))
+          known-nodes)))
+
+(defn- member-summary [summary node]
+  (some #(when (= node (:peerId %)) %) (:members summary)))
+
+(defn- stable-learner-state [summary member]
+  (let [member-state (member-summary summary member)]
+    (when (and (:success summary)
+               (not (:jointConsensus summary))
+               member-state
+               (= "LEARNER" (:role member-state))
+               (= "LEARNER" (:currentRole member-state))
+               (= "steady" (:roleTransition member-state)))
+      {:summary summary
+       :member member-state})))
+
+(defn- promotion-progress-state [summary reconfig member]
+  (let [member-state (member-summary summary member)]
+    (when (and (:success summary)
+               (:success reconfig)
+               member-state
+               (= "VOTER" (:role member-state))
+               (or
+                (and (not (:jointConsensus summary))
+                     (not (:reconfigurationActive reconfig))
+                     (= "VOTER" (:currentRole member-state))
+                     (= "steady" (:roleTransition member-state)))
+                (and (:jointConsensus summary)
+                     (= "LEARNER" (:currentRole member-state))
+                     (= "VOTER" (:nextRole member-state))
+                     (= "promoting" (:roleTransition member-state)))))
+      {:summary summary
+       :reconfig reconfig
+       :member member-state})))
+
+(defn- wait-for! [timeout-ms interval-ms pred]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (if-let [value (pred)]
+        value
+        (when (< (System/currentTimeMillis) deadline)
+          (Thread/sleep interval-ms)
+          (recur))))))
 
 (defn- target-nodes [target]
   (cond
@@ -149,3 +235,100 @@
 
 (defn partition-leader-minority []
   (partition-nemesis leader-minority-nodes "nemesis-partition-leader-minority"))
+
+(defn- promote-member! [test leader member]
+  (let [{:keys [exit out err]}
+        (shell! (:repo-root test)
+                (java-command (:jar-path test)
+                              "reconfigure"
+                              "promote"
+                              (target-spec test leader)
+                              (str (target-spec test member) "/learner")))]
+    (when-not (zero? exit)
+      (throw (ex-info "Promote request failed"
+                      {:leader leader :member member :exit exit :out out :err err})))
+    out))
+
+(defn membership-join-promote []
+  (let [membership-state (atom {:started? false})]
+    (reify
+      jepsen.nemesis/Nemesis
+      (setup! [this _test] this)
+      (invoke! [_ test op]
+        (case (:f op)
+          :start
+          (locking membership-state
+            (if (:started? @membership-state)
+              (assoc op :type :info :value :already-started)
+              (let [member (raft-db/membership-node test)
+                    seed (raft-db/membership-seed-node test)]
+                (raft-db/start-joining-node! test member false)
+                (observer/capture-safe! test "nemesis-membership-join-promote"
+                                        {:node member
+                                         :op {:f :start}
+                                         :extra {:seed seed :phase :join-started}})
+                (when-let [leader (wait-for! 15000 500 #(leader-node test))]
+                  (let [join-response (join-request! test leader member)]
+                    (observer/capture-safe! test "nemesis-membership-join-promote"
+                                            {:node member
+                                             :op {:f :join-request}
+                                             :extra {:leader leader
+                                                     :phase :join-requested
+                                                     :joinRequestStatus (:status join-response)
+                                                     :joinRequestStdout (:stdout join-response)}})))
+                (let [joined-summary
+                      (wait-for! 30000 500
+                                 #(when-let [leader (leader-node test)]
+                                    (try
+                                      (let [summary (cluster-summary test leader)
+                                            learner-state (stable-learner-state summary member)
+                                            join-state (join-status test leader member)]
+                                        (when learner-state
+                                          {:leader leader
+                                           :summary summary
+                                           :member (:member learner-state)
+                                           :join-state join-state}))
+                                      (catch Throwable _
+                                        nil))))]
+                  (when-not joined-summary
+                    (throw (ex-info "Timed out waiting for joining learner to stabilize"
+                                    {:member member})))
+                  (promote-member! test (:leader joined-summary) member)
+                  (observer/capture-safe! test "nemesis-membership-join-promote"
+                                          {:node member
+                                           :op {:f :promote}
+                                           :extra {:leader (:leader joined-summary) :phase :promotion-requested}})
+                  (let [promoted-summary
+                        (wait-for! 30000 500
+                                   #(when-let [leader (leader-node test)]
+                                      (try
+                                        (let [summary (cluster-summary test leader)
+                                              reconfig (reconfiguration-status test leader)
+                                              progress (promotion-progress-state summary reconfig member)]
+                                          (when progress
+                                            {:leader leader
+                                             :summary summary
+                                             :reconfig reconfig
+                                             :member (:member progress)}))
+                                        (catch Throwable _
+                                          nil))))]
+                    (when-not promoted-summary
+                      (throw (ex-info "Timed out waiting for promoted voter to stabilize"
+                                      {:member member})))
+                    (reset! membership-state {:started? true
+                                              :member member
+                                              :leader (:leader promoted-summary)})
+                    (observer/capture-safe! test "nemesis-membership-join-promote"
+                                            {:node member
+                                             :op {:f :completed}
+                                             :extra {:leader (:leader promoted-summary)
+                                                     :phase :stable-voter}})
+                    (assoc op :type :info
+                           :value {:member member
+                                   :leader (:leader promoted-summary)
+                                   :status :stable-voter}))))))
+          :stop (assoc op :type :info :value :noop)
+          (assoc op :type :info :error :unsupported-nemesis-op)))
+      (teardown! [_ test]
+        (when-let [member (:member @membership-state)]
+          (raft-db/stop-node! test member))))))

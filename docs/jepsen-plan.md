@@ -13,9 +13,9 @@ This file tracks the incremental work needed to add a Jepsen test harness alongs
 - [x] Add network partition nemeses.
 - [x] Add observability hooks to correlate Jepsen histories with node telemetry and cluster-summary output.
 - [x] Expand the harness to 5-node runs.
-- [ ] Add leader-targeted partition nemesis scenarios.
-- [ ] Add majority-loss partition scenarios.
-- [ ] Add longer 5-node Jepsen runs for repeated election and recovery cycles.
+- [x] Add leader-targeted partition nemesis scenarios.
+- [x] Add majority-loss partition scenarios.
+- [x] Add longer 5-node Jepsen runs for repeated election and recovery cycles.
 - [ ] Add membership-change scenarios covering join, promote/demote, and finalize flows.
 - [ ] Extend the KV workload beyond a plain register model, ideally with CAS support.
 - [ ] Document developer workflow for running classic tests and Jepsen tests side by side.
@@ -33,6 +33,7 @@ This file tracks the incremental work needed to add a Jepsen test harness alongs
 - `Partition validation`: passing 5-node `partition-one` run with a real isolated node and linearizable result.
 - `Leader-targeted partition validation`: passing short runs for `partition-leader` and `partition-leader-minority`.
 - `Longer 5-node runs`: passing when executed serially. Earlier failures were caused by running two local Jepsen processes in parallel against shared host ports and packet-filter state, which made those results non-diagnostic.
+- `Membership scenarios`: first local `membership-join-promote` Jepsen mode is implemented and validated. Repeated 20-second smoke runs now complete with `n6` admitted and promoted, while the surrounding KV workload remains linearizable.
 
 ## Notes
 

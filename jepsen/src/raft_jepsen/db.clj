@@ -14,6 +14,8 @@
   (or (first (keep-indexed (fn [idx candidate]
                              (when (= candidate node) idx))
                            (:nodes test)))
+      (when-let [[_ ordinal] (re-matches #"n(\d+)" (str node))]
+        (dec (Long/parseLong ordinal)))
       (throw (ex-info "Unknown Jepsen node" {:node node :nodes (:nodes test)}))))
 
 (defn node-port [test node]
@@ -21,6 +23,12 @@
 
 (defn peer-spec [test node]
   (str node "@127.0.0.1:" (node-port test node)))
+
+(defn membership-node [test]
+  (str "n" (inc (long (:node-count test)))))
+
+(defn membership-seed-node [test]
+  (first (:nodes test)))
 
 (defn node-ports [test]
   (mapv #(node-port test %) (:nodes test)))
@@ -83,6 +91,24 @@
                                                     (recur))
           :else false)))))
 
+(defn- launch-node! [test node command preserve-state?]
+  (let [root (node-root test node)
+        data-dir (node-data-dir test node)
+        log-file (node-log-file test node)
+        _ (when-not preserve-state?
+            (delete-recursively! root))
+        _ (ensure-dir! data-dir)
+        builder (doto (ProcessBuilder. ^java.util.List command)
+                  (.directory (repo-root test))
+                  (.redirectErrorStream true)
+                  (.redirectOutput (ProcessBuilder$Redirect/appendTo log-file)))
+        process (.start builder)]
+    (swap! processes assoc node process)
+    (when-not (await-port! (node-port test node) 15000)
+      (stop-node! test node)
+      (throw (ex-info "Timed out waiting for node to start"
+                      {:node node :port (node-port test node) :log-file (.getAbsolutePath log-file)})))))
+
 (defn resolved-jar-path [test]
   (if-let [configured (:jar-path test)]
     (.getAbsolutePath (io/file configured))
@@ -103,32 +129,33 @@
    (start-node! test node false))
   ([test node preserve-state?]
    (when-not (process-alive? (get @processes node))
-     (let [root (node-root test node)
-           data-dir (node-data-dir test node)
-           log-file (node-log-file test node)
-           self-spec (peer-spec test node)
+     (let [self-spec (peer-spec test node)
            peer-specs (->> (:nodes test)
                            (remove #(= % node))
                            (map #(peer-spec test %)))
            command (into ["java"
-                          (str "-Draft.data.dir=" (.getAbsolutePath data-dir))
+                          (str "-Draft.data.dir=" (.getAbsolutePath (node-data-dir test node)))
                           "-jar"
                           (resolved-jar-path test)
                           self-spec]
                          peer-specs)
-           _ (when-not preserve-state?
-               (delete-recursively! root))
-           _ (ensure-dir! data-dir)
-           builder (doto (ProcessBuilder. ^java.util.List command)
-                     (.directory (repo-root test))
-                     (.redirectErrorStream true)
-                     (.redirectOutput (ProcessBuilder$Redirect/appendTo log-file)))
-           process (.start builder)]
-       (swap! processes assoc node process)
-       (when-not (await-port! (node-port test node) 15000)
-         (stop-node! test node)
-         (throw (ex-info "Timed out waiting for node to start"
-                         {:node node :port (node-port test node) :log-file (.getAbsolutePath log-file)})))))))
+           ]
+       (launch-node! test node command preserve-state?)))))
+
+(defn start-joining-node!
+  ([test node]
+   (start-joining-node! test node false))
+  ([test node preserve-state?]
+   (when-not (process-alive? (get @processes node))
+     (let [seed (membership-seed-node test)
+           command ["java"
+                    (str "-Draft.data.dir=" (.getAbsolutePath (node-data-dir test node)))
+                    "-jar"
+                    (resolved-jar-path test)
+                    "join"
+                    (str (peer-spec test node) "/learner")
+                    (peer-spec test seed)]]
+       (launch-node! test node command preserve-state?)))))
 
 (defn local-db []
   (reify db/DB

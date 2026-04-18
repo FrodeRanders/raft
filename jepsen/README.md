@@ -7,7 +7,7 @@ This directory contains the first Jepsen harness for the repository: a local key
 - 5 local voter nodes by default
 - key-value application only
 - linearizable register workload over a single hot key
-- no membership changes yet
+- optional membership-change scenario for join and promote
 
 ## Prerequisites
 
@@ -37,6 +37,7 @@ Optional overrides:
 ./run-local.sh --node-count 5 --nemesis crash-restart
 ./run-local.sh --node-count 5 --nemesis partition-leader
 ./run-local.sh --node-count 5 --nemesis partition-leader-minority
+./run-local.sh --node-count 5 --nemesis membership-join-promote
 ```
 
 Run local Jepsen tests serially, not in parallel.
@@ -49,7 +50,7 @@ Supported options:
 - `--concurrency <n>`: Jepsen client concurrency
 - `--base-port <port>`: first node port, default `10080`
 - `--node-count <n>`: number of local nodes, default `5`
-- `--nemesis <mode>`: `none`, `crash-restart`, `partition-one`, `partition-leader`, or `partition-leader-minority`
+- `--nemesis <mode>`: `none`, `crash-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, or `membership-join-promote`
 - `--nemesis-interval <seconds>`: delay between crash/restart actions
 - `--workdir <path>`: local node state/log directory
 
@@ -71,6 +72,7 @@ Supported options:
 - `partition-one` isolates one random node by blocking its local TCP port through a dedicated `pfctl` anchor on macOS or `iptables` on Linux.
 - `partition-leader` first discovers the current Raft leader through `cluster-summary --json`, then isolates that node.
 - `partition-leader-minority` isolates the current leader together with one additional node, cutting the leader into a 2-node minority against the remaining 3-node majority.
+- `membership-join-promote` starts a sixth local node in join mode as a learner, waits for the join to stabilize, then promotes it to voter while the workload continues against the original client nodes.
 - The partition helper re-execs itself through `sudo -n` when needed. Jepsen invokes it non-interactively, so passwordless sudo must be configured for the helper path.
 - On macOS, a practical sudoers entry is:
 

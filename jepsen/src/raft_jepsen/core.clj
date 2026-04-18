@@ -69,7 +69,7 @@
     "  --concurrency <n>     Client concurrency, default 10"
     "  --base-port <port>    First node port, default 10080"
     "  --node-count <n>      Number of local nodes, default 5"
-    "  --nemesis <mode>      none|crash-restart|partition-one|partition-leader|partition-leader-minority, default none"
+    "  --nemesis <mode>      none|crash-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote, default none"
     "  --nemesis-interval <sec> Nemesis interval, default 5"
     "  --workdir <path>      Local work directory, default ./work"]))
 
@@ -104,11 +104,16 @@
     "partition-one" (raft-nemesis/partition-one)
     "partition-leader" (raft-nemesis/partition-leader)
     "partition-leader-minority" (raft-nemesis/partition-leader-minority)
+    "membership-join-promote" (raft-nemesis/membership-join-promote)
     (throw (ex-info "Unknown nemesis mode" {:nemesis-mode (:nemesis-mode opts)}))))
 
 (defn- nemesis-generator [opts]
   (case (:nemesis-mode opts)
     "none" nil
+    "membership-join-promote"
+    (gen/phases
+     (gen/sleep (:nemesis-interval opts))
+     (gen/once {:f :start}))
     (gen/cycle
      (gen/phases
       (gen/once {:f :stop})
@@ -146,6 +151,7 @@
     :nemesis (nemesis-object opts)
     :generator (generator opts)
     :base-port (:base-port opts)
+    :node-count (:node-count opts)
     :time-limit (:time-limit opts)
     :concurrency (:concurrency opts)
     :repo-root (:repo-root opts)

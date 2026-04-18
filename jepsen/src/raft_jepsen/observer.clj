@@ -42,6 +42,8 @@
   (or (first (keep-indexed (fn [idx candidate]
                              (when (= candidate node) idx))
                            (:nodes test)))
+      (when-let [[_ ordinal] (re-matches #"n(\d+)" (str node))]
+        (dec (Long/parseLong ordinal)))
       (throw (ex-info "Unknown Jepsen node" {:node node :nodes (:nodes test)}))))
 
 (defn- node-port [test node]
