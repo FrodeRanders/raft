@@ -63,8 +63,22 @@ Supported options:
 - Successful writes are interpreted as committed/applied completions.
 - The harness defaults to 5 nodes now, but `--node-count 3` is still useful for faster local debugging.
 - `crash-restart` stops a node process without deleting its state directory, then starts it again from the same persisted data.
-- `partition-one` isolates one random node by blocking its local TCP port through `pfctl` on macOS or `iptables` on Linux.
-- The partition helper requires root privileges and modifies local packet-filter rules; review it before use.
+- `partition-one` isolates one random node by blocking its local TCP port through a dedicated `pfctl` anchor on macOS or `iptables` on Linux.
+- The partition helper re-execs itself through `sudo -n` when needed. Jepsen invokes it non-interactively, so passwordless sudo must be configured for the helper path.
+- On macOS, a practical sudoers entry is:
+
+```text
+<your-user> ALL=(root) NOPASSWD: /Users/froran/Projects/gautelis/raft/jepsen/scripts/partition.sh *
+```
+
+- Install that with `sudo visudo -f /etc/sudoers.d/raft-jepsen`.
+- Verify the privilege path before running Jepsen:
+
+```text
+sudo -n /Users/froran/Projects/gautelis/raft/jepsen/scripts/partition.sh heal
+```
+
+- If you need to disable auto-escalation for debugging, set `RAFT_JEPSEN_SUDO_MODE=off`.
 - Observations are written to `work/observations/cluster-events.jsonl` unless `--workdir` overrides the root.
 - Snapshots are captured during DB setup/teardown, nemesis start/stop actions, and client-side `RETRY`/`REDIRECT`/failure paths.
 - The implementation was scaffolded in this environment but not executed here because the Clojure CLI was not installed.

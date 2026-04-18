@@ -10,16 +10,38 @@ ACTION="$1"
 shift
 
 OS="$(uname -s)"
+SELF_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+SUDO_BIN="${SUDO_BIN:-$(command -v sudo || true)}"
+SUDO_MODE="${RAFT_JEPSEN_SUDO_MODE:-auto}"
+
+reexec_with_sudo() {
+  if [[ -z "${SUDO_BIN}" ]]; then
+    echo "partition.sh requires root privileges and sudo was not found" >&2
+    exit 2
+  fi
+  exec "${SUDO_BIN}" -n -- "${SELF_PATH}" "${ACTION}" "$@"
+}
 
 ensure_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    echo "partition.sh requires root privileges" >&2
-    exit 2
+    case "${SUDO_MODE}" in
+      auto)
+        reexec_with_sudo "$@"
+        ;;
+      off)
+        echo "partition.sh requires root privileges" >&2
+        exit 2
+        ;;
+      *)
+        echo "unsupported RAFT_JEPSEN_SUDO_MODE: ${SUDO_MODE}" >&2
+        exit 2
+        ;;
+    esac
   fi
 }
 
 anchor_name="raft-jepsen"
-pf_anchor_file="/etc/pf.anchors/${anchor_name}"
+pf_anchor_file="/tmp/${anchor_name}.pf.conf"
 
 apply_pf_rules() {
   local ports=("$@")
@@ -28,16 +50,13 @@ apply_pf_rules() {
     echo "block drop quick on lo0 proto tcp from any port { $(IFS=,; echo "${ports[*]}") } to any"
   } > "${pf_anchor_file}"
 
-  if ! grep -q "anchor \"${anchor_name}\"" /etc/pf.conf; then
-    printf '\nanchor "%s"\nload anchor "%s" from "%s"\n' "${anchor_name}" "${anchor_name}" "${pf_anchor_file}" >> /etc/pf.conf
-  fi
-  pfctl -f /etc/pf.conf >/dev/null
+  pfctl -a "${anchor_name}" -f "${pf_anchor_file}" >/dev/null
   pfctl -e >/dev/null 2>&1 || true
 }
 
 heal_pf_rules() {
+  pfctl -a "${anchor_name}" -F rules >/dev/null 2>&1 || true
   rm -f "${pf_anchor_file}"
-  pfctl -f /etc/pf.conf >/dev/null
 }
 
 iptables_bin() {
@@ -72,7 +91,7 @@ heal_iptables_rules() {
 
 case "${ACTION}" in
   isolate)
-    ensure_root
+    ensure_root "$@"
     if [[ $# -lt 1 ]]; then
       echo "isolate requires at least one port" >&2
       exit 1
@@ -96,7 +115,7 @@ case "${ACTION}" in
     esac
     ;;
   heal)
-    ensure_root
+    ensure_root "$@"
     case "${OS}" in
       Darwin)
         heal_pf_rules
