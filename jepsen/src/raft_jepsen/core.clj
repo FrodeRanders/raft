@@ -69,7 +69,7 @@
     "  --concurrency <n>     Client concurrency, default 10"
     "  --base-port <port>    First node port, default 10080"
     "  --node-count <n>      Number of local nodes, default 5"
-    "  --nemesis <mode>      none|crash-restart|partition-one, default none"
+    "  --nemesis <mode>      none|crash-restart|partition-one|partition-leader|partition-leader-minority, default none"
     "  --nemesis-interval <sec> Nemesis interval, default 5"
     "  --workdir <path>      Local work directory, default ./work"]))
 
@@ -102,6 +102,8 @@
     "none" nemesis/noop
     "crash-restart" (raft-nemesis/crash-restart)
     "partition-one" (raft-nemesis/partition-one)
+    "partition-leader" (raft-nemesis/partition-leader)
+    "partition-leader-minority" (raft-nemesis/partition-leader-minority)
     (throw (ex-info "Unknown nemesis mode" {:nemesis-mode (:nemesis-mode opts)}))))
 
 (defn- nemesis-generator [opts]
