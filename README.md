@@ -250,7 +250,7 @@ Cluster configuration is persisted as part of Raft state:
 - a surviving node that restarts comes back with the latest committed membership
 
 ## Telemetry
-Nodes now expose:
+Nodes expose:
 
 - `TelemetryRequest` / `TelemetryResponse` for detailed node-level inspection
 - `ClusterSummaryRequest` / `ClusterSummaryResponse` for leader-oriented cluster-wide status
