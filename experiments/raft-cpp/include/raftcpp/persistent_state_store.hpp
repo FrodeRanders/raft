@@ -45,6 +45,9 @@ public:
         out << "previous_log_index=" << state.previous_log_index << '\n';
         out << "previous_log_term=" << state.previous_log_term << '\n';
         out << "last_entry_data=" << escape(state.last_entry_data) << '\n';
+        for (const auto& entry : state.log_entries) {
+            out << "log_entry=" << entry.index << ',' << entry.term << ',' << escape(entry.data) << '\n';
+        }
         for (const auto& [peer_id, progress] : state.peer_progress) {
             out << "peer_progress=" << escape(peer_id) << ',' << progress.next_index << ',' << progress.match_index << '\n';
         }
@@ -95,6 +98,17 @@ public:
                 state.previous_log_term = std::stoll(value);
             } else if (key == "last_entry_data") {
                 state.last_entry_data = value;
+            } else if (key == "log_entry") {
+                const auto first = value.find(',');
+                const auto second = value.find(',', first == std::string::npos ? first : first + 1);
+                if (first == std::string::npos || second == std::string::npos) {
+                    throw std::runtime_error("invalid log_entry line in state file: " + path_.string());
+                }
+                state.log_entries.push_back(RaftNode::LogEntryRecord{
+                    .index = std::stoll(value.substr(0, first)),
+                    .term = std::stoll(value.substr(first + 1, second - first - 1)),
+                    .data = value.substr(second + 1),
+                });
             } else if (key == "peer_progress") {
                 const auto first = value.find(',');
                 const auto second = value.find(',', first == std::string::npos ? first : first + 1);

@@ -38,6 +38,12 @@ public:
         std::int64_t match_index{0};
     };
 
+    struct LogEntryRecord {
+        std::int64_t index{0};
+        std::int64_t term{0};
+        std::string data;
+    };
+
     struct PersistentState {
         std::string peer_id;
         std::int64_t current_term{0};
@@ -52,6 +58,7 @@ public:
         std::int64_t previous_log_index{0};
         std::int64_t previous_log_term{0};
         std::string last_entry_data;
+        std::vector<LogEntryRecord> log_entries;
         std::unordered_map<std::string, PeerProgress> peer_progress;
     };
 
@@ -113,8 +120,20 @@ public:
             success = true;
 
             if (request.entries_size() > 0) {
-                last_log_index_ = request.prev_log_index() + request.entries_size();
-                last_log_term_ = request.entries(request.entries_size() - 1).term();
+                truncate_log_from_locked(request.prev_log_index() + 1);
+                for (int i = 0; i < request.entries_size(); ++i) {
+                    const auto& entry = request.entries(i);
+                    log_entries_.push_back(LogEntryRecord{
+                        .index = request.prev_log_index() + 1 + i,
+                        .term = entry.term(),
+                        .data = entry.data(),
+                    });
+                }
+                last_log_index_ = log_entries_.back().index;
+                last_log_term_ = log_entries_.back().term;
+                previous_log_index_ = request.prev_log_index();
+                previous_log_term_ = request.prev_log_term();
+                last_entry_data_ = log_entries_.back().data;
                 match_index = last_log_index_;
             } else {
                 match_index = request.prev_log_index();
@@ -332,6 +351,11 @@ public:
         previous_log_term_ = last_log_term_;
         last_log_index_ += 1;
         last_log_term_ = current_term_;
+        log_entries_.push_back(LogEntryRecord{
+            .index = last_log_index_,
+            .term = last_log_term_,
+            .data = data,
+        });
         last_entry_data_ = std::move(data);
         peer_progress_[peer_id_].match_index = last_log_index_;
         peer_progress_[peer_id_].next_index = last_log_index_ + 1;
@@ -366,23 +390,16 @@ public:
         const auto prev_log_index = std::max<std::int64_t>(0, next_index - 1);
         request.set_prev_log_index(prev_log_index);
 
-        if (prev_log_index == 0) {
-            request.set_prev_log_term(0);
-        } else if (prev_log_index == snapshot_index_) {
-            request.set_prev_log_term(snapshot_term_);
-        } else if (!last_entry_data_.empty() && prev_log_index == previous_log_index_) {
-            request.set_prev_log_term(previous_log_term_);
-        } else if (prev_log_index == last_log_index_ && last_entry_data_.empty()) {
-            request.set_prev_log_term(last_log_term_);
-        } else {
-            request.set_prev_log_term(0);
-        }
+        request.set_prev_log_term(log_term_at_locked(prev_log_index));
 
-        if (!last_entry_data_.empty() && next_index == last_log_index_) {
+        for (const auto& local_entry : log_entries_) {
+            if (local_entry.index < next_index) {
+                continue;
+            }
             auto* entry = request.add_entries();
-            entry->set_term(last_log_term_);
+            entry->set_term(local_entry.term);
             entry->set_peer_id(this->peer_id_);
-            entry->set_data(last_entry_data_);
+            entry->set_data(local_entry.data);
         }
 
         return request;
@@ -449,6 +466,7 @@ public:
             .previous_log_index = previous_log_index_,
             .previous_log_term = previous_log_term_,
             .last_entry_data = last_entry_data_,
+            .log_entries = log_entries_,
             .peer_progress = peer_progress_,
         };
     }
@@ -468,6 +486,7 @@ public:
         previous_log_index_ = state.previous_log_index;
         previous_log_term_ = state.previous_log_term;
         last_entry_data_ = state.last_entry_data;
+        log_entries_ = state.log_entries;
         role_ = leader_id_.has_value() && *leader_id_ == peer_id_ ? Role::leader : Role::follower;
         last_activity_ = std::chrono::steady_clock::now();
         normalize_voting_peers_locked();
@@ -572,10 +591,59 @@ private:
         if (prev_log_index == 0 && prev_log_term == 0) {
             return true;
         }
-        if (prev_log_index == last_log_index_ && prev_log_term == last_log_term_) {
-            return true;
+        return log_term_at_locked(prev_log_index) == prev_log_term;
+    }
+
+    std::int64_t log_term_at_locked(std::int64_t index) const {
+        if (index == 0) {
+            return 0;
         }
-        return prev_log_index == snapshot_index_ && prev_log_term == snapshot_term_;
+        if (index == snapshot_index_) {
+            return snapshot_term_;
+        }
+        for (const auto& entry : log_entries_) {
+            if (entry.index == index) {
+                return entry.term;
+            }
+        }
+        if (index == last_log_index_) {
+            return last_log_term_;
+        }
+        if (index == previous_log_index_) {
+            return previous_log_term_;
+        }
+        return 0;
+    }
+
+    void truncate_log_from_locked(std::int64_t index) {
+        if (index <= 0) {
+            log_entries_.clear();
+        } else {
+            log_entries_.erase(
+                std::remove_if(log_entries_.begin(), log_entries_.end(), [index](const auto& entry) {
+                    return entry.index >= index;
+                }),
+                log_entries_.end()
+            );
+        }
+        if (!log_entries_.empty()) {
+            last_log_index_ = log_entries_.back().index;
+            last_log_term_ = log_entries_.back().term;
+            last_entry_data_ = log_entries_.back().data;
+            if (log_entries_.size() >= 2) {
+                previous_log_index_ = log_entries_[log_entries_.size() - 2].index;
+                previous_log_term_ = log_entries_[log_entries_.size() - 2].term;
+            } else {
+                previous_log_index_ = snapshot_index_;
+                previous_log_term_ = snapshot_term_;
+            }
+        } else if (last_log_index_ > snapshot_index_) {
+            last_log_index_ = snapshot_index_;
+            last_log_term_ = snapshot_term_;
+            previous_log_index_ = snapshot_index_;
+            previous_log_term_ = snapshot_term_;
+            last_entry_data_.clear();
+        }
     }
 
     void step_down_locked(std::int64_t new_term, std::optional<std::string> leader_id) {
@@ -602,6 +670,7 @@ private:
     std::int64_t previous_log_index_;
     std::int64_t previous_log_term_;
     std::string last_entry_data_;
+    std::vector<LogEntryRecord> log_entries_;
     std::chrono::steady_clock::time_point last_activity_;
     std::vector<std::string> voting_peers_;
     std::unordered_map<std::string, PeerProgress> peer_progress_;
