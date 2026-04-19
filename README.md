@@ -123,7 +123,7 @@ This startup peer list is a transport seed, not the full source of truth for mem
 For local runs, `./scripts/start_raft.sh` is still the easiest way to form an initial cluster. It gives each node enough seed addresses to elect a leader and start exchanging Raft traffic, but it does not lock the cluster to that initial member set.
 
 ### API surface
-Cluster management and ordinary client access now use typed protobuf messages, not free-form command strings:
+Cluster management and ordinary client access use typed protobuf messages:
 
 - `ClientCommandRequest` / `ClientCommandResponse`
 - `ClientQueryRequest` / `ClientQueryResponse`
