@@ -27,6 +27,7 @@ The current scaffold implements:
   - `serve-active`
   - `election-round`
   - `heartbeat-round`
+  - `replicate-once`
 
 This is enough to establish the wire-level interoperability path before migrating any Raft logic.
 
@@ -89,6 +90,7 @@ experiments/raft-cpp/build/raft_cpp_smoke serve-stateful 127.0.0.1 11081 cpp-nod
 experiments/raft-cpp/build/raft_cpp_smoke serve-active 127.0.0.1 11082 cpp-node 3 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/build/raft_cpp_smoke election-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/build/raft_cpp_smoke heartbeat-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
+experiments/raft-cpp/build/raft_cpp_smoke replicate-once cpp-node 3 hello 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/run-interop-smoke.sh
 ```
 
@@ -171,6 +173,11 @@ The new `election-round` and `heartbeat-round` commands are the first outbound-r
   - forces the local node into leader state
   - builds heartbeat-style `AppendEntriesRequest` messages for each listed peer
   - sends them and updates per-peer replication progress from the responses
+- `replicate-once`
+  - forces the local node into leader state
+  - appends one synthetic local log entry
+  - sends a non-empty `AppendEntriesRequest` carrying that entry to each listed peer
+  - updates per-peer match progress from the responses
 
 Peer lists for these commands use:
 

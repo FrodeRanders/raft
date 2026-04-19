@@ -47,6 +47,8 @@ public:
           commit_index_(config.commit_index),
           snapshot_index_(config.snapshot_index),
           snapshot_term_(config.snapshot_term),
+          previous_log_index_(config.last_log_index),
+          previous_log_term_(config.last_log_term),
           last_activity_(std::chrono::steady_clock::now()),
           voting_peers_(std::move(config.voting_peers)) {
         normalize_voting_peers_locked();
@@ -301,6 +303,18 @@ public:
         return false;
     }
 
+    std::int64_t append_local_entry(std::string data) {
+        std::scoped_lock lock(mu_);
+        previous_log_index_ = last_log_index_;
+        previous_log_term_ = last_log_term_;
+        last_log_index_ += 1;
+        last_log_term_ = current_term_;
+        last_entry_data_ = std::move(data);
+        peer_progress_[peer_id_].match_index = last_log_index_;
+        peer_progress_[peer_id_].next_index = last_log_index_ + 1;
+        return last_log_index_;
+    }
+
     void observe_local_append(std::int64_t last_log_index, std::int64_t last_log_term) {
         std::scoped_lock lock(mu_);
         last_log_index_ = std::max(last_log_index_, last_log_index);
@@ -314,6 +328,41 @@ public:
                 }
             }
         }
+    }
+
+    raft::AppendEntriesRequest make_replication_request_for(const std::string& peer_id) const {
+        std::scoped_lock lock(mu_);
+
+        raft::AppendEntriesRequest request;
+        request.set_term(current_term_);
+        request.set_leader_id(this->peer_id_);
+        request.set_leader_commit(commit_index_);
+
+        const auto found = peer_progress_.find(peer_id);
+        const auto next_index = found != peer_progress_.end() ? found->second.next_index : (last_log_index_ + 1);
+        const auto prev_log_index = std::max<std::int64_t>(0, next_index - 1);
+        request.set_prev_log_index(prev_log_index);
+
+        if (prev_log_index == 0) {
+            request.set_prev_log_term(0);
+        } else if (prev_log_index == snapshot_index_) {
+            request.set_prev_log_term(snapshot_term_);
+        } else if (!last_entry_data_.empty() && prev_log_index == previous_log_index_) {
+            request.set_prev_log_term(previous_log_term_);
+        } else if (prev_log_index == last_log_index_ && last_entry_data_.empty()) {
+            request.set_prev_log_term(last_log_term_);
+        } else {
+            request.set_prev_log_term(0);
+        }
+
+        if (!last_entry_data_.empty() && next_index == last_log_index_) {
+            auto* entry = request.add_entries();
+            entry->set_term(last_log_term_);
+            entry->set_peer_id(this->peer_id_);
+            entry->set_data(last_entry_data_);
+        }
+
+        return request;
     }
 
     std::string peer_id() const {
@@ -454,6 +503,9 @@ private:
     std::int64_t commit_index_;
     std::int64_t snapshot_index_;
     std::int64_t snapshot_term_;
+    std::int64_t previous_log_index_;
+    std::int64_t previous_log_term_;
+    std::string last_entry_data_;
     std::chrono::steady_clock::time_point last_activity_;
     std::vector<std::string> voting_peers_;
     std::unordered_map<std::string, PeerProgress> peer_progress_;

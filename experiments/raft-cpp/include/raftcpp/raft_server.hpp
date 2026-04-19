@@ -1,11 +1,15 @@
 #pragma once
 
+#include <array>
 #include <boost/asio.hpp>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "raft.pb.h"
 #include "raftcpp/envelope_codec.hpp"
@@ -25,95 +29,180 @@ public:
         }
     }
 
-    [[noreturn]] void serve_forever() {
+    void start() {
         std::cout
             << "raft_cpp_smoke server listening on "
             << endpoint_.address().to_string() << ":" << endpoint_.port()
             << '\n';
+        start_accept();
+    }
 
-        for (;;) {
-            boost::asio::ip::tcp::socket socket(io_context_);
-            acceptor_.accept(socket);
-            serve_connection(socket);
-        }
+    [[noreturn]] void serve_forever() {
+        start();
+        io_context_.run();
+        throw std::runtime_error("raft server io_context stopped unexpectedly");
     }
 
 private:
-    void serve_connection(boost::asio::ip::tcp::socket& socket) {
-        for (;;) {
-            if (!socket.is_open()) {
+    class Connection : public std::enable_shared_from_this<Connection> {
+    public:
+        Connection(boost::asio::ip::tcp::socket socket, RpcHandlerPtr handler)
+            : socket_(std::move(socket)),
+              handler_(std::move(handler)) {
+        }
+
+        void start() {
+            read_length_byte();
+        }
+
+    private:
+        void read_length_byte() {
+            auto self = shared_from_this();
+            boost::asio::async_read(socket_, boost::asio::buffer(length_byte_), [self](const boost::system::error_code& error, std::size_t) {
+                if (error) {
+                    self->close();
+                    return;
+                }
+                self->on_length_byte(self->length_byte_[0]);
+            });
+        }
+
+        void on_length_byte(std::uint8_t byte) {
+            frame_length_ |= static_cast<std::uint32_t>(byte & 0x7Fu) << length_shift_;
+            if ((byte & 0x80u) == 0) {
+                read_payload();
                 return;
             }
 
+            length_shift_ += 7;
+            if (length_shift_ >= 35) {
+                throw std::runtime_error("malformed varint32 length prefix");
+            }
+            read_length_byte();
+        }
+
+        void read_payload() {
+            payload_.assign(frame_length_, 0);
+            auto self = shared_from_this();
+            boost::asio::async_read(socket_, boost::asio::buffer(payload_), [self](const boost::system::error_code& error, std::size_t) {
+                if (error) {
+                    self->close();
+                    return;
+                }
+                self->on_payload();
+            });
+        }
+
+        void on_payload() {
             raft::Envelope request_envelope;
-            try {
-                request_envelope = read_envelope(socket);
-            } catch (const std::exception&) {
+            if (!request_envelope.ParseFromArray(payload_.data(), static_cast<int>(payload_.size()))) {
+                throw std::runtime_error("failed to parse envelope");
+            }
+
+            reset_frame_state();
+            const auto response = dispatch(request_envelope);
+            if (!response.has_value()) {
+                read_length_byte();
                 return;
             }
 
-            const auto response = dispatch(request_envelope);
-            if (response.has_value()) {
-                write_envelope(socket, *response);
-            }
+            write_buffer_ = encode_envelope(*response);
+            auto self = shared_from_this();
+            boost::asio::async_write(socket_, boost::asio::buffer(write_buffer_), [self](const boost::system::error_code& error, std::size_t) {
+                if (error) {
+                    self->close();
+                    return;
+                }
+                self->write_buffer_.clear();
+                self->read_length_byte();
+            });
         }
-    }
 
-    std::optional<raft::Envelope> dispatch(const raft::Envelope& request_envelope) {
-        std::cout
-            << "received type=" << request_envelope.type()
-            << " correlation_id=" << request_envelope.correlation_id()
-            << '\n';
+        std::optional<raft::Envelope> dispatch(const raft::Envelope& request_envelope) {
+            std::cout
+                << "received type=" << request_envelope.type()
+                << " correlation_id=" << request_envelope.correlation_id()
+                << '\n';
 
-        if (request_envelope.type() == "VoteRequest") {
-            raft::VoteRequest request;
-            if (!request.ParseFromString(request_envelope.payload())) {
-                throw std::runtime_error("failed to parse VoteRequest");
+            if (request_envelope.type() == "VoteRequest") {
+                raft::VoteRequest request;
+                if (!request.ParseFromString(request_envelope.payload())) {
+                    throw std::runtime_error("failed to parse VoteRequest");
+                }
+
+                if (auto response = handler_->on_vote_request(request); response.has_value()) {
+                    return wrap(request_envelope, "VoteResponse", *response);
+                }
+                return std::nullopt;
             }
 
-            if (auto response = handler_->on_vote_request(request); response.has_value()) {
-                return wrap(request_envelope, "VoteResponse", *response);
+            if (request_envelope.type() == "AppendEntriesRequest") {
+                raft::AppendEntriesRequest request;
+                if (!request.ParseFromString(request_envelope.payload())) {
+                    throw std::runtime_error("failed to parse AppendEntriesRequest");
+                }
+
+                if (auto response = handler_->on_append_entries_request(request); response.has_value()) {
+                    return wrap(request_envelope, "AppendEntriesResponse", *response);
+                }
+                return std::nullopt;
             }
+
+            if (request_envelope.type() == "InstallSnapshotRequest") {
+                raft::InstallSnapshotRequest request;
+                if (!request.ParseFromString(request_envelope.payload())) {
+                    throw std::runtime_error("failed to parse InstallSnapshotRequest");
+                }
+
+                if (auto response = handler_->on_install_snapshot_request(request); response.has_value()) {
+                    return wrap(request_envelope, "InstallSnapshotResponse", *response);
+                }
+                return std::nullopt;
+            }
+
+            std::cout << "ignoring unsupported inbound type=" << request_envelope.type() << '\n';
             return std::nullopt;
         }
 
-        if (request_envelope.type() == "AppendEntriesRequest") {
-            raft::AppendEntriesRequest request;
-            if (!request.ParseFromString(request_envelope.payload())) {
-                throw std::runtime_error("failed to parse AppendEntriesRequest");
+        template <typename Response>
+        static raft::Envelope wrap(const raft::Envelope& request_envelope, const std::string& response_type, const Response& response) {
+            raft::Envelope envelope;
+            envelope.set_correlation_id(request_envelope.correlation_id());
+            envelope.set_type(response_type);
+            if (!response.SerializeToString(envelope.mutable_payload())) {
+                throw std::runtime_error("failed to serialize response payload");
             }
-
-            if (auto response = handler_->on_append_entries_request(request); response.has_value()) {
-                return wrap(request_envelope, "AppendEntriesResponse", *response);
-            }
-            return std::nullopt;
+            return envelope;
         }
 
-        if (request_envelope.type() == "InstallSnapshotRequest") {
-            raft::InstallSnapshotRequest request;
-            if (!request.ParseFromString(request_envelope.payload())) {
-                throw std::runtime_error("failed to parse InstallSnapshotRequest");
-            }
-
-            if (auto response = handler_->on_install_snapshot_request(request); response.has_value()) {
-                return wrap(request_envelope, "InstallSnapshotResponse", *response);
-            }
-            return std::nullopt;
+        void reset_frame_state() {
+            frame_length_ = 0;
+            length_shift_ = 0;
+            payload_.clear();
         }
 
-        std::cout << "ignoring unsupported inbound type=" << request_envelope.type() << '\n';
-        return std::nullopt;
-    }
-
-    template <typename Response>
-    static raft::Envelope wrap(const raft::Envelope& request_envelope, const std::string& response_type, const Response& response) {
-        raft::Envelope envelope;
-        envelope.set_correlation_id(request_envelope.correlation_id());
-        envelope.set_type(response_type);
-        if (!response.SerializeToString(envelope.mutable_payload())) {
-            throw std::runtime_error("failed to serialize response payload");
+        void close() {
+            boost::system::error_code ignored;
+            socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignored);
+            socket_.close(ignored);
         }
-        return envelope;
+
+        boost::asio::ip::tcp::socket socket_;
+        RpcHandlerPtr handler_;
+        std::array<std::uint8_t, 1> length_byte_{};
+        std::uint32_t frame_length_{0};
+        int length_shift_{0};
+        std::vector<std::uint8_t> payload_;
+        std::vector<std::uint8_t> write_buffer_;
+    };
+
+    void start_accept() {
+        acceptor_.async_accept([this](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket) {
+            if (!error) {
+                std::make_shared<Connection>(std::move(socket), handler_)->start();
+            }
+            start_accept();
+        });
     }
 
     boost::asio::io_context& io_context_;

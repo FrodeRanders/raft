@@ -31,6 +31,7 @@ void print_usage() {
         << "  raft_cpp_smoke serve-active <bind-host> <port> <peer-id> <current-term> <last-log-index> <last-log-term> <peer-spec>...\n"
         << "  raft_cpp_smoke election-round <peer-id> [current-term] [last-log-index] [last-log-term] <peer-spec>...\n"
         << "  raft_cpp_smoke heartbeat-round <peer-id> <term> [last-log-index] [last-log-term] <peer-spec>...\n"
+        << "  raft_cpp_smoke replicate-once <peer-id> <term> <data> [last-log-index] [last-log-term] <peer-spec>...\n"
         << "\n"
         << "  peer-spec format: <peer-id>@<host>:<port>\n";
 }
@@ -445,6 +446,39 @@ int run_heartbeat_round(
     return successes > 0 ? 0 : 2;
 }
 
+int run_replicate_once(
+    const std::string& peer_id,
+    std::int64_t term,
+    const std::string& data,
+    std::int64_t last_log_index,
+    std::int64_t last_log_term,
+    std::vector<raftcpp::PeerEndpoint> peers
+) {
+    boost::asio::io_context io_context;
+    raftcpp::RaftRuntime runtime(
+        io_context,
+        raftcpp::RaftNode::Config{
+            .peer_id = peer_id,
+            .current_term = term,
+            .last_log_index = last_log_index,
+            .last_log_term = last_log_term,
+            .commit_index = last_log_index,
+            .snapshot_index = 0,
+            .snapshot_term = 0,
+            .voting_peers = {},
+        },
+        std::move(peers)
+    );
+    runtime.node().become_leader();
+
+    const auto successes = runtime.replicate_entry_once(data);
+    std::cout
+        << "role: " << (runtime.node().role() == raftcpp::RaftNode::Role::leader ? "leader" : "not-leader") << '\n'
+        << "replication_successes: " << successes << '\n'
+        << "last_log_index: " << runtime.node().last_log_index() << '\n';
+    return successes > 0 ? 0 : 2;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -574,6 +608,20 @@ int main(int argc, char** argv) {
                 parse_int64(argv[4], "last-log-index"),
                 parse_int64(argv[5], "last-log-term"),
                 parse_peer_specs(argv, 6, argc)
+            );
+        } else if (command == "replicate-once") {
+            if (argc < 7) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_replicate_once(
+                argv[2],
+                parse_int64(argv[3], "term"),
+                argv[4],
+                parse_int64(argv[5], "last-log-index"),
+                parse_int64(argv[6], "last-log-term"),
+                parse_peer_specs(argv, 7, argc)
             );
         } else {
             print_usage();

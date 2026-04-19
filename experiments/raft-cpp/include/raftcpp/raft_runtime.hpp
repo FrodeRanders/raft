@@ -120,6 +120,43 @@ public:
         return successes;
     }
 
+    std::size_t replicate_entry_once(const std::string& data) {
+        if (node_->role() != RaftNode::Role::leader) {
+            return 0;
+        }
+
+        node_->append_local_entry(data);
+
+        std::size_t successes = 0;
+        for (const auto& peer : peers_) {
+            const auto request = node_->make_replication_request_for(peer.peer_id);
+            try {
+                const auto response = client_.call<raft::AppendEntriesRequest, raft::AppendEntriesResponse>(
+                    peer.host,
+                    peer.port,
+                    "AppendEntriesRequest",
+                    request,
+                    "AppendEntriesResponse"
+                );
+                if (node_->handle_append_entries_response(peer.peer_id, response)) {
+                    successes += 1;
+                }
+                std::cout
+                    << "replication-response peer=" << peer.peer_id
+                    << " success=" << (response.success() ? "true" : "false")
+                    << " match_index=" << response.match_index()
+                    << '\n';
+            } catch (const std::exception& e) {
+                std::cout
+                    << "replication-response peer=" << peer.peer_id
+                    << " error=" << e.what()
+                    << '\n';
+            }
+        }
+
+        return successes;
+    }
+
 private:
     RaftClient client_;
     std::vector<PeerEndpoint> peers_;
