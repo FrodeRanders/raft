@@ -37,6 +37,8 @@
                :nemesis-interval 5
                :workload-mode "single-key"
                :key-count 3
+               :snapshot-min-entries nil
+               :snapshot-chunk-bytes nil
                :node-count 5
                :nodes (node-names 5)
                :key "k"}
@@ -51,6 +53,8 @@
           "--base-port" (recur (assoc opts :base-port (parse-long-arg value)) rest)
           "--workload" (recur (assoc opts :workload-mode value) rest)
           "--key-count" (recur (assoc opts :key-count (parse-long-arg value)) rest)
+          "--snapshot-min-entries" (recur (assoc opts :snapshot-min-entries (parse-long-arg value)) rest)
+          "--snapshot-chunk-bytes" (recur (assoc opts :snapshot-chunk-bytes (parse-long-arg value)) rest)
           "--node-count" (let [count (parse-long-arg value)]
                            (recur (assoc opts
                                          :node-count count
@@ -74,8 +78,10 @@
     "  --base-port <port>    First node port, default 10080"
     "  --workload <mode>     single-key|multi-key, default single-key"
     "  --key-count <n>       Keys for multi-key workload, default 3"
+    "  --snapshot-min-entries <n>  Override raft.snapshot.min.entries"
+    "  --snapshot-chunk-bytes <n>  Override raft.snapshot.chunk.bytes"
     "  --node-count <n>      Number of local nodes, default 5"
-    "  --nemesis <mode>      none|crash-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower|membership-remove-leader|membership-remove-follower-partition-leader, default none"
+    "  --nemesis <mode>      none|crash-restart|persistence-loss-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower|membership-remove-leader|membership-remove-follower-partition-leader, default none"
     "  --nemesis-interval <sec> Nemesis interval, default 5"
     "  --workdir <path>      Local work directory, default ./work"]))
 
@@ -165,6 +171,7 @@
   (case (:nemesis-mode opts)
     "none" nemesis/noop
     "crash-restart" (raft-nemesis/crash-restart)
+    "persistence-loss-restart" (raft-nemesis/persistence-loss-restart)
     "partition-one" (raft-nemesis/partition-one)
     "partition-leader" (raft-nemesis/partition-leader)
     "partition-leader-minority" (raft-nemesis/partition-leader-minority)
@@ -240,6 +247,8 @@
     :node-count (:node-count opts)
     :time-limit (:time-limit opts)
     :concurrency (:concurrency opts)
+    :snapshot-min-entries (:snapshot-min-entries opts)
+    :snapshot-chunk-bytes (:snapshot-chunk-bytes opts)
     :repo-root (:repo-root opts)
     :workdir (:workdir opts)
     :jar-path (:jar-path opts)

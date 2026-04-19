@@ -74,6 +74,10 @@
   (stop-node! test node)
   (delete-recursively! (node-root test node)))
 
+(defn wipe-node-data! [test node]
+  (stop-node! test node)
+  (delete-recursively! (node-data-dir test node)))
+
 (defn- await-port! [port timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
@@ -124,6 +128,15 @@
         (throw (ex-info "No raft-dist jar found; build raft-dist first"
                          {:target-dir (.getAbsolutePath target-dir)}))))))
 
+(defn- java-props [test node]
+  (vec
+   (concat
+    [(str "-Draft.data.dir=" (.getAbsolutePath (node-data-dir test node)))]
+    (when-let [min-entries (:snapshot-min-entries test)]
+      [(str "-Draft.snapshot.min.entries=" (long min-entries))])
+    (when-let [chunk-bytes (:snapshot-chunk-bytes test)]
+      [(str "-Draft.snapshot.chunk.bytes=" (long chunk-bytes))]))))
+
 (defn start-node!
   ([test node]
    (start-node! test node false))
@@ -133,12 +146,12 @@
            peer-specs (->> (:nodes test)
                            (remove #(= % node))
                            (map #(peer-spec test %)))
-           command (into ["java"
-                          (str "-Draft.data.dir=" (.getAbsolutePath (node-data-dir test node)))
-                          "-jar"
-                          (resolved-jar-path test)
-                          self-spec]
-                         peer-specs)
+           command (vec (concat ["java"]
+                                (java-props test node)
+                                ["-jar"
+                                 (resolved-jar-path test)
+                                 self-spec]
+                                peer-specs))
            ]
        (launch-node! test node command preserve-state?)))))
 
@@ -148,13 +161,13 @@
   ([test node preserve-state?]
    (when-not (process-alive? (get @processes node))
      (let [seed (membership-seed-node test)
-           command ["java"
-                    (str "-Draft.data.dir=" (.getAbsolutePath (node-data-dir test node)))
-                    "-jar"
-                    (resolved-jar-path test)
-                    "join"
-                    (str (peer-spec test node) "/learner")
-                    (peer-spec test seed)]]
+           command (vec (concat ["java"]
+                                (java-props test node)
+                                ["-jar"
+                                 (resolved-jar-path test)
+                                 "join"
+                                 (str (peer-spec test node) "/learner")
+                                 (peer-spec test seed)]))]
        (launch-node! test node command preserve-state?)))))
 
 (defn local-db []

@@ -24,11 +24,11 @@ This file tracks the incremental work needed to add a Jepsen test harness alongs
 
 - [x] Add `membership-remove-leader`.
 - [x] Combine membership changes with leader partitions or crash/restart nemeses.
-- [ ] Run longer non-Maven Jepsen scenarios for the strongest membership/fault combinations.
+- [x] Run longer non-Maven Jepsen scenarios for the strongest membership/fault combinations.
 - [x] Add 7-node adversarial runs.
-- [ ] Add multi-key workloads using independent histories.
-- [ ] Add snapshot/compaction scenarios under faults.
-- [ ] Add disk/persistence failure scenarios.
+- [x] Add multi-key workloads using independent histories.
+- [x] Add snapshot/compaction scenarios under faults.
+- [x] Add disk/persistence failure scenarios.
 
 ## Current Status
 
@@ -46,8 +46,12 @@ This file tracks the incremental work needed to add a Jepsen test harness alongs
 - `Longer 5-node runs`: 60-second `partition-leader` CAS validation passes after correcting the Jepsen client to treat `UNREACHABLE` and `TIMEOUT` writes/CAS operations as indeterminate outcomes instead of definite failures. See `jepsen/store/raft-kv-local-5n/20260419T115044.891+0200/results.edn`.
 - `Membership scenarios`: validated for `membership-join-promote`, `membership-demote`, `membership-remove-follower`, and now includes a `membership-remove-leader` nemesis for current-leader removal under load.
 - `Membership + fault combinations`: now includes `membership-remove-follower-partition-leader`, which starts follower removal, isolates the leader during joint consensus, then heals and finalizes to a stable removed-member configuration.
+- `Longer membership + fault combinations`: validated with a 60-second `membership-remove-follower-partition-leader` run. See `jepsen/store/raft-kv-local-5n/20260419T122527.290+0200/results.edn`.
 - `7-node adversarial runs`: validated with a 7-node `partition-leader-minority` CAS run. See `jepsen/store/raft-kv-local-7n/20260419T115501.822+0200/results.edn`.
 - `Stronger KV workload`: the KV demo now exposes a first-class CAS command/result path, and the Jepsen harness now drives a single-key `cas-register` workload with mixed `write`, `read`, and `cas` operations.
+- `Multi-key workload`: validated with independent per-key linearizability checks under `partition-leader`. See `jepsen/store/raft-kv-local-5n/20260419T122319.068+0200/results.edn`.
+- `Snapshot/compaction under faults`: validated by forcing aggressive snapshot settings during a faulted `partition-leader` run. See `jepsen/store/raft-kv-local-5n/20260419T122921.719+0200/results.edn`.
+- `Disk/persistence failures`: validated with `persistence-loss-restart`, which wipes one follower's local data directory before restart and verifies recovery under load. See `jepsen/store/raft-kv-local-5n/20260419T123252.350+0200/results.edn`.
 - `Developer workflow`: documented in `docs/jepsen-workflow.md` with the Maven test/build loop, local Jepsen commands, and result inspection flow.
 
 ## Notes

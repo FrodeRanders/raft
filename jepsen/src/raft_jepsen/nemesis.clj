@@ -3,8 +3,11 @@
             [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
+            [jepsen.nemesis]
             [raft-jepsen.db :as raft-db]
             [raft-jepsen.observer :as observer]))
+
+(declare leader-node)
 
 (defn- random-node
   ([nodes]
@@ -36,6 +39,46 @@
                       (observer/capture-safe! test "nemesis-crash-restart" {:node node :op {:f :stop}})
                       (reset! disrupted-node node)
                       (assoc op :type :info :value {node :stopped}))
+                      (assoc op :type :info :value :no-target)))
+            (assoc op :type :info :error :unsupported-nemesis-op))))
+      (teardown! [_ test]
+        (when-let [node @disrupted-node]
+          (raft-db/start-node! test node true)
+          (reset! disrupted-node nil))))))
+
+(defn- follower-node [test]
+  (when-let [leader (leader-node test)]
+    (first (remove #(= leader %) (:nodes test)))))
+
+(defn persistence-loss-restart []
+  (let [disrupted-node (atom nil)]
+    (reify
+      jepsen.nemesis/Nemesis
+      (setup! [this _test] this)
+      (invoke! [_ test op]
+        (locking disrupted-node
+          (case (:f op)
+            :start (if-let [node @disrupted-node]
+                     (do
+                       (raft-db/start-node! test node true)
+                       (observer/capture-safe! test "nemesis-persistence-loss-restart"
+                                               {:node node
+                                                :op {:f :start}
+                                                :extra {:phase :restarted-fresh}})
+                       (reset! disrupted-node nil)
+                       (assoc op :type :info :value {node :restarted-fresh}))
+                     (assoc op :type :info :value :not-started))
+            :stop (if @disrupted-node
+                    (assoc op :type :info :value :already-stopped)
+                    (if-let [node (follower-node test)]
+                      (do
+                        (raft-db/wipe-node-data! test node)
+                        (observer/capture-safe! test "nemesis-persistence-loss-restart"
+                                                {:node node
+                                                 :op {:f :stop}
+                                                 :extra {:phase :data-wiped}})
+                        (reset! disrupted-node node)
+                        (assoc op :type :info :value {node :data-wiped}))
                       (assoc op :type :info :value :no-target)))
             (assoc op :type :info :error :unsupported-nemesis-op))))
       (teardown! [_ test]

@@ -48,6 +48,7 @@ Optional overrides:
 ./run-local.sh --time-limit 60 --concurrency 12 --base-port 11080
 ./run-local.sh --node-count 3
 ./run-local.sh --node-count 5 --nemesis crash-restart
+./run-local.sh --node-count 5 --nemesis persistence-loss-restart --snapshot-min-entries 5
 ./run-local.sh --node-count 5 --nemesis partition-leader
 ./run-local.sh --node-count 5 --nemesis partition-leader-minority
 ./run-local.sh --node-count 5 --nemesis membership-join-promote
@@ -67,7 +68,7 @@ Supported options:
 - `--concurrency <n>`: Jepsen client concurrency
 - `--base-port <port>`: first node port, default `10080`
 - `--node-count <n>`: number of local nodes, default `5`
-- `--nemesis <mode>`: `none`, `crash-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, `membership-join-promote`, `membership-demote`, `membership-remove-follower`, `membership-remove-leader`, or `membership-remove-follower-partition-leader`
+- `--nemesis <mode>`: `none`, `crash-restart`, `persistence-loss-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, `membership-join-promote`, `membership-demote`, `membership-remove-follower`, `membership-remove-leader`, or `membership-remove-follower-partition-leader`
 - `--nemesis-interval <seconds>`: delay between crash/restart actions
 - `--workdir <path>`: local node state/log directory
 
@@ -87,6 +88,7 @@ Supported options:
 - The default workload mixes `write`, `read`, and `cas` operations over a small value set so CAS paths are exercised with both matches and mismatches.
 - The harness defaults to 5 nodes now, but `--node-count 3` is still useful for faster local debugging.
 - `crash-restart` stops a node process without deleting its state directory, then starts it again from the same persisted data.
+- `persistence-loss-restart` stops one non-leader follower, deletes its local `data` directory, then restarts it from empty state so recovery must happen through normal Raft catch-up and snapshot installation.
 - `partition-one` isolates one random node by blocking its local TCP port through a dedicated `pfctl` anchor on macOS or `iptables` on Linux.
 - `partition-leader` first discovers the current Raft leader through `cluster-summary --json`, then isolates that node.
 - `partition-leader-minority` isolates the current leader together with one additional node, cutting the leader into a 2-node minority against the remaining 3-node majority.
