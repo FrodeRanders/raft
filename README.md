@@ -34,7 +34,7 @@ For a concise description of what each module contains, see [docs/module-overvie
 
 ## Jepsen Validation
 
-The repository now includes a local Jepsen harness in [jepsen/README.md](jepsen/README.md). It complements the classic JUnit/Maven suite by exercising the runnable `raft-dist` node processes under concurrent client load and injected failures.
+The repository now includes a local Jepsen harness, documented in [jepsen/README.md](jepsen/README.md). It complements the classic JUnit/Maven suite by exercising the runnable `raft-dist` node processes under concurrent client load and injected failures.
 
 At a high level, the Jepsen tests check that the key-value demo remains linearizable while the cluster is exposed to conditions that resemble real operational failures:
 
@@ -123,7 +123,7 @@ This startup peer list is a transport seed, not the full source of truth for mem
 For local runs, `./scripts/start_raft.sh` is still the easiest way to form an initial cluster. It gives each node enough seed addresses to elect a leader and start exchanging Raft traffic, but it does not lock the cluster to that initial member set.
 
 ### API surface
-Cluster management and ordinary client access now use typed protobuf messages, not free-form command strings:
+Cluster management and ordinary client access use typed protobuf messages:
 
 - `ClientCommandRequest` / `ClientCommandResponse`
 - `ClientQueryRequest` / `ClientQueryResponse`
@@ -133,7 +133,7 @@ Cluster management and ordinary client access now use typed protobuf messages, n
 
 `ClientCommandRequest` carries a typed `StateMachineCommand` payload for ordinary replicated writes. `ClientQueryRequest` carries a typed `StateMachineQuery` payload for ordinary reads. Both respond with explicit status and include the leader endpoint on redirects so a client can retry directly. The first query type is key-value `GET(key)`. `JoinClusterRequest` is the convenience path for adding a single new member. The leader turns it into a joint-consensus transition and finalizes it automatically after the joining node has caught up enough. `JoinClusterStatusRequest` reports whether the join is still pending, active in joint consensus, completed, or unknown. `ReconfigureClusterRequest` exposes explicit `JOINT` and `FINALIZE` actions for manual control.
 
-Peers can now be either:
+Peers are either:
 
 - `VOTER`: participates in elections and quorum
 - `LEARNER`: replicates state but does not vote, does not start elections, and does not count toward quorum
@@ -250,7 +250,7 @@ Cluster configuration is persisted as part of Raft state:
 - a surviving node that restarts comes back with the latest committed membership
 
 ## Telemetry
-Nodes now expose:
+Nodes expose:
 
 - `TelemetryRequest` / `TelemetryResponse` for detailed node-level inspection
 - `ClusterSummaryRequest` / `ClusterSummaryResponse` for leader-oriented cluster-wide status
