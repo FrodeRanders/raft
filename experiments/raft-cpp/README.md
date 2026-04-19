@@ -157,11 +157,13 @@ The `serve-persistent` command uses the same basic state model, but persists nod
 - current term
 - voted-for
 - leader id
+- explicit voting-peer membership
 - last log index/term
 - commit index
 - snapshot index/term
 - previous log position
 - the latest synthetic entry payload used by the experiment
+- per-peer replication progress (`next_index` and `match_index`)
 
 This is still far from a real storage engine, but it is enough to validate restart recovery for the current bounded C++ prototype.
 
@@ -170,7 +172,7 @@ The stateful and active C++ servers now also answer the existing admin probes:
 - `cluster-summary`
 - `telemetry`
 
-That makes it possible to inspect follower and leader log/commit state through the same shared protocol, instead of relying only on server log output.
+That makes it possible to inspect follower and leader log/commit state through the same shared protocol, instead of relying only on server log output. After restart, both views rebuild member rows from persisted voting membership plus per-peer progress, so recovered topology and replication state stay visible without reading the state file directly.
 
 The `serve-active` command is the first combined inbound/outbound node mode.
 

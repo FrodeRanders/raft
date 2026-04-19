@@ -43,6 +43,7 @@ public:
         std::int64_t current_term{0};
         std::optional<std::string> voted_for;
         std::optional<std::string> leader_id;
+        std::vector<std::string> voting_peers;
         std::int64_t last_log_index{0};
         std::int64_t last_log_term{0};
         std::int64_t commit_index{0};
@@ -51,6 +52,7 @@ public:
         std::int64_t previous_log_index{0};
         std::int64_t previous_log_term{0};
         std::string last_entry_data;
+        std::unordered_map<std::string, PeerProgress> peer_progress;
     };
 
     explicit RaftNode(Config config)
@@ -438,6 +440,7 @@ public:
             .current_term = current_term_,
             .voted_for = voted_for_,
             .leader_id = leader_id_,
+            .voting_peers = voting_peers_,
             .last_log_index = last_log_index_,
             .last_log_term = last_log_term_,
             .commit_index = commit_index_,
@@ -446,6 +449,7 @@ public:
             .previous_log_index = previous_log_index_,
             .previous_log_term = previous_log_term_,
             .last_entry_data = last_entry_data_,
+            .peer_progress = peer_progress_,
         };
     }
 
@@ -455,6 +459,7 @@ public:
         current_term_ = state.current_term;
         voted_for_ = state.voted_for;
         leader_id_ = state.leader_id;
+        voting_peers_ = state.voting_peers;
         last_log_index_ = state.last_log_index;
         last_log_term_ = state.last_log_term;
         commit_index_ = state.commit_index;
@@ -465,7 +470,17 @@ public:
         last_entry_data_ = state.last_entry_data;
         role_ = leader_id_.has_value() && *leader_id_ == peer_id_ ? Role::leader : Role::follower;
         last_activity_ = std::chrono::steady_clock::now();
+        normalize_voting_peers_locked();
+        for (const auto& [peer_id, _] : state.peer_progress) {
+            if (peer_id != peer_id_) {
+                voting_peers_.push_back(peer_id);
+            }
+        }
+        normalize_voting_peers_locked();
         reset_peer_progress_locked();
+        for (const auto& [peer_id, progress] : state.peer_progress) {
+            peer_progress_[peer_id] = progress;
+        }
     }
 
     Role role() const {

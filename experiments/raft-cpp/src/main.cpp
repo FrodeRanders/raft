@@ -110,6 +110,17 @@ int run_cluster_summary(const std::string& host, std::uint16_t port, const std::
         << "joint_consensus: " << (response.joint_consensus() ? "true" : "false") << '\n'
         << "members: " << response.members_size() << '\n';
 
+    for (const auto& member : response.members()) {
+        std::cout
+            << "member[" << member.peer_id() << "]:"
+            << " local=" << (member.local() ? "true" : "false")
+            << " voting=" << (member.voting() ? "true" : "false")
+            << " next_index=" << member.next_index()
+            << " match_index=" << member.match_index()
+            << " lag=" << member.lag()
+            << '\n';
+    }
+
     return response.success() ? 0 : 2;
 }
 
@@ -140,9 +151,31 @@ int run_telemetry(const std::string& host, std::uint16_t port, const std::string
         << "term: " << response.term() << '\n'
         << "commit_index: " << response.commit_index() << '\n'
         << "last_applied: " << response.last_applied() << '\n'
+        << "last_log_index: " << response.last_log_index() << '\n'
+        << "last_log_term: " << response.last_log_term() << '\n'
         << "cluster_health: " << response.cluster_health() << '\n'
         << "cluster_status_reason: " << response.cluster_status_reason() << '\n'
         << "quorum_available: " << (response.quorum_available() ? "true" : "false") << '\n';
+
+    for (const auto& repl : response.replication()) {
+        std::cout
+            << "replication[" << repl.peer_id() << "]:"
+            << " next_index=" << repl.next_index()
+            << " match_index=" << repl.match_index()
+            << " reachable=" << (repl.reachable() ? "true" : "false")
+            << '\n';
+    }
+
+    for (const auto& member : response.cluster_members()) {
+        std::cout
+            << "member[" << member.peer_id() << "]:"
+            << " local=" << (member.local() ? "true" : "false")
+            << " voting=" << (member.voting() ? "true" : "false")
+            << " next_index=" << member.next_index()
+            << " match_index=" << member.match_index()
+            << " lag=" << member.lag()
+            << '\n';
+    }
 
     return response.success() ? 0 : 2;
 }

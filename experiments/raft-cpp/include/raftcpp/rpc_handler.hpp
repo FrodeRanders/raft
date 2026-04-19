@@ -7,6 +7,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 
 #include "raft.pb.h"
 #include "raftcpp/persistent_state_store.hpp"
@@ -192,6 +193,17 @@ public:
     std::shared_ptr<RaftNode> node_ptr() { return node_; }
 
 private:
+    std::vector<std::string> recovered_peer_ids() const {
+        std::vector<std::string> peer_ids = node_->voting_peers();
+        std::unordered_set<std::string> seen(peer_ids.begin(), peer_ids.end());
+        for (const auto& [peer_id, _] : node_->peer_progress()) {
+            if (peer_id != node_->peer_id() && seen.insert(peer_id).second) {
+                peer_ids.push_back(peer_id);
+            }
+        }
+        return peer_ids;
+    }
+
     static std::string role_to_string(RaftNode::Role role) {
         switch (role) {
         case RaftNode::Role::follower:
@@ -210,7 +222,7 @@ private:
         local->set_role(node_->role() == RaftNode::Role::leader ? "voter" : "voter");
         auto* local_known = response.add_known_peers();
         *local_known = *local;
-        for (const auto& peer_id : node_->voting_peers()) {
+        for (const auto& peer_id : recovered_peer_ids()) {
             auto* peer = response.add_current_members();
             peer->set_id(peer_id);
             peer->set_role("voter");
@@ -256,7 +268,7 @@ private:
         local->set_lag(local_lag);
 
         const auto progress_map = node_->peer_progress();
-        for (const auto& peer_id : node_->voting_peers()) {
+        for (const auto& peer_id : recovered_peer_ids()) {
             const auto found = progress_map.find(peer_id);
             const auto next_index = found != progress_map.end() ? found->second.next_index : 0;
             const auto match_index = found != progress_map.end() ? found->second.match_index : 0;
@@ -270,7 +282,7 @@ private:
         populate_member(*local, node_->peer_id(), true, node_->last_log_index() + 1, node_->last_log_index());
 
         const auto progress_map = node_->peer_progress();
-        for (const auto& peer_id : node_->voting_peers()) {
+        for (const auto& peer_id : recovered_peer_ids()) {
             const auto found = progress_map.find(peer_id);
             const auto next_index = found != progress_map.end() ? found->second.next_index : 0;
             const auto match_index = found != progress_map.end() ? found->second.match_index : 0;

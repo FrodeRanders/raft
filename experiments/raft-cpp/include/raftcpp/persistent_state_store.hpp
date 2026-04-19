@@ -34,6 +34,9 @@ public:
         out << "current_term=" << state.current_term << '\n';
         out << "voted_for=" << escape(state.voted_for.value_or("")) << '\n';
         out << "leader_id=" << escape(state.leader_id.value_or("")) << '\n';
+        for (const auto& peer_id : state.voting_peers) {
+            out << "voting_peer=" << escape(peer_id) << '\n';
+        }
         out << "last_log_index=" << state.last_log_index << '\n';
         out << "last_log_term=" << state.last_log_term << '\n';
         out << "commit_index=" << state.commit_index << '\n';
@@ -42,6 +45,9 @@ public:
         out << "previous_log_index=" << state.previous_log_index << '\n';
         out << "previous_log_term=" << state.previous_log_term << '\n';
         out << "last_entry_data=" << escape(state.last_entry_data) << '\n';
+        for (const auto& [peer_id, progress] : state.peer_progress) {
+            out << "peer_progress=" << escape(peer_id) << ',' << progress.next_index << ',' << progress.match_index << '\n';
+        }
     }
 
     std::optional<RaftNode::PersistentState> load() const {
@@ -71,6 +77,8 @@ public:
                 state.voted_for = value.empty() ? std::nullopt : std::optional<std::string>{value};
             } else if (key == "leader_id") {
                 state.leader_id = value.empty() ? std::nullopt : std::optional<std::string>{value};
+            } else if (key == "voting_peer") {
+                state.voting_peers.push_back(value);
             } else if (key == "last_log_index") {
                 state.last_log_index = std::stoll(value);
             } else if (key == "last_log_term") {
@@ -87,6 +95,19 @@ public:
                 state.previous_log_term = std::stoll(value);
             } else if (key == "last_entry_data") {
                 state.last_entry_data = value;
+            } else if (key == "peer_progress") {
+                const auto first = value.find(',');
+                const auto second = value.find(',', first == std::string::npos ? first : first + 1);
+                if (first == std::string::npos || second == std::string::npos) {
+                    throw std::runtime_error("invalid peer_progress line in state file: " + path_.string());
+                }
+                const auto peer_id = value.substr(0, first);
+                const auto next_index = std::stoll(value.substr(first + 1, second - first - 1));
+                const auto match_index = std::stoll(value.substr(second + 1));
+                state.peer_progress.emplace(peer_id, RaftNode::PeerProgress{
+                    .next_index = next_index,
+                    .match_index = match_index,
+                });
             }
         }
 
