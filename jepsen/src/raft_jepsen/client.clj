@@ -68,7 +68,7 @@
     this)
   (invoke! [this test op]
     (let [target (raft-db/peer-spec test node)
-          key (:key test)
+          key (or (:key op) (:key test))
           cli-key (str key)
           value (some-> (:value op) str)]
       (try

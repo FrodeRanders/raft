@@ -35,6 +35,8 @@
                :concurrency 10
                :nemesis-mode "none"
                :nemesis-interval 5
+               :workload-mode "single-key"
+               :key-count 3
                :node-count 5
                :nodes (node-names 5)
                :key "k"}
@@ -47,6 +49,8 @@
           "--time-limit" (recur (assoc opts :time-limit (parse-long-arg value)) rest)
           "--concurrency" (recur (assoc opts :concurrency (parse-long-arg value)) rest)
           "--base-port" (recur (assoc opts :base-port (parse-long-arg value)) rest)
+          "--workload" (recur (assoc opts :workload-mode value) rest)
+          "--key-count" (recur (assoc opts :key-count (parse-long-arg value)) rest)
           "--node-count" (let [count (parse-long-arg value)]
                            (recur (assoc opts
                                          :node-count count
@@ -68,6 +72,8 @@
     "  --time-limit <sec>    Workload duration, default 30"
     "  --concurrency <n>     Client concurrency, default 10"
     "  --base-port <port>    First node port, default 10080"
+    "  --workload <mode>     single-key|multi-key, default single-key"
+    "  --key-count <n>       Keys for multi-key workload, default 3"
     "  --node-count <n>      Number of local nodes, default 5"
     "  --nemesis <mode>      none|crash-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower|membership-remove-leader|membership-remove-follower-partition-leader, default none"
     "  --nemesis-interval <sec> Nemesis interval, default 5"
@@ -81,24 +87,38 @@
 (defn- random-expected []
   (rand-nth (vec (cons nil cas-values))))
 
-(defn- write-op [_ _]
+(defn- workload-keys [opts]
+  (if (= "multi-key" (:workload-mode opts))
+    (mapv #(str "k" %) (range (max 1 (:key-count opts))))
+    [(:key opts)]))
+
+(defn- random-key [opts]
+  (rand-nth (workload-keys opts)))
+
+(defn- op-with-key [opts op]
+  (assoc op :key (random-key opts)))
+
+(defn- write-op [opts & _]
+  (op-with-key opts
   {:type :invoke
    :f :write
-   :value (random-value)})
+   :value (random-value)}))
 
-(defn- read-op [_ _]
+(defn- read-op [opts & _]
+  (op-with-key opts
   {:type :invoke
-   :f :read})
+   :f :read}))
 
-(defn- cas-op [_ _]
+(defn- cas-op [opts & _]
   (let [expected (random-expected)
         next-value (loop [candidate (random-value)]
                      (if (= candidate expected)
                        (recur (random-value))
                        candidate))]
+    (op-with-key opts
     {:type :invoke
      :f :cas
-     :value [expected next-value]}))
+     :value [expected next-value]})))
 
 (defn- filter-history-checker [inner-checker pred]
   (reify
@@ -106,14 +126,40 @@
     (check [_ test history opts]
       (checker/check inner-checker test (filterv pred history) opts))))
 
+(defn- key-history [history key]
+  (->> history
+       (filterv #(and (not= :nemesis (:process %))
+                      (= key (:key %))))))
+
+(defn- key-checker [key]
+  (filter-history-checker
+   (checker/linearizable {:model (model/cas-register)})
+   #(= key (:key %))))
+
+(defn- independent-key-checker [keys]
+  (reify
+    checker/Checker
+    (check [_ test history opts]
+      (let [results (into {}
+                          (for [key keys]
+                            [key (checker/check (key-checker key) test history opts)]))
+            valid? (every? true? (map :valid? (vals results)))]
+        {:valid? valid?
+         :results results}))))
+
 (defn- workload [opts]
-  {:checker (checker/compose
-             {:linearizable (filter-history-checker
-                             (checker/linearizable {:model (model/cas-register)})
-                             #(not= :nemesis (:process %)))
-              :timeline (timeline/html)})
-   :generator (->> (gen/mix [write-op read-op cas-op])
-                   (gen/limit 100))})
+  (let [keys (workload-keys opts)]
+    {:checker (checker/compose
+               {:linearizable (if (= "multi-key" (:workload-mode opts))
+                                (independent-key-checker keys)
+                                (filter-history-checker
+                                 (checker/linearizable {:model (model/cas-register)})
+                                 #(not= :nemesis (:process %))))
+                :timeline (timeline/html)})
+     :generator (->> (gen/mix [(partial write-op opts)
+                               (partial read-op opts)
+                               (partial cas-op opts)])
+                     (gen/limit 100))}))
 
 (defn- nemesis-object [opts]
   (case (:nemesis-mode opts)
