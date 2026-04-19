@@ -22,7 +22,7 @@ In a correct Raft system, that outcome should not happen for committed state.
 
 What can happen is:
 
-- the cluster partitions into a majority side and one or more minority sides
+- the cluster partitions into a majority side and one or more minority sides (more on this below)
 - nodes on multiple sides may temporarily believe they should lead
 - an old leader may continue trying to act like a leader until it notices quorum loss
 - clients may see redirects, retries, timeouts, or ambiguous outcomes
@@ -36,6 +36,74 @@ So the useful distinction is:
 
 - apparent split brain at the transport or liveness level can happen
 - committed split brain at the replicated-log level should not
+
+## Why "Majority" And "Minority" Are Well-Defined
+
+The terms majority and minority are not decided dynamically by "who can currently see whom."
+
+In Raft, elections and commitment are evaluated against the configured cluster membership.
+
+That means:
+
+- there is a specific current voting set
+- every candidate is trying to win votes from that full set
+- a leader is elected only by receiving votes from a majority of that configured set
+- an entry is committed only when replicated to a majority of that configured set
+
+So if a 5-node voting configuration is:
+
+- `A`
+- `B`
+- `C`
+- `D`
+- `E`
+
+then the quorum threshold is 3, because the configured cluster has 5 voters.
+
+If the network partitions into:
+
+- `A B C`
+- `D E`
+
+then:
+
+- `A B C` is the majority side because it still contains 3 of the 5 configured voters
+- `D E` is the minority side because it contains only 2 of the 5 configured voters
+
+This remains true even if:
+
+- `D` can only see `E`
+- `D` and `E` are otherwise healthy
+- they might locally believe they form a complete little world
+
+They do not become a new independent cluster just because they can talk to each other. Reachability affects liveness, but configuration defines legitimacy. The network decides who can talk, but the configuration decides who counts.
+
+They are still only 2 members out of the configured 5-member voting set, which means:
+
+- they cannot elect a legitimate leader for that configuration
+- they cannot commit new entries for that configuration
+
+The same logic applies to any partition shape.
+
+For example, if a 7-node cluster splits into:
+
+- `4 + 3`
+
+then only the `4` side can make committed progress, because quorum is 4 for a 7-voter configuration.
+
+This is the key reason partitions do not simply re-form into independent sub-clusters that continue living on their own. Raft leadership and commitment are defined relative to the existing replicated membership configuration, not to temporary post-partition visibility.
+
+The only time this changes is when membership itself changes through Raft:
+
+- joint consensus
+- finalize
+- promotion
+- demotion
+- removal
+
+But those are themselves replicated configuration changes.
+
+So the cluster cannot legitimately "shrink itself by accident" just because some nodes disappeared behind a partition. A new voting set only becomes authoritative after the cluster commits that configuration change through the log.
 
 ## What Raft Guarantees
 
