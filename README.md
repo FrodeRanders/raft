@@ -32,6 +32,70 @@ raft-dist/target/raft-1.0-SNAPSHOT.jar
 
 For a concise description of what each module contains, see [docs/module-overview.md](docs/module-overview.md).
 
+## Jepsen Validation
+
+The repository now includes a local Jepsen harness in [jepsen/README.md](jepsen/README.md). It complements the classic JUnit/Maven suite by exercising the runnable `raft-dist` node processes under concurrent client load and injected failures.
+
+At a high level, the Jepsen tests check that the key-value demo remains linearizable while the cluster is exposed to conditions that resemble real operational failures:
+
+- node crashes and clean restarts
+- follower disk/state loss and fresh recovery
+- follower or leader network isolation
+- loss of leader quorum
+- membership changes while the cluster is under load
+- membership changes combined with partitions
+- aggressive snapshot/compaction settings during faults
+- 5-node and 7-node quorum topologies
+- single-key CAS-register and multi-key workloads
+
+The default `mvn test` path now includes a small Jepsen smoke suite in addition to the normal Java tests. That smoke suite covers:
+
+- baseline 5-node execution
+- crash/restart
+- partition
+
+That means `mvn test` now assumes:
+
+- Java 21
+- Clojure CLI
+- a built local Jepsen environment
+- non-interactive `sudo` for the partition helper on systems where packet filtering requires privilege
+
+Use this when you want the full default test path:
+
+```text
+mvn test
+```
+
+If you need to skip only the Jepsen smoke suite temporarily:
+
+```text
+mvn test -DskipJepsenTests=true
+```
+
+### What The Jepsen Scenarios Emulate
+
+- `crash-restart`: a process dies but its local Raft state survives, which is the normal host restart or JVM crash case.
+- `persistence-loss-restart`: one follower loses its local on-disk state and has to recover by replay or snapshot from the cluster, which approximates disk replacement, state-volume loss, or data-directory corruption recovery.
+- `partition-one`: one node becomes isolated from the rest of the cluster, which approximates a single-host networking failure or firewall misconfiguration.
+- `partition-leader`: the current leader is isolated, which approximates leader loss of connectivity and forces step-down plus re-election behavior.
+- `partition-leader-minority`: the leader is cut into a minority partition, which approximates a partial datacenter/network split where the old leader must not continue serving as if quorum still exists.
+- `membership-join-promote`: a new learner joins and is promoted to voter under load, which approximates controlled cluster expansion.
+- `membership-demote`: an existing voter is turned into a learner under load, which approximates reducing quorum membership while keeping a replica online.
+- `membership-remove-follower`: a non-leader follower is removed through explicit joint consensus and finalize, which approximates planned cluster shrink or node decommissioning.
+- `membership-remove-leader`: the current leader is removed through reconfiguration, which approximates leader decommissioning during a maintenance event.
+- `membership-remove-follower-partition-leader`: a membership change overlaps with leader isolation, which approximates maintenance or topology change during an active network fault.
+
+The stronger local Jepsen runs go beyond the Maven smoke suite. They are intended to answer production-style questions such as:
+
+- does a wiped follower recover safely from the surviving quorum?
+- does the old leader stop behaving like a leader after isolation?
+- do membership changes remain safe when leadership changes mid-flight?
+- does aggressive snapshotting still preserve correct state under recovery and partitions?
+- do independent keys remain linearizable under the same faults?
+
+For exact commands, prerequisites, and result inspection, see [jepsen/README.md](jepsen/README.md) and [docs/jepsen-workflow.md](docs/jepsen-workflow.md).
+
 There are two different implementations: 
 - On the `'main'` branch, messages are packaged according to protobuf and sent/received through Netty.
 - On the `'json-on-the-wire'` branch, messages are exchanged using JSON envelopes (akin to MCP thinking) and sent through Netty.

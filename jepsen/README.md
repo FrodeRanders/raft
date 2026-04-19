@@ -8,6 +8,7 @@ This directory contains the first Jepsen harness for the repository: a local key
 - key-value application only
 - linearizable CAS-register workload over a single hot key
 - optional membership-change scenarios for join, role changes, and explicit removal
+- optional multi-key and snapshot-stress runs for broader recovery coverage
 
 ## Prerequisites
 
@@ -72,6 +73,39 @@ Supported options:
 - `--nemesis-interval <seconds>`: delay between crash/restart actions
 - `--workdir <path>`: local node state/log directory
 
+## Scenario Guide
+
+These Jepsen scenarios are meant to approximate concrete runtime conditions rather than synthetic protocol events in isolation.
+
+- `none`: baseline cluster behavior with concurrent `write`, `read`, and `cas` load.
+  This is the "healthy system" reference point.
+- `crash-restart`: stops a node process without deleting its state directory, then starts it again from the same persisted data.
+  This emulates JVM crash, host reboot, or process supervisor restart where the node's local Raft state survives.
+- `persistence-loss-restart`: stops one non-leader follower, deletes its local `data` directory, then restarts it from empty state.
+  This emulates disk replacement, volume loss, or state-directory corruption recovery where the node must rejoin from replicated log or snapshot transfer.
+- `partition-one`: isolates one random node by blocking its local TCP port.
+  This emulates a single-node network reachability failure, firewall issue, or local routing break.
+- `partition-leader`: discovers the current leader and isolates it.
+  This emulates leader connectivity loss and tests step-down, redirect/retry behavior, and re-election safety.
+- `partition-leader-minority`: isolates the current leader together with one additional node.
+  This emulates a split where the old leader is stranded in a minority and must not behave as if it still has quorum.
+- `membership-join-promote`: starts a sixth node in join mode as a learner, then promotes it to voter under load.
+  This emulates planned cluster expansion.
+- `membership-demote`: demotes an existing non-leader voter to learner under load.
+  This emulates shrinking quorum participation while keeping a replica available for catch-up reads or downstream replication.
+- `membership-remove-follower`: removes a non-leader follower through explicit joint consensus plus finalize.
+  This emulates planned decommissioning of a healthy replica.
+- `membership-remove-leader`: removes the current leader through the same explicit reconfiguration flow.
+  This emulates leader decommissioning or topology change during maintenance.
+- `membership-remove-follower-partition-leader`: begins follower removal, waits for joint consensus, then isolates the leader before healing and finalizing.
+  This emulates reconfiguration during an overlapping network fault.
+
+The workload layer can also be varied:
+
+- single-key CAS register: strongest focused signal for strict linearizability on one hot key
+- multi-key workload: independent per-key histories to catch routing or state-application errors that do not appear on a single key
+- aggressive snapshot settings: lower `--snapshot-min-entries` and smaller `--snapshot-chunk-bytes` to force snapshot creation and transfer during fault runs
+
 ## Layout
 
 - `src/raft_jepsen/core.clj`: main Jepsen test definition and CLI entrypoint
@@ -87,16 +121,6 @@ Supported options:
 - Successful writes are interpreted as committed/applied completions.
 - The default workload mixes `write`, `read`, and `cas` operations over a small value set so CAS paths are exercised with both matches and mismatches.
 - The harness defaults to 5 nodes now, but `--node-count 3` is still useful for faster local debugging.
-- `crash-restart` stops a node process without deleting its state directory, then starts it again from the same persisted data.
-- `persistence-loss-restart` stops one non-leader follower, deletes its local `data` directory, then restarts it from empty state so recovery must happen through normal Raft catch-up and snapshot installation.
-- `partition-one` isolates one random node by blocking its local TCP port through a dedicated `pfctl` anchor on macOS or `iptables` on Linux.
-- `partition-leader` first discovers the current Raft leader through `cluster-summary --json`, then isolates that node.
-- `partition-leader-minority` isolates the current leader together with one additional node, cutting the leader into a 2-node minority against the remaining 3-node majority.
-- `membership-join-promote` starts a sixth local node in join mode as a learner, waits for the join to stabilize, then promotes it to voter while the workload continues against the original client nodes.
-- `membership-demote` demotes one existing non-leader voter to learner under load and waits for the role transition to appear in cluster-summary state.
-- `membership-remove-follower` removes one existing non-leader follower through an explicit `reconfigure joint ...` plus `reconfigure finalize` flow and waits until the member disappears from stable cluster-summary state.
-- `membership-remove-leader` removes the current leader through the same explicit joint/finalize flow and waits until a remaining node reports a stable post-removal configuration with a healthy quorum.
-- `membership-remove-follower-partition-leader` begins follower removal, waits for joint consensus, isolates the leader while the reconfiguration is active, then heals and finalizes to verify recovery to a stable removed-member configuration.
 - The partition helper re-execs itself through `sudo -n` when needed. Jepsen invokes it non-interactively, so passwordless sudo must be configured for the helper path.
 - `mvn test` now includes a partition Jepsen smoke test, so the `sudo -n` prerequisite applies to normal Maven testing as well.
 - On macOS, a practical sudoers entry is:
