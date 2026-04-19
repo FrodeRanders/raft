@@ -133,7 +133,7 @@ Cluster management and ordinary client access use typed protobuf messages:
 
 `ClientCommandRequest` carries a typed `StateMachineCommand` payload for ordinary replicated writes. `ClientQueryRequest` carries a typed `StateMachineQuery` payload for ordinary reads. Both respond with explicit status and include the leader endpoint on redirects so a client can retry directly. The first query type is key-value `GET(key)`. `JoinClusterRequest` is the convenience path for adding a single new member. The leader turns it into a joint-consensus transition and finalizes it automatically after the joining node has caught up enough. `JoinClusterStatusRequest` reports whether the join is still pending, active in joint consensus, completed, or unknown. `ReconfigureClusterRequest` exposes explicit `JOINT` and `FINALIZE` actions for manual control.
 
-Peers can now be either:
+Peers are either:
 
 - `VOTER`: participates in elections and quorum
 - `LEARNER`: replicates state but does not vote, does not start elections, and does not count toward quorum
