@@ -96,6 +96,8 @@ The stronger local Jepsen runs go beyond the Maven smoke suite. They are intende
 
 For exact commands, prerequisites, and result inspection, see [jepsen/README.md](jepsen/README.md) and [docs/jepsen-workflow.md](docs/jepsen-workflow.md).
 
+For a more detailed discussion of partitions, apparent split brain, ambiguous client outcomes, and the boundary between Raft guarantees and application-level reconciliation, see [docs/split-brain-and-consistency.md](docs/split-brain-and-consistency.md).
+
 There are two different implementations: 
 - On the `'main'` branch, messages are packaged according to protobuf and sent/received through Netty.
 - On the `'json-on-the-wire'` branch, messages are exchanged using JSON envelopes (akin to MCP thinking) and sent through Netty.
