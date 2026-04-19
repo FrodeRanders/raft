@@ -34,7 +34,7 @@ For a concise description of what each module contains, see [docs/module-overvie
 
 ## Jepsen Validation
 
-The repository now includes a local Jepsen harness in [jepsen/README.md](jepsen/README.md). It complements the classic JUnit/Maven suite by exercising the runnable `raft-dist` node processes under concurrent client load and injected failures.
+The repository now includes a local Jepsen harness, documented in [jepsen/README.md](jepsen/README.md). It complements the classic JUnit/Maven suite by exercising the runnable `raft-dist` node processes under concurrent client load and injected failures.
 
 At a high level, the Jepsen tests check that the key-value demo remains linearizable while the cluster is exposed to conditions that resemble real operational failures:
 
