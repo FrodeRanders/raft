@@ -28,6 +28,7 @@ void print_usage() {
         << "  raft_cpp_smoke install-snapshot <host> <port> <leader-id> <last-included-index> <last-included-term> [term]\n"
         << "  raft_cpp_smoke serve <bind-host> <port> <peer-id> [current-term]\n"
         << "  raft_cpp_smoke serve-stateful <bind-host> <port> <peer-id> [current-term] [last-log-index] [last-log-term]\n"
+        << "  raft_cpp_smoke serve-persistent <bind-host> <port> <peer-id> <state-file> [current-term] [last-log-index] [last-log-term]\n"
         << "  raft_cpp_smoke serve-active <bind-host> <port> <peer-id> <current-term> <last-log-index> <last-log-term> <peer-spec>...\n"
         << "  raft_cpp_smoke election-round <peer-id> [current-term] [last-log-index] [last-log-term] <peer-spec>...\n"
         << "  raft_cpp_smoke heartbeat-round <peer-id> <term> [last-log-index] [last-log-term] <peer-spec>...\n"
@@ -276,6 +277,33 @@ int run_install_snapshot(
     server.serve_forever();
 }
 
+[[noreturn]] void run_persistent_server(
+    const std::string& bind_host,
+    std::uint16_t port,
+    const std::string& peer_id,
+    const std::string& state_file,
+    std::int64_t current_term,
+    std::int64_t last_log_index,
+    std::int64_t last_log_term
+) {
+    boost::asio::io_context io_context;
+    auto handler = std::make_shared<raftcpp::PersistentRpcHandler>(
+        state_file,
+        raftcpp::RaftNode::Config{
+            .peer_id = peer_id,
+            .current_term = current_term,
+            .last_log_index = last_log_index,
+            .last_log_term = last_log_term,
+            .commit_index = 0,
+            .snapshot_index = 0,
+            .snapshot_term = 0,
+            .voting_peers = {},
+        }
+    );
+    raftcpp::RaftServer server(io_context, bind_host, port, std::move(handler));
+    server.serve_forever();
+}
+
 [[noreturn]] void run_active_server(
     const std::string& bind_host,
     std::uint16_t port,
@@ -475,7 +503,8 @@ int run_replicate_once(
     std::cout
         << "role: " << (runtime.node().role() == raftcpp::RaftNode::Role::leader ? "leader" : "not-leader") << '\n'
         << "replication_successes: " << successes << '\n'
-        << "last_log_index: " << runtime.node().last_log_index() << '\n';
+        << "last_log_index: " << runtime.node().last_log_index() << '\n'
+        << "commit_index: " << runtime.node().commit_index() << '\n';
     return successes > 0 ? 0 : 2;
 }
 
@@ -567,6 +596,21 @@ int main(int argc, char** argv) {
                 argc > 5 ? parse_int64(argv[5], "current-term") : 0,
                 argc > 6 ? parse_int64(argv[6], "last-log-index") : 0,
                 argc > 7 ? parse_int64(argv[7], "last-log-term") : 0
+            );
+        } else if (command == "serve-persistent") {
+            if (argc < 6) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            run_persistent_server(
+                host,
+                port,
+                argv[4],
+                argv[5],
+                argc > 6 ? parse_int64(argv[6], "current-term") : 0,
+                argc > 7 ? parse_int64(argv[7], "last-log-index") : 0,
+                argc > 8 ? parse_int64(argv[8], "last-log-term") : 0
             );
         } else if (command == "serve-active") {
             if (argc < 9) {

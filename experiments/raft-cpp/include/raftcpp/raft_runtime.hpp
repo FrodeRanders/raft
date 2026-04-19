@@ -125,6 +125,7 @@ public:
             return 0;
         }
 
+        const auto initial_commit_index = node_->commit_index();
         node_->append_local_entry(data);
 
         std::size_t successes = 0;
@@ -152,6 +153,10 @@ public:
                     << " error=" << e.what()
                     << '\n';
             }
+        }
+
+        if (node_->commit_index() > initial_commit_index) {
+            send_heartbeats_once();
         }
 
         return successes;

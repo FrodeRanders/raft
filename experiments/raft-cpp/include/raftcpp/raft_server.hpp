@@ -136,11 +136,40 @@ private:
                 return std::nullopt;
             }
 
+            if (request_envelope.type() == "TelemetryRequest") {
+                raft::TelemetryRequest request;
+                if (!request.ParseFromString(request_envelope.payload())) {
+                    throw std::runtime_error("failed to parse TelemetryRequest");
+                }
+
+                if (auto response = handler_->on_telemetry_request(request); response.has_value()) {
+                    return wrap(request_envelope, "TelemetryResponse", *response);
+                }
+                return std::nullopt;
+            }
+
+            if (request_envelope.type() == "ClusterSummaryRequest") {
+                raft::ClusterSummaryRequest request;
+                if (!request.ParseFromString(request_envelope.payload())) {
+                    throw std::runtime_error("failed to parse ClusterSummaryRequest");
+                }
+
+                if (auto response = handler_->on_cluster_summary_request(request); response.has_value()) {
+                    return wrap(request_envelope, "ClusterSummaryResponse", *response);
+                }
+                return std::nullopt;
+            }
+
             if (request_envelope.type() == "AppendEntriesRequest") {
                 raft::AppendEntriesRequest request;
                 if (!request.ParseFromString(request_envelope.payload())) {
                     throw std::runtime_error("failed to parse AppendEntriesRequest");
                 }
+                std::cout
+                    << "append leader_commit=" << request.leader_commit()
+                    << " prev_log_index=" << request.prev_log_index()
+                    << " entries=" << request.entries_size()
+                    << '\n';
 
                 if (auto response = handler_->on_append_entries_request(request); response.has_value()) {
                     return wrap(request_envelope, "AppendEntriesResponse", *response);

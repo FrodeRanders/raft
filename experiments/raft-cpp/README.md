@@ -24,6 +24,7 @@ The current scaffold implements:
   - `install-snapshot`
   - `serve`
   - `serve-stateful`
+  - `serve-persistent`
   - `serve-active`
   - `election-round`
   - `heartbeat-round`
@@ -87,6 +88,7 @@ experiments/raft-cpp/build/raft_cpp_smoke append-entries 127.0.0.1 10080 cpp-lea
 experiments/raft-cpp/build/raft_cpp_smoke install-snapshot 127.0.0.1 10080 cpp-leader 0 0
 experiments/raft-cpp/build/raft_cpp_smoke serve 127.0.0.1 11080 cpp-stub
 experiments/raft-cpp/build/raft_cpp_smoke serve-stateful 127.0.0.1 11081 cpp-node 3 7 3
+experiments/raft-cpp/build/raft_cpp_smoke serve-persistent 127.0.0.1 11082 cpp-node /tmp/cpp-node.state 3 7 3
 experiments/raft-cpp/build/raft_cpp_smoke serve-active 127.0.0.1 11082 cpp-node 3 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/build/raft_cpp_smoke election-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/build/raft_cpp_smoke heartbeat-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
@@ -144,6 +146,26 @@ It is still not a real Raft node, but it behaves more plausibly:
 
 This is useful for probing Java-to-C++ transport with responses that depend on request content instead of fixed stub answers.
 
+The `serve-persistent` command uses the same basic state model, but persists node metadata and the synthetic log tail to a small local file. That currently covers:
+
+- current term
+- voted-for
+- leader id
+- last log index/term
+- commit index
+- snapshot index/term
+- previous log position
+- the latest synthetic entry payload used by the experiment
+
+This is still far from a real storage engine, but it is enough to validate restart recovery for the current bounded C++ prototype.
+
+The stateful and active C++ servers now also answer the existing admin probes:
+
+- `cluster-summary`
+- `telemetry`
+
+That makes it possible to inspect follower and leader log/commit state through the same shared protocol, instead of relying only on server log output.
+
 The `serve-active` command is the first combined inbound/outbound node mode.
 
 - it starts the inbound C++ RPC server
@@ -178,6 +200,8 @@ The new `election-round` and `heartbeat-round` commands are the first outbound-r
   - appends one synthetic local log entry
   - sends a non-empty `AppendEntriesRequest` carrying that entry to each listed peer
   - updates per-peer match progress from the responses
+  - advances the leader commit index once the entry reaches quorum
+  - sends a follow-up heartbeat carrying the new `leader_commit` so followers can observe the commit decision
 
 Peer lists for these commands use:
 

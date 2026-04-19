@@ -38,6 +38,21 @@ public:
         std::int64_t match_index{0};
     };
 
+    struct PersistentState {
+        std::string peer_id;
+        std::int64_t current_term{0};
+        std::optional<std::string> voted_for;
+        std::optional<std::string> leader_id;
+        std::int64_t last_log_index{0};
+        std::int64_t last_log_term{0};
+        std::int64_t commit_index{0};
+        std::int64_t snapshot_index{0};
+        std::int64_t snapshot_term{0};
+        std::int64_t previous_log_index{0};
+        std::int64_t previous_log_term{0};
+        std::string last_entry_data;
+    };
+
     explicit RaftNode(Config config)
         : peer_id_(std::move(config.peer_id)),
           role_(Role::follower),
@@ -183,6 +198,11 @@ public:
         return last_activity_;
     }
 
+    std::optional<std::string> voted_for() const {
+        std::scoped_lock lock(mu_);
+        return voted_for_;
+    }
+
     raft::VoteRequest start_election() {
         std::scoped_lock lock(mu_);
         start_election_locked();
@@ -296,6 +316,7 @@ public:
         if (response.success()) {
             progress.match_index = std::max(progress.match_index, response.match_index());
             progress.next_index = std::max(progress.next_index, response.match_index() + 1);
+            update_commit_index_locked();
             return true;
         }
 
@@ -405,6 +426,48 @@ public:
         return leader_id_;
     }
 
+    std::unordered_map<std::string, PeerProgress> peer_progress() const {
+        std::scoped_lock lock(mu_);
+        return peer_progress_;
+    }
+
+    PersistentState persistent_state() const {
+        std::scoped_lock lock(mu_);
+        return PersistentState{
+            .peer_id = peer_id_,
+            .current_term = current_term_,
+            .voted_for = voted_for_,
+            .leader_id = leader_id_,
+            .last_log_index = last_log_index_,
+            .last_log_term = last_log_term_,
+            .commit_index = commit_index_,
+            .snapshot_index = snapshot_index_,
+            .snapshot_term = snapshot_term_,
+            .previous_log_index = previous_log_index_,
+            .previous_log_term = previous_log_term_,
+            .last_entry_data = last_entry_data_,
+        };
+    }
+
+    void apply_persistent_state(const PersistentState& state) {
+        std::scoped_lock lock(mu_);
+        peer_id_ = state.peer_id;
+        current_term_ = state.current_term;
+        voted_for_ = state.voted_for;
+        leader_id_ = state.leader_id;
+        last_log_index_ = state.last_log_index;
+        last_log_term_ = state.last_log_term;
+        commit_index_ = state.commit_index;
+        snapshot_index_ = state.snapshot_index;
+        snapshot_term_ = state.snapshot_term;
+        previous_log_index_ = state.previous_log_index;
+        previous_log_term_ = state.previous_log_term;
+        last_entry_data_ = state.last_entry_data;
+        role_ = leader_id_.has_value() && *leader_id_ == peer_id_ ? Role::leader : Role::follower;
+        last_activity_ = std::chrono::steady_clock::now();
+        reset_peer_progress_locked();
+    }
+
     Role role() const {
         std::scoped_lock lock(mu_);
         return role_;
@@ -463,6 +526,24 @@ private:
         votes_granted_.clear();
         votes_responded_.clear();
         reset_peer_progress_locked();
+    }
+
+    void update_commit_index_locked() {
+        if (last_log_term_ != current_term_) {
+            return;
+        }
+
+        std::size_t replicated = 0;
+        for (const auto& [peer_id, progress] : peer_progress_) {
+            (void)peer_id;
+            if (progress.match_index >= last_log_index_) {
+                replicated += 1;
+            }
+        }
+
+        if (replicated >= quorum_size_locked()) {
+            commit_index_ = std::max(commit_index_, last_log_index_);
+        }
     }
 
     bool candidate_log_is_up_to_date_locked(const raft::VoteRequest& request) const {
