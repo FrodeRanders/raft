@@ -21,3 +21,4 @@ raft-data/
 raft-demo/
 jepsen/.cpcache/
 jepsen/store/
+jepsen/work/

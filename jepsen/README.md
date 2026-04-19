@@ -41,6 +41,7 @@ From this directory:
 
 ```text
 ./run-local.sh
+./run-suite.sh
 ```
 
 Optional overrides:
@@ -57,10 +58,15 @@ Optional overrides:
 ./run-local.sh --node-count 5 --nemesis membership-remove-follower
 ./run-local.sh --node-count 5 --nemesis membership-remove-leader
 ./run-local.sh --node-count 5 --nemesis membership-remove-follower-partition-leader
+./run-suite.sh smoke
+./run-suite.sh extended
+./run-suite.sh all
 ```
 
 Run local Jepsen tests serially, not in parallel.
 The harness uses host-local ports and a shared packet-filter helper, so two local runs at the same time can interfere with each other and produce invalid results.
+
+`run-suite.sh` is the serial runner for that requirement. It launches each scenario in a separate `clojure` process with its own base-port range and work directory.
 
 Supported options:
 
@@ -113,6 +119,7 @@ The workload layer can also be varied:
 - `src/raft_jepsen/client.clj`: shell-based client using the JSON KV CLI
 - `src/raft_jepsen/nemesis.clj`: process crash/restart nemesis
 - `src/raft_jepsen/observer.clj`: JSONL observability snapshots for correlation
+- `run-suite.sh`: serial suite runner for multiple Jepsen scenarios in separate processes
 - `scripts/partition.sh`: privileged local packet-filter helper for partition tests
 
 ## Notes
@@ -121,6 +128,11 @@ The workload layer can also be varied:
 - Successful writes are interpreted as committed/applied completions.
 - The default workload mixes `write`, `read`, and `cas` operations over a small value set so CAS paths are exercised with both matches and mismatches.
 - The harness defaults to 5 nodes now, but `--node-count 3` is still useful for faster local debugging.
+- `run-suite.sh` supports three suite levels:
+  - `smoke`: baseline, crash/restart, and `partition-one`
+  - `extended`: the richer validated scenarios including persistence loss, leader partitions, membership changes, multi-key, snapshot stress, and 7-node minority partition
+  - `all`: both suites in one serial run
+- Extra arguments passed to `run-suite.sh` are forwarded to every `run-local.sh` invocation in the suite. For example, `./run-suite.sh smoke --concurrency 12` applies that override to each smoke case.
 - The partition helper re-execs itself through `sudo -n` when needed. Jepsen invokes it non-interactively, so passwordless sudo must be configured for the helper path.
 - `mvn test` now includes a partition Jepsen smoke test, so the `sudo -n` prerequisite applies to normal Maven testing as well.
 - On macOS, a practical sudoers entry is:

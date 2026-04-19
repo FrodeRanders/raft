@@ -52,6 +52,16 @@ cd jepsen
 ./run-local.sh --time-limit 10 --concurrency 10 --node-count 5 --workdir /tmp/raft-jepsen-smoke
 ```
 
+To run a whole local Jepsen suite serially in separate processes:
+
+```text
+./run-suite.sh smoke
+./run-suite.sh extended
+./run-suite.sh all
+```
+
+`run-suite.sh` assigns separate base-port ranges and work directories per case, which avoids the interference problems seen when multiple local Jepsen runs overlap.
+
 Then run one fault mode at a time:
 
 ```text

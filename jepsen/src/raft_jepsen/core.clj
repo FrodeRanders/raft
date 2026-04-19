@@ -261,4 +261,7 @@
       (do
         (let [opts (assoc opts :jar-path (raft-db/resolved-jar-path opts))]
           (println "Running local Jepsen harness with options:" (pr-str (dissoc opts :help)))
-          (jepsen/run! (raft-test opts)))))))
+          (try
+            (jepsen/run! (raft-test opts))
+            (finally
+              (shutdown-agents))))))))
