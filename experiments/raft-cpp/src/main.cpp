@@ -30,9 +30,12 @@ void print_usage() {
         << "  raft_cpp_smoke serve-stateful <bind-host> <port> <peer-id> [current-term] [last-log-index] [last-log-term]\n"
         << "  raft_cpp_smoke serve-persistent <bind-host> <port> <peer-id> <state-file> [current-term] [last-log-index] [last-log-term]\n"
         << "  raft_cpp_smoke serve-active <bind-host> <port> <peer-id> <current-term> <last-log-index> <last-log-term> <peer-spec>...\n"
+        << "  raft_cpp_smoke serve-active-persistent <bind-host> <port> <peer-id> <state-file> <current-term> <last-log-index> <last-log-term> <peer-spec>...\n"
+        << "  raft_cpp_smoke serve-active-persistent-workload <bind-host> <port> <peer-id> <state-file> <current-term> <last-log-index> <last-log-term> <replicate-interval-ms> <peer-spec>...\n"
         << "  raft_cpp_smoke election-round <peer-id> [current-term] [last-log-index] [last-log-term] <peer-spec>...\n"
         << "  raft_cpp_smoke heartbeat-round <peer-id> <term> [last-log-index] [last-log-term] <peer-spec>...\n"
         << "  raft_cpp_smoke replicate-once <peer-id> <term> <data> [last-log-index] [last-log-term] <peer-spec>...\n"
+        << "  raft_cpp_smoke replicate-once-persistent <peer-id> <state-file> <term> <data> [last-log-index] [last-log-term] <peer-spec>...\n"
         << "\n"
         << "  peer-spec format: <peer-id>@<host>:<port>\n";
 }
@@ -307,27 +310,17 @@ int run_install_snapshot(
 [[noreturn]] void run_active_server(
     const std::string& bind_host,
     std::uint16_t port,
-    const std::string& peer_id,
-    std::int64_t current_term,
-    std::int64_t last_log_index,
-    std::int64_t last_log_term,
-    std::vector<raftcpp::PeerEndpoint> peers
+    const std::string&,
+    std::shared_ptr<raftcpp::RaftNode> node,
+    std::shared_ptr<raftcpp::RpcHandler> handler,
+    std::vector<raftcpp::PeerEndpoint> peers,
+    std::function<void(const raftcpp::RaftNode&)> persist_callback = {},
+    std::optional<std::chrono::milliseconds> replicate_interval = std::nullopt,
+    std::string replicate_prefix = "synthetic"
 ) {
-    auto node = std::make_shared<raftcpp::RaftNode>(raftcpp::RaftNode::Config{
-        .peer_id = peer_id,
-        .current_term = current_term,
-        .last_log_index = last_log_index,
-        .last_log_term = last_log_term,
-        .commit_index = 0,
-        .snapshot_index = 0,
-        .snapshot_term = 0,
-        .voting_peers = {},
-    });
-
     boost::asio::io_context server_io_context;
     boost::asio::io_context client_io_context;
-    auto handler = std::make_shared<raftcpp::InMemoryRpcHandler>(node);
-    raftcpp::RaftRuntime runtime(client_io_context, node, std::move(peers));
+    raftcpp::RaftRuntime runtime(client_io_context, node, std::move(peers), std::move(persist_callback));
     raftcpp::RaftServer server(server_io_context, bind_host, port, std::move(handler));
 
     std::jthread server_thread([&server]() {
@@ -403,6 +396,19 @@ int run_install_snapshot(
         });
     };
 
+    std::jthread replicate_thread;
+    if (replicate_interval.has_value()) {
+        replicate_thread = std::jthread([&, replicate_interval, replicate_prefix]() {
+            std::size_t replicate_counter = 0;
+            for (;;) {
+                std::this_thread::sleep_for(*replicate_interval);
+                if (runtime.node().role() == raftcpp::RaftNode::Role::leader) {
+                    runtime.replicate_entry_once(replicate_prefix + "-" + std::to_string(++replicate_counter));
+                }
+            }
+        });
+    }
+
     schedule_heartbeat();
     schedule_election(next_election_timeout());
     client_io_context.run();
@@ -410,6 +416,104 @@ int run_install_snapshot(
     for (;;) {
         std::this_thread::sleep_for(std::chrono::hours(24));
     }
+}
+
+[[noreturn]] void run_active_server(
+    const std::string& bind_host,
+    std::uint16_t port,
+    const std::string& peer_id,
+    std::int64_t current_term,
+    std::int64_t last_log_index,
+    std::int64_t last_log_term,
+    std::vector<raftcpp::PeerEndpoint> peers
+) {
+    auto node = std::make_shared<raftcpp::RaftNode>(raftcpp::RaftNode::Config{
+        .peer_id = peer_id,
+        .current_term = current_term,
+        .last_log_index = last_log_index,
+        .last_log_term = last_log_term,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+    auto handler = std::make_shared<raftcpp::InMemoryRpcHandler>(node);
+    run_active_server(bind_host, port, peer_id, std::move(node), std::move(handler), std::move(peers));
+}
+
+[[noreturn]] void run_active_persistent_server(
+    const std::string& bind_host,
+    std::uint16_t port,
+    const std::string& peer_id,
+    const std::string& state_file,
+    std::int64_t current_term,
+    std::int64_t last_log_index,
+    std::int64_t last_log_term,
+    std::vector<raftcpp::PeerEndpoint> peers
+) {
+    auto handler = std::make_shared<raftcpp::PersistentRpcHandler>(
+        state_file,
+        raftcpp::RaftNode::Config{
+            .peer_id = peer_id,
+            .current_term = current_term,
+            .last_log_index = last_log_index,
+            .last_log_term = last_log_term,
+            .commit_index = 0,
+            .snapshot_index = 0,
+            .snapshot_term = 0,
+            .voting_peers = {},
+        }
+    );
+    run_active_server(
+        bind_host,
+        port,
+        peer_id,
+        handler->node_ptr(),
+        handler,
+        std::move(peers),
+        [handler](const raftcpp::RaftNode& current_node) {
+            handler->store().save(current_node.persistent_state());
+        }
+    );
+}
+
+[[noreturn]] void run_active_persistent_workload_server(
+    const std::string& bind_host,
+    std::uint16_t port,
+    const std::string& peer_id,
+    const std::string& state_file,
+    std::int64_t current_term,
+    std::int64_t last_log_index,
+    std::int64_t last_log_term,
+    std::chrono::milliseconds replicate_interval,
+    std::vector<raftcpp::PeerEndpoint> peers
+) {
+    auto handler = std::make_shared<raftcpp::PersistentRpcHandler>(
+        state_file,
+        raftcpp::RaftNode::Config{
+            .peer_id = peer_id,
+            .current_term = current_term,
+            .last_log_index = last_log_index,
+            .last_log_term = last_log_term,
+            .commit_index = 0,
+            .snapshot_index = 0,
+            .snapshot_term = 0,
+            .voting_peers = {},
+        }
+    );
+    run_active_server(
+        bind_host,
+        port,
+        peer_id,
+        handler->node_ptr(),
+        handler,
+        std::move(peers),
+        [handler](const raftcpp::RaftNode& current_node) {
+            handler->store().save(current_node.persistent_state());
+        },
+        replicate_interval,
+        "workload"
+    );
 }
 
 int run_election_round(
@@ -508,20 +612,91 @@ int run_replicate_once(
     return successes > 0 ? 0 : 2;
 }
 
+int run_replicate_once_persistent(
+    const std::string& peer_id,
+    const std::string& state_file,
+    std::int64_t term,
+    const std::string& data,
+    std::int64_t last_log_index,
+    std::int64_t last_log_term,
+    std::vector<raftcpp::PeerEndpoint> peers
+) {
+    boost::asio::io_context io_context;
+    raftcpp::PersistentStateStore store(state_file);
+    auto node = std::make_shared<raftcpp::RaftNode>(raftcpp::RaftNode::Config{
+        .peer_id = peer_id,
+        .current_term = term,
+        .last_log_index = last_log_index,
+        .last_log_term = last_log_term,
+        .commit_index = last_log_index,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+
+    if (const auto persisted = store.load(); persisted.has_value()) {
+        node->apply_persistent_state(*persisted);
+    } else {
+        store.save(node->persistent_state());
+    }
+
+    node->become_leader();
+    store.save(node->persistent_state());
+
+    raftcpp::RaftRuntime runtime(
+        io_context,
+        node,
+        std::move(peers),
+        [&store](const raftcpp::RaftNode& current_node) {
+            store.save(current_node.persistent_state());
+        }
+    );
+
+    const auto successes = runtime.replicate_entry_once(data);
+    std::cout
+        << "role: " << (runtime.node().role() == raftcpp::RaftNode::Role::leader ? "leader" : "not-leader") << '\n'
+        << "replication_successes: " << successes << '\n'
+        << "last_log_index: " << runtime.node().last_log_index() << '\n'
+        << "commit_index: " << runtime.node().commit_index() << '\n';
+    return successes > 0 ? 0 : 2;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     GOOGLE_PROTOBUF_VERIFY_VERSION;
 
     try {
-        if (argc < 4) {
+        if (argc < 2) {
             print_usage();
             return 1;
         }
 
         const std::string command = argv[1];
-        const std::string host = argv[2];
-        const auto port = parse_port(argv[3]);
+        const auto uses_host_port =
+            command == "cluster-summary" ||
+            command == "telemetry" ||
+            command == "vote-request" ||
+            command == "append-entries" ||
+            command == "install-snapshot" ||
+            command == "serve" ||
+            command == "serve-stateful" ||
+            command == "serve-persistent" ||
+            command == "serve-active" ||
+            command == "serve-active-persistent" ||
+            command == "serve-active-persistent-workload";
+
+        std::string host;
+        std::uint16_t port = 0;
+        if (uses_host_port) {
+            if (argc < 4) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            host = argv[2];
+            port = parse_port(argv[3]);
+        }
 
         int exit_code = 1;
         if (command == "cluster-summary") {
@@ -627,6 +802,39 @@ int main(int argc, char** argv) {
                 parse_int64(argv[7], "last-log-term"),
                 parse_peer_specs(argv, 8, argc)
             );
+        } else if (command == "serve-active-persistent") {
+            if (argc < 10) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            run_active_persistent_server(
+                host,
+                port,
+                argv[4],
+                argv[5],
+                parse_int64(argv[6], "current-term"),
+                parse_int64(argv[7], "last-log-index"),
+                parse_int64(argv[8], "last-log-term"),
+                parse_peer_specs(argv, 9, argc)
+            );
+        } else if (command == "serve-active-persistent-workload") {
+            if (argc < 11) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            run_active_persistent_workload_server(
+                host,
+                port,
+                argv[4],
+                argv[5],
+                parse_int64(argv[6], "current-term"),
+                parse_int64(argv[7], "last-log-index"),
+                parse_int64(argv[8], "last-log-term"),
+                std::chrono::milliseconds(parse_int64(argv[9], "replicate-interval-ms")),
+                parse_peer_specs(argv, 10, argc)
+            );
         } else if (command == "election-round") {
             if (argc < 7) {
                 print_usage();
@@ -666,6 +874,21 @@ int main(int argc, char** argv) {
                 parse_int64(argv[5], "last-log-index"),
                 parse_int64(argv[6], "last-log-term"),
                 parse_peer_specs(argv, 7, argc)
+            );
+        } else if (command == "replicate-once-persistent") {
+            if (argc < 8) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_replicate_once_persistent(
+                argv[2],
+                argv[3],
+                parse_int64(argv[4], "term"),
+                argv[5],
+                parse_int64(argv[6], "last-log-index"),
+                parse_int64(argv[7], "last-log-term"),
+                parse_peer_specs(argv, 8, argc)
             );
         } else {
             print_usage();

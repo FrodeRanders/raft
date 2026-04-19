@@ -26,9 +26,12 @@ The current scaffold implements:
   - `serve-stateful`
   - `serve-persistent`
   - `serve-active`
+  - `serve-active-persistent`
+  - `serve-active-persistent-workload`
   - `election-round`
   - `heartbeat-round`
   - `replicate-once`
+  - `replicate-once-persistent`
 
 This is enough to establish the wire-level interoperability path before migrating any Raft logic.
 
@@ -90,9 +93,12 @@ experiments/raft-cpp/build/raft_cpp_smoke serve 127.0.0.1 11080 cpp-stub
 experiments/raft-cpp/build/raft_cpp_smoke serve-stateful 127.0.0.1 11081 cpp-node 3 7 3
 experiments/raft-cpp/build/raft_cpp_smoke serve-persistent 127.0.0.1 11082 cpp-node /tmp/cpp-node.state 3 7 3
 experiments/raft-cpp/build/raft_cpp_smoke serve-active 127.0.0.1 11082 cpp-node 3 7 3 peer-a@127.0.0.1:11081
+experiments/raft-cpp/build/raft_cpp_smoke serve-active-persistent 127.0.0.1 11083 cpp-node /tmp/cpp-node.state 3 7 3 peer-a@127.0.0.1:11081
+experiments/raft-cpp/build/raft_cpp_smoke serve-active-persistent-workload 127.0.0.1 11084 cpp-node /tmp/cpp-node.state 3 7 3 1500 peer-a@127.0.0.1:11081
 experiments/raft-cpp/build/raft_cpp_smoke election-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/build/raft_cpp_smoke heartbeat-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/build/raft_cpp_smoke replicate-once cpp-node 3 hello 7 3 peer-a@127.0.0.1:11081
+experiments/raft-cpp/build/raft_cpp_smoke replicate-once-persistent cpp-node /tmp/cpp-node.state 3 hello 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/run-interop-smoke.sh
 ```
 
@@ -184,6 +190,10 @@ This is still intentionally minimal:
 
 But it is the first mode where one C++ process can both receive and initiate Raft RPCs using the shared wire protocol.
 
+The `serve-active-persistent` command combines that active runtime with the same small file-backed state store used by `serve-persistent`. That means the bounded prototype can now retain active-node term/log/commit state across restart as well.
+
+The `serve-active-persistent-workload` command extends that further by periodically originating bounded synthetic entries once the node is leader. That gives the prototype a self-contained way to exercise persistent leader-side replication and restart recovery without depending on a separate one-shot CLI command.
+
 The new `election-round` and `heartbeat-round` commands are the first outbound-runtime layer on the C++ side.
 
 - `election-round`
@@ -202,6 +212,10 @@ The new `election-round` and `heartbeat-round` commands are the first outbound-r
   - updates per-peer match progress from the responses
   - advances the leader commit index once the entry reaches quorum
   - sends a follow-up heartbeat carrying the new `leader_commit` so followers can observe the commit decision
+- `replicate-once-persistent`
+  - does the same bounded replication step
+  - but flushes leader-side state to a file-backed store before and after the replication round
+  - so the resulting committed synthetic entry can be recovered after restart
 
 Peer lists for these commands use:
 

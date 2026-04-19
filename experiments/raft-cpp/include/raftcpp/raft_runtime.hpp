@@ -2,6 +2,7 @@
 
 #include <boost/asio.hpp>
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -24,13 +25,23 @@ struct PeerEndpoint {
 class RaftRuntime {
 public:
     RaftRuntime(boost::asio::io_context& io_context, RaftNode::Config config, std::vector<PeerEndpoint> peers)
-        : RaftRuntime(io_context, std::make_shared<RaftNode>(std::move(config)), std::move(peers)) {
+        : RaftRuntime(io_context, std::make_shared<RaftNode>(std::move(config)), std::move(peers), {}) {
     }
 
     RaftRuntime(boost::asio::io_context& io_context, std::shared_ptr<RaftNode> node, std::vector<PeerEndpoint> peers)
+        : RaftRuntime(io_context, std::move(node), std::move(peers), {}) {
+    }
+
+    RaftRuntime(
+        boost::asio::io_context& io_context,
+        std::shared_ptr<RaftNode> node,
+        std::vector<PeerEndpoint> peers,
+        std::function<void(const RaftNode&)> persist_callback
+    )
         : client_(io_context),
           peers_(std::move(peers)),
-          node_(std::move(node)) {
+          node_(std::move(node)),
+          persist_callback_(std::move(persist_callback)) {
         if (!node_) {
             throw std::runtime_error("raft runtime requires a node");
         }
@@ -51,6 +62,7 @@ public:
 
     bool run_election_round() {
         const auto request = node_->start_election();
+        persist();
 
         std::cout
             << "starting election term=" << request.term()
@@ -68,6 +80,7 @@ public:
                     "VoteResponse"
                 );
                 const auto became_leader = node_->handle_vote_response(response);
+                persist();
                 std::cout
                     << "vote-response peer=" << peer.peer_id
                     << " current_term=" << response.current_term()
@@ -104,6 +117,7 @@ public:
                 if (node_->handle_append_entries_response(peer.peer_id, response)) {
                     successes += 1;
                 }
+                persist();
                 std::cout
                     << "heartbeat-response peer=" << peer.peer_id
                     << " success=" << (response.success() ? "true" : "false")
@@ -127,6 +141,7 @@ public:
 
         const auto initial_commit_index = node_->commit_index();
         node_->append_local_entry(data);
+        persist();
 
         std::size_t successes = 0;
         for (const auto& peer : peers_) {
@@ -142,6 +157,7 @@ public:
                 if (node_->handle_append_entries_response(peer.peer_id, response)) {
                     successes += 1;
                 }
+                persist();
                 std::cout
                     << "replication-response peer=" << peer.peer_id
                     << " success=" << (response.success() ? "true" : "false")
@@ -163,9 +179,16 @@ public:
     }
 
 private:
+    void persist() {
+        if (persist_callback_) {
+            persist_callback_(*node_);
+        }
+    }
+
     RaftClient client_;
     std::vector<PeerEndpoint> peers_;
     std::shared_ptr<RaftNode> node_;
+    std::function<void(const RaftNode&)> persist_callback_;
 };
 
 } // namespace raftcpp
