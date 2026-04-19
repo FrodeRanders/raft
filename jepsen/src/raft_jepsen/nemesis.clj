@@ -575,3 +575,240 @@
           (assoc op :type :info :error :unsupported-nemesis-op)))
       (teardown! [_ _test]
         nil))))
+
+(defn membership-remove-leader []
+  (let [removal-state (atom {:started? false})]
+    (reify
+      jepsen.nemesis/Nemesis
+      (setup! [this _test] this)
+      (invoke! [_ test op]
+        (case (:f op)
+          :start
+          (locking removal-state
+            (cond
+              (:started? @removal-state)
+              (assoc op :type :info :value :already-started)
+
+              :else
+              (if-let [leader (leader-node test)]
+                (let [member leader
+                      remaining-members (vec (remove #(= member %) (:nodes test)))]
+                  (joint-reconfigure! test leader remaining-members)
+                  (observer/capture-safe! test "nemesis-membership-remove-leader"
+                                          {:node member
+                                           :op {:f :joint}
+                                           :extra {:leader leader
+                                                   :members remaining-members
+                                                   :phase :joint-requested}})
+                  (let [joint-summary
+                        (wait-for! 30000 500
+                                   #(when-let [current-leader (leader-node test)]
+                                      (try
+                                        (let [summary (cluster-summary test current-leader)
+                                              reconfig (reconfiguration-status test current-leader)
+                                              progress (removal-progress-state summary reconfig member)]
+                                          (when progress
+                                            {:leader current-leader
+                                             :summary summary
+                                             :reconfig reconfig
+                                             :member (:member progress)}))
+                                        (catch Throwable _
+                                          nil))))]
+                    (when-not joint-summary
+                      (throw (ex-info "Timed out waiting for leader removal joint configuration"
+                                      {:member member :remaining-members remaining-members})))
+                    (finalize-reconfigure! test (:leader joint-summary))
+                    (observer/capture-safe! test "nemesis-membership-remove-leader"
+                                            {:node member
+                                             :op {:f :finalize}
+                                             :extra {:leader (:leader joint-summary)
+                                                     :members remaining-members
+                                                     :phase :finalize-requested}})
+                    (let [expected-voters (count remaining-members)
+                          removed-summary
+                          (wait-for! 30000 500
+                                     #(some (fn [node]
+                                              (try
+                                                (let [telemetry (telemetry-summary test node)
+                                                      summary (try
+                                                                (cluster-summary test node)
+                                                                (catch Throwable _
+                                                                  nil))
+                                                      progress (removed-final-state telemetry
+                                                                                    summary
+                                                                                    member
+                                                                                    expected-voters)]
+                                                  (when progress
+                                                    {:leader (:leaderId telemetry)
+                                                     :observer node
+                                                     :telemetry telemetry
+                                                     :summary summary}))
+                                                (catch Throwable _
+                                                  nil)))
+                                            remaining-members))]
+                      (when-not removed-summary
+                        (throw (ex-info "Timed out waiting for leader removal to finalize"
+                                        {:member member :remaining-members remaining-members})))
+                      (reset! removal-state {:started? true
+                                             :member member
+                                             :leader (:leader removed-summary)})
+                      (observer/capture-safe! test "nemesis-membership-remove-leader"
+                                              {:node member
+                                               :op {:f :completed}
+                                               :extra {:leader (:leader removed-summary)
+                                                       :members remaining-members
+                                                       :phase :stable-removed}})
+                      (assoc op :type :info
+                             :value {:member member
+                                     :leader (:leader removed-summary)
+                                     :status :stable-removed}))))
+                (assoc op :type :info :value :no-leader))))
+
+          :stop (assoc op :type :info :value :noop)
+          (assoc op :type :info :error :unsupported-nemesis-op)))
+      (teardown! [_ _test]
+        nil))))
+
+(defn membership-remove-follower-partition-leader []
+  (let [state (atom {:started? false
+                     :isolation nil})]
+    (reify
+      jepsen.nemesis/Nemesis
+      (setup! [this _test] this)
+      (invoke! [_ test op]
+        (case (:f op)
+          :start
+          (locking state
+            (cond
+              (:started? @state)
+              (assoc op :type :info :value :already-started)
+
+              :else
+              (if-let [leader (leader-node test)]
+                (if-let [member (first (remove #(= leader %) (:nodes test)))]
+                  (let [remaining-members (vec (remove #(= member %) (:nodes test)))]
+                    (joint-reconfigure! test leader remaining-members)
+                    (observer/capture-safe! test "nemesis-membership-remove-follower-partition-leader"
+                                            {:node member
+                                             :op {:f :joint}
+                                             :extra {:leader leader
+                                                     :members remaining-members
+                                                     :phase :joint-requested}})
+                    (let [joint-summary
+                          (wait-for! 30000 500
+                                     #(when-let [current-leader (leader-node test)]
+                                        (try
+                                          (let [summary (cluster-summary test current-leader)
+                                                reconfig (reconfiguration-status test current-leader)
+                                                progress (removal-progress-state summary reconfig member)]
+                                            (when progress
+                                              {:leader current-leader
+                                               :summary summary
+                                               :reconfig reconfig
+                                               :member (:member progress)}))
+                                          (catch Throwable _
+                                            nil))))]
+                      (when-not joint-summary
+                        (throw (ex-info "Timed out waiting for follower-removal joint configuration before partition"
+                                        {:member member :remaining-members remaining-members :leader leader})))
+                      (let [isolation (isolate-nodes! test [(:leader joint-summary)])]
+                        (observer/capture-safe! test "nemesis-membership-remove-follower-partition-leader"
+                                                {:node (:leader joint-summary)
+                                                 :op {:f :partition}
+                                                 :extra {:leader (:leader joint-summary)
+                                                         :members remaining-members
+                                                         :isolatedNodes (:nodes isolation)
+                                                         :isolatedPorts (:ports isolation)
+                                                         :phase :leader-partitioned}})
+                        (reset! state {:started? true
+                                       :member member
+                                       :joint-leader (:leader joint-summary)
+                                       :remaining-members remaining-members
+                                       :isolation isolation})
+                        (assoc op :type :info
+                               :value {:member member
+                                       :leader (:leader joint-summary)
+                                       :isolatedLeader (:leader joint-summary)
+                                       :status :joint-partitioned}))))
+                  (assoc op :type :info :value :no-target))
+                (assoc op :type :info :value :no-leader))))
+
+          :stop
+          (locking state
+            (if-not (:started? @state)
+              (assoc op :type :info :value :not-started)
+              (let [{:keys [member joint-leader remaining-members isolation]} @state]
+                (when isolation
+                  (heal-isolation! test isolation)
+                  (observer/capture-safe! test "nemesis-membership-remove-follower-partition-leader"
+                                          {:node (first (:nodes isolation))
+                                           :op {:f :stop}
+                                           :extra {:isolatedNodes (:nodes isolation)
+                                                   :isolatedPorts (:ports isolation)
+                                                   :phase :leader-healed}}))
+                (let [finalize-summary
+                      (wait-for! 30000 500
+                                 #(when-let [current-leader (leader-node test)]
+                                    (try
+                                      (finalize-reconfigure! test current-leader)
+                                      {:leader current-leader}
+                                      (catch Throwable _
+                                        nil))))
+                      expected-voters (count remaining-members)
+                      removed-summary
+                      (wait-for! 30000 500
+                                 #(some (fn [node]
+                                          (try
+                                            (let [telemetry (telemetry-summary test node)
+                                                  summary (try
+                                                            (cluster-summary test node)
+                                                            (catch Throwable _
+                                                              nil))
+                                                  progress (removed-final-state telemetry
+                                                                                summary
+                                                                                member
+                                                                                expected-voters)]
+                                              (when progress
+                                                {:leader (:leaderId telemetry)
+                                                 :observer node
+                                                 :telemetry telemetry
+                                                 :summary summary}))
+                                            (catch Throwable _
+                                              nil)))
+                                        remaining-members))]
+                  (when-not finalize-summary
+                    (swap! state assoc :isolation nil)
+                    (throw (ex-info "Timed out waiting for healed cluster leader after partitioned membership change"
+                                    {:member member
+                                     :removed-leader joint-leader
+                                     :remaining-members remaining-members})))
+                  (when-not removed-summary
+                    (swap! state assoc :isolation nil)
+                    (throw (ex-info "Timed out waiting for follower removal after healed leader partition"
+                                    {:member member
+                                     :removed-leader joint-leader
+                                     :remaining-members remaining-members})))
+                  (reset! state {:started? false
+                                 :member member
+                                 :leader (:leader removed-summary)
+                                 :joint-leader joint-leader
+                                 :remaining-members remaining-members
+                                 :isolation nil})
+                  (observer/capture-safe! test "nemesis-membership-remove-follower-partition-leader"
+                                          {:node member
+                                           :op {:f :completed}
+                                           :extra {:leader (:leader removed-summary)
+                                                   :isolatedLeader joint-leader
+                                                   :members remaining-members
+                                                   :phase :stable-removed}})
+                  (assoc op :type :info
+                         :value {:member member
+                                 :leader (:leader removed-summary)
+                                 :isolatedLeader joint-leader
+                                 :status :stable-removed}))))
+
+          (assoc op :type :info :error :unsupported-nemesis-op))))
+      (teardown! [_ test]
+        (when-let [isolation (:isolation @state)]
+          (heal-isolation! test isolation)
+          (swap! state assoc :isolation nil))))))

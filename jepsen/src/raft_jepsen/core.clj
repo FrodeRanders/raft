@@ -69,7 +69,7 @@
     "  --concurrency <n>     Client concurrency, default 10"
     "  --base-port <port>    First node port, default 10080"
     "  --node-count <n>      Number of local nodes, default 5"
-    "  --nemesis <mode>      none|crash-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower, default none"
+    "  --nemesis <mode>      none|crash-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower|membership-remove-leader|membership-remove-follower-partition-leader, default none"
     "  --nemesis-interval <sec> Nemesis interval, default 5"
     "  --workdir <path>      Local work directory, default ./work"]))
 
@@ -125,6 +125,8 @@
     "membership-join-promote" (raft-nemesis/membership-join-promote)
     "membership-demote" (raft-nemesis/membership-demote)
     "membership-remove-follower" (raft-nemesis/membership-remove-follower)
+    "membership-remove-leader" (raft-nemesis/membership-remove-leader)
+    "membership-remove-follower-partition-leader" (raft-nemesis/membership-remove-follower-partition-leader)
     (throw (ex-info "Unknown nemesis mode" {:nemesis-mode (:nemesis-mode opts)}))))
 
 (defn- nemesis-generator [opts]
@@ -142,6 +144,16 @@
     (gen/phases
      (gen/sleep (:nemesis-interval opts))
      (gen/once {:f :start}))
+    "membership-remove-leader"
+    (gen/phases
+     (gen/sleep (:nemesis-interval opts))
+     (gen/once {:f :start}))
+    "membership-remove-follower-partition-leader"
+    (gen/phases
+     (gen/sleep (:nemesis-interval opts))
+     (gen/once {:f :start})
+     (gen/sleep (:nemesis-interval opts))
+     (gen/once {:f :stop}))
     (gen/cycle
      (gen/phases
       (gen/once {:f :stop})

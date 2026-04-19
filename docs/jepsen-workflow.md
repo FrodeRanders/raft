@@ -61,6 +61,8 @@ Then run one fault mode at a time:
 ./run-local.sh --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-join-promote --workdir /tmp/raft-jepsen-membership-join
 ./run-local.sh --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-demote --workdir /tmp/raft-jepsen-membership-demote
 ./run-local.sh --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-remove-follower --workdir /tmp/raft-jepsen-membership-remove
+./run-local.sh --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-remove-leader --workdir /tmp/raft-jepsen-membership-remove-leader
+./run-local.sh --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-remove-follower-partition-leader --workdir /tmp/raft-jepsen-membership-remove-follower-partition-leader
 ```
 
 Run local Jepsen tests serially, not in parallel. The harness shares host-local ports and packet-filter state.

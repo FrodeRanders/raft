@@ -20,6 +20,16 @@ This file tracks the incremental work needed to add a Jepsen test harness alongs
 - [x] Extend the KV workload beyond a plain register model, ideally with CAS support.
 - [x] Document developer workflow for running classic tests and Jepsen tests side by side.
 
+## Next Backlog
+
+- [x] Add `membership-remove-leader`.
+- [x] Combine membership changes with leader partitions or crash/restart nemeses.
+- [ ] Run longer non-Maven Jepsen scenarios for the strongest membership/fault combinations.
+- [ ] Add 7-node adversarial runs.
+- [ ] Add multi-key workloads using independent histories.
+- [ ] Add snapshot/compaction scenarios under faults.
+- [ ] Add disk/persistence failure scenarios.
+
 ## Current Status
 
 - `Classic test suite`: in place under `raft-tests`.
@@ -33,9 +43,11 @@ This file tracks the incremental work needed to add a Jepsen test harness alongs
 - `Partition validation`: passing 5-node `partition-one` run with a real isolated node and linearizable result.
 - `Leader-targeted partition validation`: passing short runs for `partition-leader` and `partition-leader-minority`.
 - `Longer 5-node runs`: passing when executed serially. Earlier failures were caused by running two local Jepsen processes in parallel against shared host ports and packet-filter state, which made those results non-diagnostic.
-- `Membership scenarios`: validated for `membership-join-promote`, `membership-demote`, and `membership-remove-follower`. The local harness now covers join/promote, role demotion, and explicit joint/finalize follower removal under load.
+- `Membership scenarios`: validated for `membership-join-promote`, `membership-demote`, `membership-remove-follower`, and now includes a `membership-remove-leader` nemesis for current-leader removal under load.
+- `Membership + fault combinations`: now includes `membership-remove-follower-partition-leader`, which starts follower removal, isolates the leader during joint consensus, then heals and finalizes to a stable removed-member configuration.
 - `Stronger KV workload`: the KV demo now exposes a first-class CAS command/result path, and the Jepsen harness now drives a single-key `cas-register` workload with mixed `write`, `read`, and `cas` operations.
 - `Developer workflow`: documented in `docs/jepsen-workflow.md` with the Maven test/build loop, local Jepsen commands, and result inspection flow.
+- `Longer 5-node runs`: a 60-second `partition-leader` CAS run now exposes a real linearizability failure and is the active investigation item. See `jepsen/store/raft-kv-local-5n/20260419T004443.520+0200/results.edn`.
 
 ## Notes
 

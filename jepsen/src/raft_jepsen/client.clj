@@ -22,6 +22,7 @@
     (cond
       success? (assoc op :type :ok :value value)
       (#{"RETRY" "REDIRECT"} status) (assoc op :type :fail :error status)
+      (#{"UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
       :else (assoc op :type :fail :error (or status :command-failed)))))
 
 (defn- classify-read [op exit response key]
@@ -34,6 +35,7 @@
     (cond
       success? (assoc op :type :ok :value value)
       (#{"RETRY" "REDIRECT"} status) (assoc op :type :fail :error status)
+      (#{"UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
       :else (assoc op :type :fail :error (or status :query-failed)))))
 
 (defn- classify-cas [op exit response]
@@ -45,6 +47,7 @@
       (and success? matched?) (assoc op :type :ok)
       (and success? (contains? result :matched)) (assoc op :type :fail :error :cas-mismatch)
       (#{"RETRY" "REDIRECT"} status) (assoc op :type :fail :error status)
+      (#{"UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
       :else (assoc op :type :fail :error (or status :command-failed)))))
 
 (defn- maybe-capture! [test node op result]

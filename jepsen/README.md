@@ -53,6 +53,8 @@ Optional overrides:
 ./run-local.sh --node-count 5 --nemesis membership-join-promote
 ./run-local.sh --node-count 5 --nemesis membership-demote
 ./run-local.sh --node-count 5 --nemesis membership-remove-follower
+./run-local.sh --node-count 5 --nemesis membership-remove-leader
+./run-local.sh --node-count 5 --nemesis membership-remove-follower-partition-leader
 ```
 
 Run local Jepsen tests serially, not in parallel.
@@ -65,7 +67,7 @@ Supported options:
 - `--concurrency <n>`: Jepsen client concurrency
 - `--base-port <port>`: first node port, default `10080`
 - `--node-count <n>`: number of local nodes, default `5`
-- `--nemesis <mode>`: `none`, `crash-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, `membership-join-promote`, `membership-demote`, or `membership-remove-follower`
+- `--nemesis <mode>`: `none`, `crash-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, `membership-join-promote`, `membership-demote`, `membership-remove-follower`, `membership-remove-leader`, or `membership-remove-follower-partition-leader`
 - `--nemesis-interval <seconds>`: delay between crash/restart actions
 - `--workdir <path>`: local node state/log directory
 
@@ -91,6 +93,8 @@ Supported options:
 - `membership-join-promote` starts a sixth local node in join mode as a learner, waits for the join to stabilize, then promotes it to voter while the workload continues against the original client nodes.
 - `membership-demote` demotes one existing non-leader voter to learner under load and waits for the role transition to appear in cluster-summary state.
 - `membership-remove-follower` removes one existing non-leader follower through an explicit `reconfigure joint ...` plus `reconfigure finalize` flow and waits until the member disappears from stable cluster-summary state.
+- `membership-remove-leader` removes the current leader through the same explicit joint/finalize flow and waits until a remaining node reports a stable post-removal configuration with a healthy quorum.
+- `membership-remove-follower-partition-leader` begins follower removal, waits for joint consensus, isolates the leader while the reconfiguration is active, then heals and finalizes to verify recovery to a stable removed-member configuration.
 - The partition helper re-execs itself through `sudo -n` when needed. Jepsen invokes it non-interactively, so passwordless sudo must be configured for the helper path.
 - `mvn test` now includes a partition Jepsen smoke test, so the `sudo -n` prerequisite applies to normal Maven testing as well.
 - On macOS, a practical sudoers entry is:
