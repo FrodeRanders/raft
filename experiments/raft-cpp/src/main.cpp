@@ -1,13 +1,18 @@
 #include <boost/asio.hpp>
 #include <cstdint>
+#include <chrono>
 #include <iostream>
-#include <limits>
+#include <memory>
+#include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "raft.pb.h"
 #include "raftcpp/raft_client.hpp"
 #include "raftcpp/rpc_handler.hpp"
+#include "raftcpp/raft_runtime.hpp"
 #include "raftcpp/raft_server.hpp"
 
 namespace {
@@ -21,7 +26,12 @@ void print_usage() {
         << "  raft_cpp_smoke append-entries <host> <port> <leader-id> <prev-log-index> <prev-log-term> <leader-commit> [term]\n"
         << "  raft_cpp_smoke install-snapshot <host> <port> <leader-id> <last-included-index> <last-included-term> [term]\n"
         << "  raft_cpp_smoke serve <bind-host> <port> <peer-id> [current-term]\n"
-        << "  raft_cpp_smoke serve-stateful <bind-host> <port> <peer-id> [current-term] [last-log-index] [last-log-term]\n";
+        << "  raft_cpp_smoke serve-stateful <bind-host> <port> <peer-id> [current-term] [last-log-index] [last-log-term]\n"
+        << "  raft_cpp_smoke serve-active <bind-host> <port> <peer-id> <current-term> <last-log-index> <last-log-term> <peer-spec>...\n"
+        << "  raft_cpp_smoke election-round <peer-id> [current-term] [last-log-index] [last-log-term] <peer-spec>...\n"
+        << "  raft_cpp_smoke heartbeat-round <peer-id> <term> [last-log-index] [last-log-term] <peer-spec>...\n"
+        << "\n"
+        << "  peer-spec format: <peer-id>@<host>:<port>\n";
 }
 
 std::uint16_t parse_port(const std::string& text) {
@@ -32,12 +42,31 @@ std::uint16_t parse_port(const std::string& text) {
     return static_cast<std::uint16_t>(value);
 }
 
-std::int64_t parse_int64(const std::string& text, const std::string& field_name) {
+std::int64_t parse_int64(const std::string& text, const std::string&) {
     const auto value = std::stoll(text);
-    if (value < std::numeric_limits<std::int64_t>::min() || value > std::numeric_limits<std::int64_t>::max()) {
-        throw std::runtime_error(field_name + " out of range");
-    }
     return static_cast<std::int64_t>(value);
+}
+
+std::vector<raftcpp::PeerEndpoint> parse_peer_specs(char** argv, int start_index, int argc) {
+    std::vector<raftcpp::PeerEndpoint> peers;
+    for (int i = start_index; i < argc; ++i) {
+        const std::string spec = argv[i];
+        const auto at = spec.find('@');
+        const auto colon = spec.rfind(':');
+        if (at == std::string::npos || colon == std::string::npos || at == 0 || colon <= at + 1 || colon == spec.size() - 1) {
+            throw std::runtime_error("invalid peer spec: " + spec);
+        }
+
+        peers.push_back(raftcpp::PeerEndpoint{
+            .peer_id = spec.substr(0, at),
+            .host = spec.substr(at + 1, colon - at - 1),
+            .port = parse_port(spec.substr(colon + 1)),
+        });
+    }
+    if (peers.empty()) {
+        throw std::runtime_error("at least one peer spec is required");
+    }
+    return peers;
 }
 
 std::string peer_id_or_default(int argc, char** argv, int index) {
@@ -245,6 +274,153 @@ int run_install_snapshot(
     server.serve_forever();
 }
 
+[[noreturn]] void run_active_server(
+    const std::string& bind_host,
+    std::uint16_t port,
+    const std::string& peer_id,
+    std::int64_t current_term,
+    std::int64_t last_log_index,
+    std::int64_t last_log_term,
+    std::vector<raftcpp::PeerEndpoint> peers
+) {
+    auto node = std::make_shared<raftcpp::RaftNode>(raftcpp::RaftNode::Config{
+        .peer_id = peer_id,
+        .current_term = current_term,
+        .last_log_index = last_log_index,
+        .last_log_term = last_log_term,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+
+    boost::asio::io_context server_io_context;
+    boost::asio::io_context client_io_context;
+    auto handler = std::make_shared<raftcpp::InMemoryRpcHandler>(node);
+    raftcpp::RaftRuntime runtime(client_io_context, node, std::move(peers));
+    raftcpp::RaftServer server(server_io_context, bind_host, port, std::move(handler));
+
+    std::jthread server_thread([&server]() {
+        server.serve_forever();
+    });
+
+    constexpr auto tick_interval = std::chrono::milliseconds(100);
+    constexpr auto heartbeat_interval = std::chrono::milliseconds(750);
+    constexpr auto election_timeout_min = std::chrono::milliseconds(1500);
+    constexpr auto election_timeout_max = std::chrono::milliseconds(3000);
+
+    std::mt19937 rng{std::random_device{}()};
+    std::uniform_int_distribution<int> election_jitter_ms(
+        static_cast<int>(election_timeout_min.count()),
+        static_cast<int>(election_timeout_max.count())
+    );
+
+    auto next_election_deadline = [&]() {
+        return node->last_activity() + std::chrono::milliseconds(election_jitter_ms(rng));
+    };
+
+    auto election_deadline = next_election_deadline();
+    auto next_heartbeat_at = std::chrono::steady_clock::now() + heartbeat_interval;
+    auto last_observed_term = node->current_term();
+    auto last_observed_role = node->role();
+    auto last_observed_activity = node->last_activity();
+
+    for (;;) {
+        const auto now = std::chrono::steady_clock::now();
+        const auto current_role = runtime.node().role();
+        const auto current_term_value = runtime.node().current_term();
+        const auto current_activity = runtime.node().last_activity();
+
+        if (current_activity != last_observed_activity) {
+            election_deadline = next_election_deadline();
+            last_observed_activity = current_activity;
+        }
+
+        if (current_role != last_observed_role || current_term_value != last_observed_term) {
+            election_deadline = next_election_deadline();
+            if (current_role == raftcpp::RaftNode::Role::leader) {
+                next_heartbeat_at = now;
+            }
+            last_observed_role = current_role;
+            last_observed_term = current_term_value;
+        }
+
+        if (current_role == raftcpp::RaftNode::Role::leader) {
+            if (now >= next_heartbeat_at) {
+                runtime.send_heartbeats_once();
+                next_heartbeat_at = std::chrono::steady_clock::now() + heartbeat_interval;
+            }
+        } else if (now >= election_deadline) {
+            runtime.run_election_round();
+            election_deadline = next_election_deadline();
+        }
+
+        std::this_thread::sleep_for(tick_interval);
+    }
+}
+
+int run_election_round(
+    const std::string& peer_id,
+    std::int64_t current_term,
+    std::int64_t last_log_index,
+    std::int64_t last_log_term,
+    std::vector<raftcpp::PeerEndpoint> peers
+) {
+    boost::asio::io_context io_context;
+    raftcpp::RaftRuntime runtime(
+        io_context,
+        raftcpp::RaftNode::Config{
+            .peer_id = peer_id,
+            .current_term = current_term,
+            .last_log_index = last_log_index,
+            .last_log_term = last_log_term,
+            .commit_index = 0,
+            .snapshot_index = 0,
+            .snapshot_term = 0,
+            .voting_peers = {},
+        },
+        std::move(peers)
+    );
+
+    const auto became_leader = runtime.run_election_round();
+    std::cout
+        << "role: " << (runtime.node().role() == raftcpp::RaftNode::Role::leader ? "leader" : "candidate-or-follower") << '\n'
+        << "granted_votes: " << runtime.node().granted_votes() << '\n'
+        << "quorum: " << runtime.node().quorum_size() << '\n';
+    return became_leader ? 0 : 2;
+}
+
+int run_heartbeat_round(
+    const std::string& peer_id,
+    std::int64_t term,
+    std::int64_t last_log_index,
+    std::int64_t last_log_term,
+    std::vector<raftcpp::PeerEndpoint> peers
+) {
+    boost::asio::io_context io_context;
+    raftcpp::RaftRuntime runtime(
+        io_context,
+        raftcpp::RaftNode::Config{
+            .peer_id = peer_id,
+            .current_term = term,
+            .last_log_index = last_log_index,
+            .last_log_term = last_log_term,
+            .commit_index = last_log_index,
+            .snapshot_index = 0,
+            .snapshot_term = 0,
+            .voting_peers = {},
+        },
+        std::move(peers)
+    );
+    runtime.node().become_leader();
+
+    const auto successes = runtime.send_heartbeats_once();
+    std::cout
+        << "role: " << (runtime.node().role() == raftcpp::RaftNode::Role::leader ? "leader" : "not-leader") << '\n'
+        << "heartbeat_successes: " << successes << '\n';
+    return successes > 0 ? 0 : 2;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -333,6 +509,47 @@ int main(int argc, char** argv) {
                 argc > 5 ? parse_int64(argv[5], "current-term") : 0,
                 argc > 6 ? parse_int64(argv[6], "last-log-index") : 0,
                 argc > 7 ? parse_int64(argv[7], "last-log-term") : 0
+            );
+        } else if (command == "serve-active") {
+            if (argc < 9) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            run_active_server(
+                host,
+                port,
+                argv[4],
+                parse_int64(argv[5], "current-term"),
+                parse_int64(argv[6], "last-log-index"),
+                parse_int64(argv[7], "last-log-term"),
+                parse_peer_specs(argv, 8, argc)
+            );
+        } else if (command == "election-round") {
+            if (argc < 7) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_election_round(
+                argv[2],
+                parse_int64(argv[3], "current-term"),
+                parse_int64(argv[4], "last-log-index"),
+                parse_int64(argv[5], "last-log-term"),
+                parse_peer_specs(argv, 6, argc)
+            );
+        } else if (command == "heartbeat-round") {
+            if (argc < 7) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_heartbeat_round(
+                argv[2],
+                parse_int64(argv[3], "term"),
+                parse_int64(argv[4], "last-log-index"),
+                parse_int64(argv[5], "last-log-term"),
+                parse_peer_specs(argv, 6, argc)
             );
         } else {
             print_usage();

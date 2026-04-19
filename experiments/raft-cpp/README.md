@@ -24,6 +24,9 @@ The current scaffold implements:
   - `install-snapshot`
   - `serve`
   - `serve-stateful`
+  - `serve-active`
+  - `election-round`
+  - `heartbeat-round`
 
 This is enough to establish the wire-level interoperability path before migrating any Raft logic.
 
@@ -83,6 +86,9 @@ experiments/raft-cpp/build/raft_cpp_smoke append-entries 127.0.0.1 10080 cpp-lea
 experiments/raft-cpp/build/raft_cpp_smoke install-snapshot 127.0.0.1 10080 cpp-leader 0 0
 experiments/raft-cpp/build/raft_cpp_smoke serve 127.0.0.1 11080 cpp-stub
 experiments/raft-cpp/build/raft_cpp_smoke serve-stateful 127.0.0.1 11081 cpp-node 3 7 3
+experiments/raft-cpp/build/raft_cpp_smoke serve-active 127.0.0.1 11082 cpp-node 3 7 3 peer-a@127.0.0.1:11081
+experiments/raft-cpp/build/raft_cpp_smoke election-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
+experiments/raft-cpp/build/raft_cpp_smoke heartbeat-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/run-interop-smoke.sh
 ```
 
@@ -136,6 +142,47 @@ It is still not a real Raft node, but it behaves more plausibly:
 
 This is useful for probing Java-to-C++ transport with responses that depend on request content instead of fixed stub answers.
 
+The `serve-active` command is the first combined inbound/outbound node mode.
+
+- it starts the inbound C++ RPC server
+- it shares one `raftcpp::RaftNode` between that server and a small outbound runtime loop
+- if the node is not leader, it waits for a randomized election timeout and then runs an election round
+- if the node is leader, it sends heartbeat rounds on a shorter fixed cadence
+- inbound leader traffic resets the local election deadline via shared node activity tracking
+
+This is still intentionally minimal:
+
+- no persistent storage
+- no full log replication
+- no membership changes
+- no state machine application
+
+But it is the first mode where one C++ process can both receive and initiate Raft RPCs using the shared wire protocol.
+
+The new `election-round` and `heartbeat-round` commands are the first outbound-runtime layer on the C++ side.
+
+- `election-round`
+  - starts a local election in `raftcpp::RaftNode`
+  - sends `VoteRequest` RPCs to the listed peers
+  - feeds the returned `VoteResponse` values back into the node
+  - reports whether quorum was reached and the node became leader
+- `heartbeat-round`
+  - forces the local node into leader state
+  - builds heartbeat-style `AppendEntriesRequest` messages for each listed peer
+  - sends them and updates per-peer replication progress from the responses
+
+Peer lists for these commands use:
+
+```text
+<peer-id>@<host>:<port>
+```
+
+For example:
+
+```text
+experiments/raft-cpp/build/raft_cpp_smoke election-round cpp-node 3 7 3 peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11082
+```
+
 `run-interop-smoke.sh` automates the current mixed-language check:
 
 - starts the C++ stateful server in the background
@@ -164,14 +211,26 @@ These can be overridden with:
 
 Internally, the server now routes inbound RPCs through a small handler interface. The current CLI wires in a default `StubRpcHandler`, but that seam is intended to be replaced later by real C++ Raft logic.
 
+That transition has now started:
+
+- `raftcpp::RaftNode` holds term, role, leader, vote, log position, commit index, and snapshot position
+- it also tracks configured voting peers, quorum size, candidate vote accumulation, and per-peer replication progress
+- the stateful handler delegates into that node object instead of keeping Raft-ish state inline inside the handler
+
+This is still only a partial implementation, but it moves the experiment from "transport stub with ad hoc state" toward a real consensus core.
+
 ## Current Design
 
 - `include/raftcpp/envelope_codec.hpp`
   - varint32 framing compatible with the Java encoder/decoder
 - `include/raftcpp/raft_client.hpp`
   - minimal synchronous request/response client over Boost.Asio
+- `include/raftcpp/raft_node.hpp`
+  - early C++ Raft state core for vote, append, snapshot, election, and heartbeat request handling
+- `include/raftcpp/raft_runtime.hpp`
+  - minimal active runtime that fans out vote requests and heartbeats to configured peer endpoints
 - `include/raftcpp/rpc_handler.hpp`
-  - pluggable handler interface for inbound Raft RPCs plus stub and in-memory handlers
+  - pluggable handler interface for inbound Raft RPCs plus stub and stateful adapters
 - `include/raftcpp/raft_server.hpp`
   - minimal synchronous inbound dispatcher for the core Raft RPC envelopes
 - `raftcpp_transport` CMake target
@@ -185,12 +244,11 @@ Internally, the server now routes inbound RPCs through a small handler interface
 
 The natural next steps, in order, are:
 
-1. factor out a reusable C++ transport library
-2. make the server event-driven
-3. implement semantic multi-chunk `install-snapshot`
-4. replace the in-memory handler with real Raft state handling
-5. implement a minimal C++ Raft node using the shared wire protocol
-6. test mixed Java/C++ clusters explicitly
+1. make the server event-driven
+2. implement semantic multi-chunk `install-snapshot`
+3. move `serve-active` from local thread loops to a proper async/event-driven scheduler
+4. implement a minimal C++ Raft node using the shared wire protocol
+5. test mixed Java/C++ clusters explicitly
 
 ## Important Boundary
 
