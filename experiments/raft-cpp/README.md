@@ -145,10 +145,11 @@ This is useful for probing Java-to-C++ transport with responses that depend on r
 The `serve-active` command is the first combined inbound/outbound node mode.
 
 - it starts the inbound C++ RPC server
-- it shares one `raftcpp::RaftNode` between that server and a small outbound runtime loop
+- it shares one `raftcpp::RaftNode` between that server and a small outbound runtime
 - if the node is not leader, it waits for a randomized election timeout and then runs an election round
 - if the node is leader, it sends heartbeat rounds on a shorter fixed cadence
 - inbound leader traffic resets the local election deadline via shared node activity tracking
+- scheduling is driven by Asio timers rather than a fixed sleep loop
 
 This is still intentionally minimal:
 
@@ -246,7 +247,7 @@ The natural next steps, in order, are:
 
 1. make the server event-driven
 2. implement semantic multi-chunk `install-snapshot`
-3. move `serve-active` from local thread loops to a proper async/event-driven scheduler
+3. move the inbound server from a blocking loop to the same async/event-driven model as the active scheduler
 4. implement a minimal C++ Raft node using the shared wire protocol
 5. test mixed Java/C++ clusters explicitly
 

@@ -1,6 +1,7 @@
 #include <boost/asio.hpp>
 #include <cstdint>
 #include <chrono>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <random>
@@ -304,7 +305,6 @@ int run_install_snapshot(
         server.serve_forever();
     });
 
-    constexpr auto tick_interval = std::chrono::milliseconds(100);
     constexpr auto heartbeat_interval = std::chrono::milliseconds(750);
     constexpr auto election_timeout_min = std::chrono::milliseconds(1500);
     constexpr auto election_timeout_max = std::chrono::milliseconds(3000);
@@ -314,48 +314,72 @@ int run_install_snapshot(
         static_cast<int>(election_timeout_min.count()),
         static_cast<int>(election_timeout_max.count())
     );
+    auto next_election_timeout = [&]() {
+        return std::chrono::milliseconds(election_jitter_ms(rng));
+    };
+    auto heartbeat_timer = std::make_shared<boost::asio::steady_timer>(client_io_context);
+    auto election_timer = std::make_shared<boost::asio::steady_timer>(client_io_context);
 
-    auto next_election_deadline = [&]() {
-        return node->last_activity() + std::chrono::milliseconds(election_jitter_ms(rng));
+    std::function<void()> schedule_heartbeat;
+    std::function<void(std::chrono::milliseconds)> schedule_election;
+
+    schedule_heartbeat = [&]() {
+        heartbeat_timer->expires_after(heartbeat_interval);
+        heartbeat_timer->async_wait([&, heartbeat_timer](const boost::system::error_code& error) {
+            if (error) {
+                return;
+            }
+            if (runtime.node().role() == raftcpp::RaftNode::Role::leader) {
+                runtime.send_heartbeats_once();
+            }
+            schedule_heartbeat();
+        });
     };
 
-    auto election_deadline = next_election_deadline();
-    auto next_heartbeat_at = std::chrono::steady_clock::now() + heartbeat_interval;
-    auto last_observed_term = node->current_term();
-    auto last_observed_role = node->role();
-    auto last_observed_activity = node->last_activity();
+    schedule_election = [&](std::chrono::milliseconds timeout) {
+        election_timer->expires_after(timeout);
+        election_timer->async_wait([&, timeout, election_timer](const boost::system::error_code& error) {
+            if (error) {
+                return;
+            }
+
+            if (runtime.node().role() == raftcpp::RaftNode::Role::leader) {
+                schedule_election(next_election_timeout());
+                return;
+            }
+
+            const auto idle_for = std::chrono::steady_clock::now() - runtime.node().last_activity();
+            if (idle_for < timeout) {
+                const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(timeout - idle_for);
+                schedule_election(std::max<std::chrono::milliseconds>(std::chrono::milliseconds(1), remaining));
+                return;
+            }
+
+            const auto became_leader = runtime.run_election_round();
+            if (became_leader) {
+                heartbeat_timer->cancel();
+                heartbeat_timer->expires_after(std::chrono::milliseconds(0));
+                heartbeat_timer->async_wait([&, heartbeat_timer](const boost::system::error_code& timer_error) {
+                    if (timer_error) {
+                        return;
+                    }
+                    if (runtime.node().role() == raftcpp::RaftNode::Role::leader) {
+                        runtime.send_heartbeats_once();
+                    }
+                    schedule_heartbeat();
+                });
+            }
+
+            schedule_election(next_election_timeout());
+        });
+    };
+
+    schedule_heartbeat();
+    schedule_election(next_election_timeout());
+    client_io_context.run();
 
     for (;;) {
-        const auto now = std::chrono::steady_clock::now();
-        const auto current_role = runtime.node().role();
-        const auto current_term_value = runtime.node().current_term();
-        const auto current_activity = runtime.node().last_activity();
-
-        if (current_activity != last_observed_activity) {
-            election_deadline = next_election_deadline();
-            last_observed_activity = current_activity;
-        }
-
-        if (current_role != last_observed_role || current_term_value != last_observed_term) {
-            election_deadline = next_election_deadline();
-            if (current_role == raftcpp::RaftNode::Role::leader) {
-                next_heartbeat_at = now;
-            }
-            last_observed_role = current_role;
-            last_observed_term = current_term_value;
-        }
-
-        if (current_role == raftcpp::RaftNode::Role::leader) {
-            if (now >= next_heartbeat_at) {
-                runtime.send_heartbeats_once();
-                next_heartbeat_at = std::chrono::steady_clock::now() + heartbeat_interval;
-            }
-        } else if (now >= election_deadline) {
-            runtime.run_election_round();
-            election_deadline = next_election_deadline();
-        }
-
-        std::this_thread::sleep_for(tick_interval);
+        std::this_thread::sleep_for(std::chrono::hours(24));
     }
 }
 
