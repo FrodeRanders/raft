@@ -62,6 +62,7 @@ public:
     RaftNode& node() { return *node_; }
     const RaftNode& node() const { return *node_; }
     std::shared_ptr<RaftNode> node_ptr() { return node_; }
+    const std::vector<PeerEndpoint>& peers() const { return peers_; }
 
     bool run_election_round() {
         const auto request = node_->start_election();

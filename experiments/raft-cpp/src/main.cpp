@@ -7,6 +7,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <thread>
 #include <vector>
 
@@ -30,7 +31,7 @@ void print_usage() {
         << "  raft_cpp_smoke install-snapshot <host> <port> <leader-id> <last-included-index> <last-included-term> [term] [snapshot-data]\n"
         << "  raft_cpp_smoke serve <bind-host> <port> <peer-id> [current-term]\n"
         << "  raft_cpp_smoke serve-stateful <bind-host> <port> <peer-id> [current-term] [last-log-index] [last-log-term]\n"
-        << "  raft_cpp_smoke serve-persistent <bind-host> <port> <peer-id> <state-file> [current-term] [last-log-index] [last-log-term]\n"
+        << "  raft_cpp_smoke serve-persistent <bind-host> <port> <peer-id> <state-file> [current-term] [last-log-index] [last-log-term] [peer-spec]...\n"
         << "  raft_cpp_smoke serve-active <bind-host> <port> <peer-id> <current-term> <last-log-index> <last-log-term> <peer-spec>...\n"
         << "  raft_cpp_smoke serve-active-persistent <bind-host> <port> <peer-id> <state-file> <current-term> <last-log-index> <last-log-term> <peer-spec>...\n"
         << "  raft_cpp_smoke serve-active-persistent-workload <bind-host> <port> <peer-id> <state-file> <current-term> <last-log-index> <last-log-term> <replicate-interval-ms> [snapshot-threshold] <peer-spec>...\n"
@@ -78,6 +79,40 @@ std::vector<raftcpp::PeerEndpoint> parse_peer_specs(char** argv, int start_index
         throw std::runtime_error("at least one peer spec is required");
     }
     return peers;
+}
+
+std::vector<raftcpp::InMemoryRpcHandler::Endpoint> endpoints_from_peers(const std::vector<raftcpp::PeerEndpoint>& peers) {
+    std::vector<raftcpp::InMemoryRpcHandler::Endpoint> endpoints;
+    endpoints.reserve(peers.size());
+    for (const auto& peer : peers) {
+        endpoints.push_back({peer.host, static_cast<std::int32_t>(peer.port)});
+    }
+    return endpoints;
+}
+
+std::vector<std::string> peer_ids_from_peers(const std::vector<raftcpp::PeerEndpoint>& peers) {
+    std::vector<std::string> peer_ids;
+    peer_ids.reserve(peers.size());
+    for (const auto& peer : peers) {
+        peer_ids.push_back(peer.peer_id);
+    }
+    return peer_ids;
+}
+
+template <typename HandlerPtr>
+void configure_handler_endpoints(
+    const HandlerPtr& handler,
+    const std::string& bind_host,
+    std::uint16_t port,
+    const std::vector<raftcpp::PeerEndpoint>& peers = {}
+) {
+    if constexpr (std::is_same_v<typename HandlerPtr::element_type, raftcpp::InMemoryRpcHandler>) {
+        handler->set_local_endpoint(bind_host, static_cast<std::int32_t>(port));
+        handler->set_known_peer_endpoints(endpoints_from_peers(peers), peer_ids_from_peers(peers));
+    } else if constexpr (std::is_same_v<typename HandlerPtr::element_type, raftcpp::PersistentRpcHandler>) {
+        handler->delegate().set_local_endpoint(bind_host, static_cast<std::int32_t>(port));
+        handler->delegate().set_known_peer_endpoints(endpoints_from_peers(peers), peer_ids_from_peers(peers));
+    }
 }
 
 std::string peer_id_or_default(int argc, char** argv, int index) {
@@ -217,6 +252,8 @@ int run_client_put(
         << "status: " << response.status() << '\n'
         << "success: " << (response.success() ? "true" : "false") << '\n'
         << "leader_id: " << response.leader_id() << '\n'
+        << "leader_host: " << response.leader_host() << '\n'
+        << "leader_port: " << response.leader_port() << '\n'
         << "message: " << response.message() << '\n';
 
     return response.success() ? 0 : 2;
@@ -251,6 +288,9 @@ int run_client_get(
         << "peer_id: " << response.peer_id() << '\n'
         << "status: " << response.status() << '\n'
         << "success: " << (response.success() ? "true" : "false") << '\n'
+        << "leader_id: " << response.leader_id() << '\n'
+        << "leader_host: " << response.leader_host() << '\n'
+        << "leader_port: " << response.leader_port() << '\n'
         << "message: " << response.message() << '\n';
 
     if (response.success() && !response.result().empty()) {
@@ -399,6 +439,7 @@ int run_install_snapshot(
 ) {
     boost::asio::io_context io_context;
     auto handler = std::make_shared<raftcpp::InMemoryRpcHandler>(peer_id, current_term, last_log_index, last_log_term);
+    configure_handler_endpoints(handler, bind_host, port);
     raftcpp::RaftServer server(io_context, bind_host, port, std::move(handler));
     server.serve_forever();
 }
@@ -410,7 +451,8 @@ int run_install_snapshot(
     const std::string& state_file,
     std::int64_t current_term,
     std::int64_t last_log_index,
-    std::int64_t last_log_term
+    std::int64_t last_log_term,
+    std::vector<raftcpp::PeerEndpoint> peers
 ) {
     boost::asio::io_context io_context;
     auto handler = std::make_shared<raftcpp::PersistentRpcHandler>(
@@ -426,6 +468,7 @@ int run_install_snapshot(
             .voting_peers = {},
         }
     );
+    configure_handler_endpoints(handler, bind_host, port, peers);
     raftcpp::RaftServer server(io_context, bind_host, port, std::move(handler));
     server.serve_forever();
 }
@@ -445,6 +488,21 @@ int run_install_snapshot(
     boost::asio::io_context server_io_context;
     boost::asio::io_context client_io_context;
     raftcpp::RaftRuntime runtime(client_io_context, node, std::move(peers), std::move(persist_callback));
+    const auto peer_endpoints = runtime.peers();
+
+    if (auto in_memory = std::dynamic_pointer_cast<raftcpp::InMemoryRpcHandler>(handler)) {
+        configure_handler_endpoints(in_memory, bind_host, port, peer_endpoints);
+        in_memory->set_command_replicator([&runtime](const std::string& command) {
+            return runtime.replicate_entry_once(command) > 0;
+        });
+    }
+    if (auto persistent = std::dynamic_pointer_cast<raftcpp::PersistentRpcHandler>(handler)) {
+        configure_handler_endpoints(persistent, bind_host, port, peer_endpoints);
+        persistent->delegate().set_command_replicator([&runtime](const std::string& command) {
+            return runtime.replicate_entry_once(command) > 0;
+        });
+    }
+
     raftcpp::RaftServer server(server_io_context, bind_host, port, std::move(handler));
 
     std::jthread server_thread([&server]() {
@@ -1030,7 +1088,8 @@ int main(int argc, char** argv) {
                 argv[5],
                 argc > 6 ? parse_int64(argv[6], "current-term") : 0,
                 argc > 7 ? parse_int64(argv[7], "last-log-index") : 0,
-                argc > 8 ? parse_int64(argv[8], "last-log-term") : 0
+                argc > 8 ? parse_int64(argv[8], "last-log-term") : 0,
+                argc > 9 ? parse_peer_specs(argv, 9, argc) : std::vector<raftcpp::PeerEndpoint>{}
             );
         } else if (command == "serve-active") {
             if (argc < 9) {

@@ -99,7 +99,7 @@ experiments/raft-cpp/build/raft_cpp_smoke install-snapshot 127.0.0.1 10080 cpp-l
 experiments/raft-cpp/build/raft_cpp_smoke install-snapshot 127.0.0.1 10080 cpp-leader 6 3 3 snapshot-alpha
 experiments/raft-cpp/build/raft_cpp_smoke serve 127.0.0.1 11080 cpp-stub
 experiments/raft-cpp/build/raft_cpp_smoke serve-stateful 127.0.0.1 11081 cpp-node 3 7 3
-experiments/raft-cpp/build/raft_cpp_smoke serve-persistent 127.0.0.1 11082 cpp-node /tmp/cpp-node.state 3 7 3
+experiments/raft-cpp/build/raft_cpp_smoke serve-persistent 127.0.0.1 11082 cpp-node /tmp/cpp-node.state 3 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/build/raft_cpp_smoke serve-active 127.0.0.1 11082 cpp-node 3 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/build/raft_cpp_smoke serve-active-persistent 127.0.0.1 11083 cpp-node /tmp/cpp-node.state 3 7 3 peer-a@127.0.0.1:11081
 experiments/raft-cpp/build/raft_cpp_smoke serve-active-persistent-workload 127.0.0.1 11084 cpp-node /tmp/cpp-node.state 3 7 3 1500 peer-a@127.0.0.1:11081
@@ -170,7 +170,7 @@ It is still not a real Raft node, but it behaves more plausibly:
 
 This is useful for probing Java-to-C++ transport with responses that depend on request content instead of fixed stub answers.
 
-The `serve-persistent` command uses the same basic state model, but persists node metadata and the synthetic entry list to a small local file. That currently covers:
+The `serve-persistent` command uses the same basic state model, but persists node metadata and the synthetic entry list to a small local file. It can also be started with optional `peer-spec` arguments so follower-side client redirects can include concrete leader host/port metadata. It currently persists:
 
 - current term
 - voted-for
@@ -194,7 +194,12 @@ The C++ server now also accepts the shared client envelopes:
 - `ClientCommandRequest`
 - `ClientQueryRequest`
 
-For the bounded prototype, queries operate on the applied KV state and commands auto-commit only in the single-node case. Multi-node client command replication is still a later step; the distributed path today is exercised through the explicit replication helpers.
+For the bounded prototype, queries operate on the applied KV state with leader-only semantics once a node is participating in a multi-node topology. Commands now work in two modes:
+
+- single-node persistent servers auto-commit locally
+- active leaders replicate them through the existing distributed runtime
+
+The remaining gap is broader cluster-grade behavior such as redirect host/port metadata, retries, and richer client semantics, not the basic replicated command path itself.
 
 The stateful and active C++ servers now also answer the existing admin probes:
 
@@ -497,6 +502,8 @@ peer_id: cpp-node
 status: OK
 success: true
 leader_id: cpp-node
+leader_host: 127.0.0.1
+leader_port: 11381
 message: command committed and applied
 ```
 
@@ -506,6 +513,9 @@ and:
 peer_id: cpp-node
 status: OK
 success: true
+leader_id: cpp-node
+leader_host: 127.0.0.1
+leader_port: 11381
 message: query completed
 found: true
 value: v1
@@ -522,6 +532,67 @@ snapshot_index: 0
 snapshot_term: 0
 kv[k]=v1
 ```
+
+The same client API path now also works through the active multi-node prototype. In a two-node smoke run against `serve-active-persistent` plus one persistent follower:
+
+```text
+raft_cpp_smoke client-put 127.0.0.1 11391 k v1 cpp-node
+raft_cpp_smoke client-get 127.0.0.1 11391 k cpp-node
+```
+
+returned:
+
+```text
+peer_id: cpp-node
+status: OK
+success: true
+leader_id: cpp-node
+leader_host: 127.0.0.1
+leader_port: 11391
+message: command committed and applied
+```
+
+and:
+
+```text
+peer_id: cpp-node
+status: OK
+success: true
+leader_id: cpp-node
+leader_host: 127.0.0.1
+leader_port: 11391
+message: query completed
+found: true
+value: v1
+```
+
+while the follower persisted:
+
+```text
+peer_id: peer-a
+current_term: 4
+commit_index: 8
+last_applied: 8
+snapshot_index: 0
+snapshot_term: 0
+kv[k]=v1
+```
+
+So the bounded C++ prototype now supports the shared client command/query API for both single-node and active multi-node replicated KV operations.
+
+Follower-side query behavior is now also aligned with that model. In a two-node smoke run, querying the passive follower directly returned:
+
+```text
+peer_id: peer-a
+status: NOT_LEADER
+success: false
+leader_id: cpp-node
+leader_host: 127.0.0.1
+leader_port: 11391
+message: query must target leader
+```
+
+So once a node has learned another leader, it no longer auto-promotes itself for client reads just because it lacks an explicit peer configuration file, and client redirects can now be actionable when the node was started with known peer endpoints.
 
 That catch-up is no longer limited to the one-shot `replicate-once` path. In a local smoke run with a persistent leader started in `serve-active-persistent` and a follower behind the leader's snapshot boundary, the follower recovered during normal scheduled leader rounds and persisted:
 

@@ -3,10 +3,12 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "raft.pb.h"
@@ -114,6 +116,12 @@ using RpcHandlerPtr = std::shared_ptr<RpcHandler>;
 
 class InMemoryRpcHandler final : public RpcHandler {
 public:
+    using CommandReplicator = std::function<bool(const std::string&)>;
+    struct Endpoint {
+        std::string host;
+        std::int32_t port;
+    };
+
     InMemoryRpcHandler(std::string peer_id, std::int64_t current_term, std::int64_t last_log_index, std::int64_t last_log_term)
         : node_(std::make_shared<RaftNode>(RaftNode::Config{
               .peer_id = std::move(peer_id),
@@ -130,6 +138,21 @@ public:
         : node_(std::move(node)) {
         if (!node_) {
             throw std::runtime_error("in-memory rpc handler requires a node");
+        }
+    }
+
+    void set_command_replicator(CommandReplicator replicator) {
+        command_replicator_ = std::move(replicator);
+    }
+
+    void set_local_endpoint(std::string host, std::int32_t port) {
+        local_endpoint_ = Endpoint{std::move(host), port};
+    }
+
+    void set_known_peer_endpoints(const std::vector<Endpoint>& endpoints_by_position, const std::vector<std::string>& peer_ids) {
+        known_peer_endpoints_.clear();
+        for (std::size_t i = 0; i < endpoints_by_position.size() && i < peer_ids.size(); ++i) {
+            known_peer_endpoints_[peer_ids[i]] = endpoints_by_position[i];
         }
     }
 
@@ -206,7 +229,7 @@ public:
         raft::ClientCommandResponse response;
         response.set_term(node_->current_term());
         response.set_peer_id(node_->peer_id());
-        response.set_leader_id(node_->leader_id().value_or(""));
+        populate_leader_endpoint(response);
 
         raft::StateMachineCommand command;
         if (!command.ParseFromString(request.command())) {
@@ -216,10 +239,12 @@ public:
             return response;
         }
 
-        if (node_->role() != RaftNode::Role::leader && node_->quorum_size() == 1) {
+        if (node_->role() != RaftNode::Role::leader &&
+            node_->quorum_size() == 1 &&
+            !node_->leader_id().has_value()) {
             node_->become_leader();
             response.set_term(node_->current_term());
-            response.set_leader_id(node_->leader_id().value_or(""));
+            populate_leader_endpoint(response);
         }
 
         if (node_->role() != RaftNode::Role::leader) {
@@ -229,16 +254,24 @@ public:
             return response;
         }
 
-        if (!node_->append_and_commit_local_command(request.command())) {
+        bool replicated = false;
+        if (command_replicator_) {
+            replicated = command_replicator_(request.command());
+        } else {
+            replicated = node_->append_and_commit_local_command(request.command());
+        }
+
+        if (!replicated) {
             response.set_success(false);
             response.set_status("UNSUPPORTED");
-            response.set_message("distributed client command replication is not wired in this prototype");
+            response.set_message("client command replication failed");
             return response;
         }
 
         response.set_success(true);
         response.set_status("OK");
         response.set_message("command committed and applied");
+        populate_leader_endpoint(response);
         return response;
     }
 
@@ -246,6 +279,7 @@ public:
         raft::ClientQueryResponse response;
         response.set_term(node_->current_term());
         response.set_peer_id(node_->peer_id());
+        populate_leader_endpoint(response);
         response.set_success(false);
 
         raft::StateMachineQuery query;
@@ -258,6 +292,20 @@ public:
         if (query.query_case() != raft::StateMachineQuery::kGet) {
             response.set_status("UNSUPPORTED");
             response.set_message("only GET queries are supported");
+            return response;
+        }
+
+        if (node_->role() != RaftNode::Role::leader &&
+            node_->quorum_size() == 1 &&
+            !node_->leader_id().has_value()) {
+            node_->become_leader();
+            response.set_term(node_->current_term());
+            populate_leader_endpoint(response);
+        }
+
+        if (node_->role() != RaftNode::Role::leader) {
+            response.set_status("NOT_LEADER");
+            response.set_message("query must target leader");
             return response;
         }
 
@@ -276,6 +324,7 @@ public:
         response.set_success(true);
         response.set_status("OK");
         response.set_message("query completed");
+        populate_leader_endpoint(response);
         if (!result.SerializeToString(response.mutable_result())) {
             throw std::runtime_error("failed to serialize StateMachineQueryResult");
         }
@@ -393,7 +442,47 @@ private:
         }
     }
 
+    void populate_leader_endpoint(raft::ClientCommandResponse& response) const {
+        response.set_leader_id(node_->leader_id().value_or(""));
+        if (const auto endpoint = current_leader_endpoint(); endpoint.has_value()) {
+            response.set_leader_host(endpoint->host);
+            response.set_leader_port(endpoint->port);
+        } else {
+            response.clear_leader_host();
+            response.clear_leader_port();
+        }
+    }
+
+    void populate_leader_endpoint(raft::ClientQueryResponse& response) const {
+        response.set_leader_id(node_->leader_id().value_or(""));
+        if (const auto endpoint = current_leader_endpoint(); endpoint.has_value()) {
+            response.set_leader_host(endpoint->host);
+            response.set_leader_port(endpoint->port);
+        } else {
+            response.clear_leader_host();
+            response.clear_leader_port();
+        }
+    }
+
+    std::optional<Endpoint> current_leader_endpoint() const {
+        const auto leader_id = node_->leader_id();
+        if (!leader_id.has_value()) {
+            return std::nullopt;
+        }
+        if (*leader_id == node_->peer_id()) {
+            return local_endpoint_;
+        }
+        const auto found = known_peer_endpoints_.find(*leader_id);
+        if (found == known_peer_endpoints_.end()) {
+            return std::nullopt;
+        }
+        return found->second;
+    }
+
     std::shared_ptr<RaftNode> node_;
+    CommandReplicator command_replicator_;
+    std::optional<Endpoint> local_endpoint_;
+    std::unordered_map<std::string, Endpoint> known_peer_endpoints_;
 };
 
 class PersistentRpcHandler final : public RpcHandler {
@@ -446,6 +535,7 @@ public:
 
     std::shared_ptr<RaftNode> node_ptr() { return node_; }
     const PersistentStateStore& store() const { return store_; }
+    InMemoryRpcHandler& delegate() { return delegate_; }
 
 private:
     void persist() {
