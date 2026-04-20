@@ -401,10 +401,22 @@ public:
         }
 
         known_peer_endpoints_[request.joining_peer_id()] = Endpoint{request.host(), request.port()};
-        pending_join_ids_.insert(request.joining_peer_id());
+        raft::InternalRaftCommand internal;
+        auto* member = internal.mutable_join()->mutable_member();
+        member->set_id(request.joining_peer_id());
+        member->set_host(request.host());
+        member->set_port(request.port());
+        member->set_role(request.role().empty() ? "voter" : request.role());
+        if (!internal_command_replicator_ ||
+            !internal_command_replicator_(RaftNode::encode_internal_command(internal))) {
+            response.set_success(false);
+            response.set_status("RETRY");
+            response.set_message("join admission was not committed");
+            return response;
+        }
         response.set_success(true);
         response.set_status("ACCEPTED");
-        response.set_message("join request recorded");
+        response.set_message("join admission committed");
         response.set_leader_id(node_->peer_id());
         return response;
     }
@@ -430,7 +442,7 @@ public:
             return response;
         }
 
-        if (pending_join_ids_.contains(request.target_peer_id())) {
+        if (node_->has_pending_join(request.target_peer_id())) {
             response.set_success(true);
             response.set_status("PENDING");
             response.set_message("join request is recorded");
@@ -482,7 +494,6 @@ public:
                 peer_ids.push_back(member.id());
                 endpoints.push_back(Endpoint{member.host(), member.port()});
                 known_peer_endpoints_[member.id()] = Endpoint{member.host(), member.port()};
-                pending_join_ids_.erase(member.id());
             }
 
             raft::InternalRaftCommand internal;
@@ -691,7 +702,6 @@ private:
     MembershipUpdater membership_updater_;
     std::optional<Endpoint> local_endpoint_;
     std::unordered_map<std::string, Endpoint> known_peer_endpoints_;
-    std::unordered_set<std::string> pending_join_ids_;
 };
 
 class PersistentRpcHandler final : public RpcHandler {

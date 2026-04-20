@@ -56,6 +56,7 @@ public:
         std::optional<std::string> voted_for;
         std::optional<std::string> leader_id;
         bool joint_consensus{false};
+        std::vector<std::string> pending_join_ids;
         std::vector<std::string> voting_peers;
         std::int64_t last_log_index{0};
         std::int64_t last_log_term{0};
@@ -272,6 +273,11 @@ public:
     bool joint_consensus() const {
         std::scoped_lock lock(mu_);
         return joint_consensus_;
+    }
+
+    bool has_pending_join(const std::string& peer_id) const {
+        std::scoped_lock lock(mu_);
+        return pending_join_ids_.contains(peer_id);
     }
 
     std::size_t quorum_size() const {
@@ -611,6 +617,7 @@ public:
             .voted_for = voted_for_,
             .leader_id = leader_id_,
             .joint_consensus = joint_consensus_,
+            .pending_join_ids = std::vector<std::string>(pending_join_ids_.begin(), pending_join_ids_.end()),
             .voting_peers = voting_peers_,
             .last_log_index = last_log_index_,
             .last_log_term = last_log_term_,
@@ -635,6 +642,7 @@ public:
         voted_for_ = state.voted_for;
         leader_id_ = state.leader_id;
         joint_consensus_ = state.joint_consensus;
+        pending_join_ids_ = std::unordered_set<std::string>(state.pending_join_ids.begin(), state.pending_join_ids.end());
         voting_peers_ = state.voting_peers;
         last_log_index_ = state.last_log_index;
         last_log_term_ = state.last_log_term;
@@ -779,12 +787,18 @@ private:
         }
 
         switch (command.command_case()) {
+        case raft::InternalRaftCommand::kJoin:
+            if (!command.join().member().id().empty() && command.join().member().id() != peer_id_) {
+                pending_join_ids_.insert(command.join().member().id());
+            }
+            return true;
         case raft::InternalRaftCommand::kJoint: {
             std::vector<std::string> peer_ids;
             peer_ids.reserve(command.joint().members_size());
             for (const auto& member : command.joint().members()) {
                 if (!member.id().empty() && member.id() != peer_id_) {
                     peer_ids.push_back(member.id());
+                    pending_join_ids_.erase(member.id());
                 }
             }
             reconfigure_voting_peers_locked(std::move(peer_ids));
@@ -1084,6 +1098,7 @@ private:
     std::optional<std::string> voted_for_;
     std::optional<std::string> leader_id_;
     bool joint_consensus_{false};
+    std::unordered_set<std::string> pending_join_ids_;
     std::int64_t last_log_index_;
     std::int64_t last_log_term_;
     std::int64_t commit_index_;

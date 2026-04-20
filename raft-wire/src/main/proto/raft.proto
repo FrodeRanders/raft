@@ -90,6 +90,10 @@ message JointConfigurationCommand {
   repeated PeerSpec members = 1;
 }
 
+message JoinPeerCommand {
+  PeerSpec member = 1;
+}
+
 message FinalizeConfigurationCommand {
 }
 
@@ -97,6 +101,7 @@ message InternalRaftCommand {
   oneof command {
     JointConfigurationCommand joint = 1;
     FinalizeConfigurationCommand finalize = 2;
+    JoinPeerCommand join = 3;
   }
 }
 

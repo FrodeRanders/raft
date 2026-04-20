@@ -640,17 +640,17 @@ So the C++ prototype now mirrors the Java-side behavior more closely at the clie
 The prototype now also has a bounded membership-control path over the shared admin envelopes:
 
 - `join-cluster`
-  - records a pending joining peer on the current leader
+  - commits a bounded join-admission command through a replicated `InternalRaftCommand`
 - `join-status`
   - reports `PENDING`, `IN_JOINT_CONSENSUS`, `COMPLETED`, or `UNKNOWN`
 - `reconfigure joint`
-  - applies a bounded joint configuration directly to the prototype membership view and active runtime peer set
+  - commits a bounded joint configuration through a replicated `InternalRaftCommand`
+  - then updates the active runtime peer set after the command has committed
 - `reconfigure finalize`
-  - clears the joint-consensus flag while keeping the configured membership
+  - commits a bounded finalize command through the same replicated internal-command path
 
 This is not yet a full Java-parity membership implementation. In particular:
 
-- it does not replicate membership changes as real internal Raft log entries yet
 - it does not implement learner catch-up rules or joint-quorum commit mechanics
 - it is a bounded control-plane scaffold for the C++ prototype, not a production-grade reconfiguration engine
 
@@ -666,6 +666,19 @@ raft_cpp_smoke join-status 127.0.0.1 11682 peer-b cpp-client
 ```
 
 the observed states were:
+
+```text
+status: PENDING
+```
+
+and that pending admission is now replicated too. In a local smoke run:
+
+```text
+raft_cpp_smoke join-status 127.0.0.1 11982 peer-b cpp-client
+raft_cpp_smoke join-status 127.0.0.1 11981 peer-b cpp-client
+```
+
+both leader and follower returned:
 
 ```text
 status: PENDING
@@ -690,7 +703,31 @@ joint_consensus: false
 members: 3
 ```
 
-So the bounded C++ prototype now has the first real membership-control seam needed for further migration work.
+After the latest refinement, the important signal is that the follower now learns those membership transitions through committed internal log application too. In a local smoke run:
+
+```text
+raft_cpp_smoke cluster-summary 127.0.0.1 11882 cpp-client
+raft_cpp_smoke cluster-summary 127.0.0.1 11881 cpp-client
+```
+
+both leader and follower reported the same committed joint configuration:
+
+```text
+joint_consensus: true
+members: 3
+member[cpp-node] ...
+member[peer-a] ...
+member[peer-b] ...
+```
+
+and after `reconfigure ... finalize ...` both sides reported:
+
+```text
+joint_consensus: false
+members: 3
+```
+
+So the bounded C++ prototype now has a real replicated membership-control seam: the leader drives reconfiguration through internal log entries, and followers reflect the committed membership state rather than relying on leader-local handler mutation.
 
 Follower-side query behavior is now also aligned with that model. In a two-node smoke run, querying the passive follower directly returned:
 
