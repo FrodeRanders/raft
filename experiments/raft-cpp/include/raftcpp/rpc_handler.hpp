@@ -21,6 +21,8 @@ public:
 
     virtual std::optional<raft::TelemetryResponse> on_telemetry_request(const raft::TelemetryRequest& request) = 0;
     virtual std::optional<raft::ClusterSummaryResponse> on_cluster_summary_request(const raft::ClusterSummaryRequest& request) = 0;
+    virtual std::optional<raft::ClientCommandResponse> on_client_command_request(const raft::ClientCommandRequest& request) = 0;
+    virtual std::optional<raft::ClientQueryResponse> on_client_query_request(const raft::ClientQueryRequest& request) = 0;
     virtual std::optional<raft::VoteResponse> on_vote_request(const raft::VoteRequest& request) = 0;
     virtual std::optional<raft::AppendEntriesResponse> on_append_entries_request(const raft::AppendEntriesRequest& request) = 0;
     virtual std::optional<raft::InstallSnapshotResponse> on_install_snapshot_request(const raft::InstallSnapshotRequest& request) = 0;
@@ -53,6 +55,26 @@ public:
         response.set_state("FOLLOWER");
         response.set_cluster_health("UNKNOWN");
         response.set_cluster_status_reason("stub");
+        return response;
+    }
+
+    std::optional<raft::ClientCommandResponse> on_client_command_request(const raft::ClientCommandRequest& request) override {
+        raft::ClientCommandResponse response;
+        response.set_term(request.term());
+        response.set_peer_id(peer_id_);
+        response.set_success(false);
+        response.set_status("UNSUPPORTED");
+        response.set_message("stub");
+        return response;
+    }
+
+    std::optional<raft::ClientQueryResponse> on_client_query_request(const raft::ClientQueryRequest& request) override {
+        raft::ClientQueryResponse response;
+        response.set_term(request.term());
+        response.set_peer_id(peer_id_);
+        response.set_success(false);
+        response.set_status("UNSUPPORTED");
+        response.set_message("stub");
         return response;
     }
 
@@ -127,7 +149,7 @@ public:
         response.set_joining(false);
         response.set_decommissioned(false);
         response.set_commit_index(node_->commit_index());
-        response.set_last_applied(node_->commit_index());
+        response.set_last_applied(node_->last_applied());
         response.set_last_log_index(node_->last_log_index());
         response.set_last_log_term(node_->last_log_term());
         response.set_snapshot_index(node_->snapshot_index());
@@ -178,6 +200,86 @@ public:
 
     std::optional<raft::VoteResponse> on_vote_request(const raft::VoteRequest& request) override {
         return node_->handle_vote_request(request);
+    }
+
+    std::optional<raft::ClientCommandResponse> on_client_command_request(const raft::ClientCommandRequest& request) override {
+        raft::ClientCommandResponse response;
+        response.set_term(node_->current_term());
+        response.set_peer_id(node_->peer_id());
+        response.set_leader_id(node_->leader_id().value_or(""));
+
+        raft::StateMachineCommand command;
+        if (!command.ParseFromString(request.command())) {
+            response.set_success(false);
+            response.set_status("BAD_REQUEST");
+            response.set_message("failed to parse StateMachineCommand");
+            return response;
+        }
+
+        if (node_->role() != RaftNode::Role::leader && node_->quorum_size() == 1) {
+            node_->become_leader();
+            response.set_term(node_->current_term());
+            response.set_leader_id(node_->leader_id().value_or(""));
+        }
+
+        if (node_->role() != RaftNode::Role::leader) {
+            response.set_success(false);
+            response.set_status("NOT_LEADER");
+            response.set_message("command must target leader");
+            return response;
+        }
+
+        if (!node_->append_and_commit_local_command(request.command())) {
+            response.set_success(false);
+            response.set_status("UNSUPPORTED");
+            response.set_message("distributed client command replication is not wired in this prototype");
+            return response;
+        }
+
+        response.set_success(true);
+        response.set_status("OK");
+        response.set_message("command committed and applied");
+        return response;
+    }
+
+    std::optional<raft::ClientQueryResponse> on_client_query_request(const raft::ClientQueryRequest& request) override {
+        raft::ClientQueryResponse response;
+        response.set_term(node_->current_term());
+        response.set_peer_id(node_->peer_id());
+        response.set_success(false);
+
+        raft::StateMachineQuery query;
+        if (!query.ParseFromString(request.query())) {
+            response.set_status("BAD_REQUEST");
+            response.set_message("failed to parse StateMachineQuery");
+            return response;
+        }
+
+        if (query.query_case() != raft::StateMachineQuery::kGet) {
+            response.set_status("UNSUPPORTED");
+            response.set_message("only GET queries are supported");
+            return response;
+        }
+
+        raft::StateMachineQueryResult result;
+        auto* get = result.mutable_get();
+        get->set_key(query.get().key());
+        const auto applied = node_->applied_kv();
+        const auto found = applied.find(query.get().key());
+        if (found != applied.end()) {
+            get->set_found(true);
+            get->set_value(found->second);
+        } else {
+            get->set_found(false);
+        }
+
+        response.set_success(true);
+        response.set_status("OK");
+        response.set_message("query completed");
+        if (!result.SerializeToString(response.mutable_result())) {
+            throw std::runtime_error("failed to serialize StateMachineQueryResult");
+        }
+        return response;
     }
 
     std::optional<raft::AppendEntriesResponse> on_append_entries_request(const raft::AppendEntriesRequest& request) override {
@@ -312,6 +414,16 @@ public:
 
     std::optional<raft::ClusterSummaryResponse> on_cluster_summary_request(const raft::ClusterSummaryRequest& request) override {
         return delegate_.on_cluster_summary_request(request);
+    }
+
+    std::optional<raft::ClientCommandResponse> on_client_command_request(const raft::ClientCommandRequest& request) override {
+        auto response = delegate_.on_client_command_request(request);
+        persist();
+        return response;
+    }
+
+    std::optional<raft::ClientQueryResponse> on_client_query_request(const raft::ClientQueryRequest& request) override {
+        return delegate_.on_client_query_request(request);
     }
 
     std::optional<raft::VoteResponse> on_vote_request(const raft::VoteRequest& request) override {

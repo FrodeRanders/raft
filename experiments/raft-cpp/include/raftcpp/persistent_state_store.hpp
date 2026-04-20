@@ -43,6 +43,10 @@ public:
         out << "snapshot_index=" << state.snapshot_index << '\n';
         out << "snapshot_term=" << state.snapshot_term << '\n';
         out << "snapshot_data=" << escape(state.snapshot_data) << '\n';
+        out << "last_applied=" << state.last_applied << '\n';
+        for (const auto& [key, value] : state.applied_kv) {
+            out << "applied_kv=" << escape(key) << ',' << escape(value) << '\n';
+        }
         out << "previous_log_index=" << state.previous_log_index << '\n';
         out << "previous_log_term=" << state.previous_log_term << '\n';
         out << "last_entry_data=" << escape(state.last_entry_data) << '\n';
@@ -95,6 +99,14 @@ public:
                 state.snapshot_term = std::stoll(value);
             } else if (key == "snapshot_data") {
                 state.snapshot_data = value;
+            } else if (key == "last_applied") {
+                state.last_applied = std::stoll(value);
+            } else if (key == "applied_kv") {
+                const auto split = value.find(',');
+                if (split == std::string::npos) {
+                    throw std::runtime_error("invalid applied_kv line in state file: " + path_.string());
+                }
+                state.applied_kv.emplace(value.substr(0, split), value.substr(split + 1));
             } else if (key == "previous_log_index") {
                 state.previous_log_index = std::stoll(value);
             } else if (key == "previous_log_term") {

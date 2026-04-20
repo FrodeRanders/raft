@@ -160,6 +160,30 @@ private:
                 return std::nullopt;
             }
 
+            if (request_envelope.type() == "ClientCommandRequest") {
+                raft::ClientCommandRequest request;
+                if (!request.ParseFromString(request_envelope.payload())) {
+                    throw std::runtime_error("failed to parse ClientCommandRequest");
+                }
+
+                if (auto response = handler_->on_client_command_request(request); response.has_value()) {
+                    return wrap(request_envelope, "ClientCommandResponse", *response);
+                }
+                return std::nullopt;
+            }
+
+            if (request_envelope.type() == "ClientQueryRequest") {
+                raft::ClientQueryRequest request;
+                if (!request.ParseFromString(request_envelope.payload())) {
+                    throw std::runtime_error("failed to parse ClientQueryRequest");
+                }
+
+                if (auto response = handler_->on_client_query_request(request); response.has_value()) {
+                    return wrap(request_envelope, "ClientQueryResponse", *response);
+                }
+                return std::nullopt;
+            }
+
             if (request_envelope.type() == "AppendEntriesRequest") {
                 raft::AppendEntriesRequest request;
                 if (!request.ParseFromString(request_envelope.payload())) {

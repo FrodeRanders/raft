@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -56,6 +57,8 @@ public:
         std::int64_t snapshot_index{0};
         std::int64_t snapshot_term{0};
         std::string snapshot_data;
+        std::int64_t last_applied{0};
+        std::unordered_map<std::string, std::string> applied_kv;
         std::int64_t previous_log_index{0};
         std::int64_t previous_log_term{0};
         std::string last_entry_data;
@@ -142,6 +145,7 @@ public:
             }
 
             commit_index_ = std::max(commit_index_, std::min(request.leader_commit(), match_index));
+            apply_committed_entries_locked();
         }
 
         raft::AppendEntriesResponse response;
@@ -164,11 +168,26 @@ public:
             role_ = Role::follower;
             leader_id_ = request.leader_id();
             last_activity_ = std::chrono::steady_clock::now();
-            success = true;
-            if (request.done()) {
+            if (request.offset() == 0 ||
+                pending_snapshot_index_ != request.last_included_index() ||
+                pending_snapshot_term_ != request.last_included_term()) {
+                pending_snapshot_index_ = request.last_included_index();
+                pending_snapshot_term_ = request.last_included_term();
+                pending_snapshot_data_.clear();
+            }
+
+            if (request.offset() == static_cast<std::int64_t>(pending_snapshot_data_.size())) {
+                pending_snapshot_data_.append(request.snapshot_data());
+                success = true;
+            }
+
+            if (success && request.done()) {
                 snapshot_index_ = request.last_included_index();
                 snapshot_term_ = request.last_included_term();
-                snapshot_data_ = request.snapshot_data();
+                snapshot_data_ = pending_snapshot_data_;
+                pending_snapshot_data_.clear();
+                pending_snapshot_index_ = 0;
+                pending_snapshot_term_ = 0;
                 truncate_prefix_up_to_locked(snapshot_index_);
                 if (last_log_index_ < snapshot_index_) {
                     last_log_index_ = snapshot_index_;
@@ -178,6 +197,8 @@ public:
                     last_entry_data_.clear();
                 }
                 commit_index_ = std::max(commit_index_, snapshot_index_);
+                apply_snapshot_to_state_machine_locked();
+                last_applied_ = std::max(last_applied_, snapshot_index_);
             }
         }
 
@@ -187,6 +208,29 @@ public:
         response.set_success(success);
         response.set_last_included_index(request.last_included_index());
         return response;
+    }
+
+    bool compact_snapshot_to(std::int64_t index, std::string snapshot_data) {
+        std::scoped_lock lock(mu_);
+        if (index <= snapshot_index_ || index > commit_index_) {
+            return false;
+        }
+
+        const auto term = log_term_at_locked(index);
+        if (term == 0) {
+            return false;
+        }
+
+        snapshot_index_ = index;
+        snapshot_term_ = term;
+        snapshot_data_ = serialize_state_machine_snapshot_locked(applied_kv_);
+        if (!snapshot_data.empty()) {
+            snapshot_data_.insert(0, "__meta__=" + snapshot_data + "\n");
+        }
+        truncate_prefix_up_to_locked(snapshot_index_);
+        commit_index_ = std::max(commit_index_, snapshot_index_);
+        apply_committed_entries_locked();
+        return true;
     }
 
     void become_candidate() {
@@ -345,6 +389,7 @@ public:
             progress.match_index = std::max(progress.match_index, response.match_index());
             progress.next_index = std::max(progress.next_index, response.match_index() + 1);
             update_commit_index_locked();
+            apply_committed_entries_locked();
             return true;
         }
 
@@ -488,6 +533,39 @@ public:
         return snapshot_data_;
     }
 
+    std::int64_t last_applied() const {
+        std::scoped_lock lock(mu_);
+        return last_applied_;
+    }
+
+    std::unordered_map<std::string, std::string> applied_kv() const {
+        std::scoped_lock lock(mu_);
+        return applied_kv_;
+    }
+
+    bool append_and_commit_local_command(const std::string& data) {
+        std::scoped_lock lock(mu_);
+        if (role_ != Role::leader || quorum_size_locked() != 1) {
+            return false;
+        }
+
+        previous_log_index_ = last_log_index_;
+        previous_log_term_ = last_log_term_;
+        last_log_index_ += 1;
+        last_log_term_ = current_term_;
+        log_entries_.push_back(LogEntryRecord{
+            .index = last_log_index_,
+            .term = last_log_term_,
+            .data = data,
+        });
+        last_entry_data_ = data;
+        peer_progress_[peer_id_].match_index = last_log_index_;
+        peer_progress_[peer_id_].next_index = last_log_index_ + 1;
+        commit_index_ = last_log_index_;
+        apply_committed_entries_locked();
+        return true;
+    }
+
     std::optional<std::string> leader_id() const {
         std::scoped_lock lock(mu_);
         return leader_id_;
@@ -512,6 +590,8 @@ public:
             .snapshot_index = snapshot_index_,
             .snapshot_term = snapshot_term_,
             .snapshot_data = snapshot_data_,
+            .last_applied = last_applied_,
+            .applied_kv = applied_kv_,
             .previous_log_index = previous_log_index_,
             .previous_log_term = previous_log_term_,
             .last_entry_data = last_entry_data_,
@@ -533,6 +613,8 @@ public:
         snapshot_index_ = state.snapshot_index;
         snapshot_term_ = state.snapshot_term;
         snapshot_data_ = state.snapshot_data;
+        last_applied_ = state.last_applied;
+        applied_kv_ = state.applied_kv;
         previous_log_index_ = state.previous_log_index;
         previous_log_term_ = state.previous_log_term;
         last_entry_data_ = state.last_entry_data;
@@ -561,6 +643,95 @@ public:
     }
 
 private:
+    static std::string serialize_state_machine_snapshot_locked(const std::unordered_map<std::string, std::string>& applied_kv) {
+        std::string out;
+        for (const auto& [key, value] : applied_kv) {
+            out.append(key);
+            out.push_back('=');
+            out.append(value);
+            out.push_back('\n');
+        }
+        return out;
+    }
+
+    void apply_snapshot_to_state_machine_locked() {
+        if (snapshot_data_.empty()) {
+            return;
+        }
+
+        std::unordered_map<std::string, std::string> restored;
+        bool parsed_any = false;
+        std::size_t start = 0;
+        while (start < snapshot_data_.size()) {
+            const auto end = snapshot_data_.find('\n', start);
+            const auto line = snapshot_data_.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            if (!line.empty()) {
+                const auto split = line.find('=');
+                if (split != std::string::npos) {
+                    parsed_any = true;
+                    const auto key = line.substr(0, split);
+                    if (key != "__meta__") {
+                        restored[key] = line.substr(split + 1);
+                    }
+                }
+            }
+            if (end == std::string::npos) {
+                break;
+            }
+            start = end + 1;
+        }
+        if (parsed_any) {
+            applied_kv_ = std::move(restored);
+        }
+    }
+
+    void apply_state_machine_command_locked(const std::string& data) {
+        raft::StateMachineCommand command;
+        if (!command.ParseFromString(data)) {
+            return;
+        }
+
+        switch (command.command_case()) {
+        case raft::StateMachineCommand::kPut:
+            applied_kv_[command.put().key()] = command.put().value();
+            break;
+        case raft::StateMachineCommand::kDelete:
+            applied_kv_.erase(command.delete_().key());
+            break;
+        case raft::StateMachineCommand::kClear:
+            applied_kv_.clear();
+            break;
+        case raft::StateMachineCommand::kCas: {
+            const auto& cas = command.cas();
+            const auto found = applied_kv_.find(cas.key());
+            const bool present = found != applied_kv_.end();
+            const bool matched = present == cas.expected_present() &&
+                                 (!present || found->second == cas.expected_value());
+            if (matched) {
+                applied_kv_[cas.key()] = cas.new_value();
+            }
+            break;
+        }
+        case raft::StateMachineCommand::COMMAND_NOT_SET:
+            break;
+        }
+    }
+
+    void apply_committed_entries_locked() {
+        if (snapshot_index_ > last_applied_) {
+            apply_snapshot_to_state_machine_locked();
+            last_applied_ = snapshot_index_;
+        }
+
+        for (const auto& entry : log_entries_) {
+            if (entry.index <= last_applied_ || entry.index > commit_index_) {
+                continue;
+            }
+            apply_state_machine_command_locked(entry.data);
+            last_applied_ = entry.index;
+        }
+    }
+
     void seed_bootstrap_log_locked() {
         if (!log_entries_.empty() || last_log_index_ <= snapshot_index_) {
             return;
@@ -775,6 +946,11 @@ private:
     std::int64_t snapshot_index_;
     std::int64_t snapshot_term_;
     std::string snapshot_data_;
+    std::int64_t last_applied_{0};
+    std::unordered_map<std::string, std::string> applied_kv_;
+    std::int64_t pending_snapshot_index_{0};
+    std::int64_t pending_snapshot_term_{0};
+    std::string pending_snapshot_data_;
     std::int64_t previous_log_index_;
     std::int64_t previous_log_term_;
     std::string last_entry_data_;

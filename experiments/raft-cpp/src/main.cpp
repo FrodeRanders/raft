@@ -23,6 +23,8 @@ void print_usage() {
         << "Usage:\n"
         << "  raft_cpp_smoke cluster-summary <host> <port> [peer-id]\n"
         << "  raft_cpp_smoke telemetry <host> <port> [peer-id]\n"
+        << "  raft_cpp_smoke client-put <host> <port> <key> <value> [peer-id]\n"
+        << "  raft_cpp_smoke client-get <host> <port> <key> [peer-id]\n"
         << "  raft_cpp_smoke vote-request <host> <port> <candidate-id> <last-log-index> <last-log-term> [term]\n"
         << "  raft_cpp_smoke append-entries <host> <port> <leader-id> <prev-log-index> <prev-log-term> <leader-commit> [term]\n"
         << "  raft_cpp_smoke install-snapshot <host> <port> <leader-id> <last-included-index> <last-included-term> [term] [snapshot-data]\n"
@@ -31,11 +33,14 @@ void print_usage() {
         << "  raft_cpp_smoke serve-persistent <bind-host> <port> <peer-id> <state-file> [current-term] [last-log-index] [last-log-term]\n"
         << "  raft_cpp_smoke serve-active <bind-host> <port> <peer-id> <current-term> <last-log-index> <last-log-term> <peer-spec>...\n"
         << "  raft_cpp_smoke serve-active-persistent <bind-host> <port> <peer-id> <state-file> <current-term> <last-log-index> <last-log-term> <peer-spec>...\n"
-        << "  raft_cpp_smoke serve-active-persistent-workload <bind-host> <port> <peer-id> <state-file> <current-term> <last-log-index> <last-log-term> <replicate-interval-ms> <peer-spec>...\n"
+        << "  raft_cpp_smoke serve-active-persistent-workload <bind-host> <port> <peer-id> <state-file> <current-term> <last-log-index> <last-log-term> <replicate-interval-ms> [snapshot-threshold] <peer-spec>...\n"
         << "  raft_cpp_smoke election-round <peer-id> [current-term] [last-log-index] [last-log-term] <peer-spec>...\n"
         << "  raft_cpp_smoke heartbeat-round <peer-id> <term> [last-log-index] [last-log-term] <peer-spec>...\n"
         << "  raft_cpp_smoke replicate-once <peer-id> <term> <data> [last-log-index] [last-log-term] <peer-spec>...\n"
         << "  raft_cpp_smoke replicate-once-persistent <peer-id> <state-file> <term> <data> [last-log-index] [last-log-term] <peer-spec>...\n"
+        << "  raft_cpp_smoke replicate-put-persistent <peer-id> <state-file> <term> <key> <value> [last-log-index] [last-log-term] <peer-spec>...\n"
+        << "  raft_cpp_smoke compact-snapshot <peer-id> <state-file> <index> <snapshot-data> [current-term] [last-log-index] [last-log-term]\n"
+        << "  raft_cpp_smoke dump-state <state-file>\n"
         << "\n"
         << "  peer-spec format: <peer-id>@<host>:<port>\n";
 }
@@ -175,6 +180,89 @@ int run_telemetry(const std::string& host, std::uint16_t port, const std::string
             << " match_index=" << member.match_index()
             << " lag=" << member.lag()
             << '\n';
+    }
+
+    return response.success() ? 0 : 2;
+}
+
+int run_client_put(
+    const std::string& host,
+    std::uint16_t port,
+    const std::string& key,
+    const std::string& value,
+    const std::string& peer_id
+) {
+    boost::asio::io_context io_context;
+    raftcpp::RaftClient client(io_context);
+
+    raft::StateMachineCommand command;
+    command.mutable_put()->set_key(key);
+    command.mutable_put()->set_value(value);
+
+    raft::ClientCommandRequest request;
+    request.set_term(0);
+    request.set_peer_id(peer_id);
+    request.set_command(command.SerializeAsString());
+
+    const auto response = client.call<raft::ClientCommandRequest, raft::ClientCommandResponse>(
+        host,
+        port,
+        "ClientCommandRequest",
+        request,
+        "ClientCommandResponse"
+    );
+
+    std::cout
+        << "peer_id: " << response.peer_id() << '\n'
+        << "status: " << response.status() << '\n'
+        << "success: " << (response.success() ? "true" : "false") << '\n'
+        << "leader_id: " << response.leader_id() << '\n'
+        << "message: " << response.message() << '\n';
+
+    return response.success() ? 0 : 2;
+}
+
+int run_client_get(
+    const std::string& host,
+    std::uint16_t port,
+    const std::string& key,
+    const std::string& peer_id
+) {
+    boost::asio::io_context io_context;
+    raftcpp::RaftClient client(io_context);
+
+    raft::StateMachineQuery query;
+    query.mutable_get()->set_key(key);
+
+    raft::ClientQueryRequest request;
+    request.set_term(0);
+    request.set_peer_id(peer_id);
+    request.set_query(query.SerializeAsString());
+
+    const auto response = client.call<raft::ClientQueryRequest, raft::ClientQueryResponse>(
+        host,
+        port,
+        "ClientQueryRequest",
+        request,
+        "ClientQueryResponse"
+    );
+
+    std::cout
+        << "peer_id: " << response.peer_id() << '\n'
+        << "status: " << response.status() << '\n'
+        << "success: " << (response.success() ? "true" : "false") << '\n'
+        << "message: " << response.message() << '\n';
+
+    if (response.success() && !response.result().empty()) {
+        raft::StateMachineQueryResult result;
+        if (!result.ParseFromString(response.result())) {
+            throw std::runtime_error("failed to parse StateMachineQueryResult");
+        }
+        if (result.result_case() == raft::StateMachineQueryResult::kGet) {
+            std::cout
+                << "found: " << (result.get().found() ? "true" : "false") << '\n'
+                << "value: " << result.get().value() << '\n';
+        }
     }
 
     return response.success() ? 0 : 2;
@@ -351,7 +439,8 @@ int run_install_snapshot(
     std::vector<raftcpp::PeerEndpoint> peers,
     std::function<void(const raftcpp::RaftNode&)> persist_callback = {},
     std::optional<std::chrono::milliseconds> replicate_interval = std::nullopt,
-    std::string replicate_prefix = "synthetic"
+    std::string replicate_prefix = "synthetic",
+    std::optional<std::int64_t> snapshot_threshold = std::nullopt
 ) {
     boost::asio::io_context server_io_context;
     boost::asio::io_context client_io_context;
@@ -433,12 +522,29 @@ int run_install_snapshot(
 
     std::jthread replicate_thread;
     if (replicate_interval.has_value()) {
-        replicate_thread = std::jthread([&, replicate_interval, replicate_prefix]() {
+        replicate_thread = std::jthread([&, replicate_interval, replicate_prefix, snapshot_threshold]() {
             std::size_t replicate_counter = 0;
             for (;;) {
                 std::this_thread::sleep_for(*replicate_interval);
                 if (runtime.node().role() == raftcpp::RaftNode::Role::leader) {
                     runtime.replicate_entry_once(replicate_prefix + "-" + std::to_string(++replicate_counter));
+                    if (snapshot_threshold.has_value()) {
+                        const auto commit_index = runtime.node().commit_index();
+                        const auto snapshot_index = runtime.node().snapshot_index();
+                        if (commit_index > snapshot_index && (commit_index - snapshot_index) >= *snapshot_threshold) {
+                            const auto compacted = runtime.node().compact_snapshot_to(
+                                commit_index,
+                                "auto-snapshot-" + std::to_string(commit_index)
+                            );
+                            if (compacted && persist_callback) {
+                                persist_callback(runtime.node());
+                            }
+                            std::cout
+                                << "auto-compact snapshot_index=" << runtime.node().snapshot_index()
+                                << " compacted=" << (compacted ? "true" : "false")
+                                << '\n';
+                        }
+                    }
                 }
             }
         });
@@ -521,6 +627,7 @@ int run_install_snapshot(
     std::int64_t last_log_index,
     std::int64_t last_log_term,
     std::chrono::milliseconds replicate_interval,
+    std::optional<std::int64_t> snapshot_threshold,
     std::vector<raftcpp::PeerEndpoint> peers
 ) {
     auto handler = std::make_shared<raftcpp::PersistentRpcHandler>(
@@ -547,7 +654,8 @@ int run_install_snapshot(
             handler->store().save(current_node.persistent_state());
         },
         replicate_interval,
-        "workload"
+        "workload",
+        snapshot_threshold
     );
 }
 
@@ -696,6 +804,91 @@ int run_replicate_once_persistent(
     return successes > 0 ? 0 : 2;
 }
 
+int run_compact_snapshot(
+    const std::string& peer_id,
+    const std::string& state_file,
+    std::int64_t index,
+    const std::string& snapshot_data,
+    std::int64_t current_term,
+    std::int64_t last_log_index,
+    std::int64_t last_log_term
+) {
+    raftcpp::PersistentStateStore store(state_file);
+    auto node = std::make_shared<raftcpp::RaftNode>(raftcpp::RaftNode::Config{
+        .peer_id = peer_id,
+        .current_term = current_term,
+        .last_log_index = last_log_index,
+        .last_log_term = last_log_term,
+        .commit_index = last_log_index,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+
+    if (const auto persisted = store.load(); persisted.has_value()) {
+        node->apply_persistent_state(*persisted);
+    } else {
+        store.save(node->persistent_state());
+    }
+
+    const auto compacted = node->compact_snapshot_to(index, snapshot_data);
+    store.save(node->persistent_state());
+
+    std::cout
+        << "compacted: " << (compacted ? "true" : "false") << '\n'
+        << "snapshot_index: " << node->snapshot_index() << '\n'
+        << "snapshot_term: " << node->snapshot_term() << '\n'
+        << "snapshot_data_size: " << node->snapshot_data().size() << '\n'
+        << "last_log_index: " << node->last_log_index() << '\n'
+        << "commit_index: " << node->commit_index() << '\n';
+
+    return compacted ? 0 : 2;
+}
+
+int run_replicate_put_persistent(
+    const std::string& peer_id,
+    const std::string& state_file,
+    std::int64_t term,
+    const std::string& key,
+    const std::string& value,
+    std::int64_t last_log_index,
+    std::int64_t last_log_term,
+    std::vector<raftcpp::PeerEndpoint> peers
+) {
+    raft::StateMachineCommand command;
+    command.mutable_put()->set_key(key);
+    command.mutable_put()->set_value(value);
+    return run_replicate_once_persistent(
+        peer_id,
+        state_file,
+        term,
+        command.SerializeAsString(),
+        last_log_index,
+        last_log_term,
+        std::move(peers)
+    );
+}
+
+int run_dump_state(const std::string& state_file) {
+    raftcpp::PersistentStateStore store(state_file);
+    const auto persisted = store.load();
+    if (!persisted.has_value()) {
+        throw std::runtime_error("state file does not exist or is empty");
+    }
+
+    std::cout
+        << "peer_id: " << persisted->peer_id << '\n'
+        << "current_term: " << persisted->current_term << '\n'
+        << "commit_index: " << persisted->commit_index << '\n'
+        << "last_applied: " << persisted->last_applied << '\n'
+        << "snapshot_index: " << persisted->snapshot_index << '\n'
+        << "snapshot_term: " << persisted->snapshot_term << '\n';
+    for (const auto& [key, value] : persisted->applied_kv) {
+        std::cout << "kv[" << key << "]=" << value << '\n';
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -711,6 +904,8 @@ int main(int argc, char** argv) {
         const auto uses_host_port =
             command == "cluster-summary" ||
             command == "telemetry" ||
+            command == "client-put" ||
+            command == "client-get" ||
             command == "vote-request" ||
             command == "append-entries" ||
             command == "install-snapshot" ||
@@ -738,6 +933,20 @@ int main(int argc, char** argv) {
             exit_code = run_cluster_summary(host, port, peer_id_or_default(argc, argv, 4));
         } else if (command == "telemetry") {
             exit_code = run_telemetry(host, port, peer_id_or_default(argc, argv, 4));
+        } else if (command == "client-put") {
+            if (argc < 6) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_client_put(host, port, argv[4], argv[5], peer_id_or_default(argc, argv, 6));
+        } else if (command == "client-get") {
+            if (argc < 5) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_client_get(host, port, argv[4], peer_id_or_default(argc, argv, 5));
         } else if (command == "vote-request") {
             if (argc < 7) {
                 print_usage();
@@ -860,6 +1069,8 @@ int main(int argc, char** argv) {
                 google::protobuf::ShutdownProtobufLibrary();
                 return 1;
             }
+            const bool has_snapshot_threshold =
+                argc > 10 && std::string_view(argv[10]).find('@') == std::string_view::npos;
             run_active_persistent_workload_server(
                 host,
                 port,
@@ -869,7 +1080,8 @@ int main(int argc, char** argv) {
                 parse_int64(argv[7], "last-log-index"),
                 parse_int64(argv[8], "last-log-term"),
                 std::chrono::milliseconds(parse_int64(argv[9], "replicate-interval-ms")),
-                parse_peer_specs(argv, 10, argc)
+                has_snapshot_threshold ? std::optional<std::int64_t>{parse_int64(argv[10], "snapshot-threshold")} : std::nullopt,
+                parse_peer_specs(argv, has_snapshot_threshold ? 11 : 10, argc)
             );
         } else if (command == "election-round") {
             if (argc < 7) {
@@ -926,6 +1138,44 @@ int main(int argc, char** argv) {
                 parse_int64(argv[7], "last-log-term"),
                 parse_peer_specs(argv, 8, argc)
             );
+        } else if (command == "replicate-put-persistent") {
+            if (argc < 9) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_replicate_put_persistent(
+                argv[2],
+                argv[3],
+                parse_int64(argv[4], "term"),
+                argv[5],
+                argv[6],
+                parse_int64(argv[7], "last-log-index"),
+                parse_int64(argv[8], "last-log-term"),
+                parse_peer_specs(argv, 9, argc)
+            );
+        } else if (command == "compact-snapshot") {
+            if (argc < 6) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_compact_snapshot(
+                argv[2],
+                argv[3],
+                parse_int64(argv[4], "index"),
+                argv[5],
+                argc > 6 ? parse_int64(argv[6], "current-term") : 0,
+                argc > 7 ? parse_int64(argv[7], "last-log-index") : 0,
+                argc > 8 ? parse_int64(argv[8], "last-log-term") : 0
+            );
+        } else if (command == "dump-state") {
+            if (argc < 3) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_dump_state(argv[2]);
         } else {
             print_usage();
         }
