@@ -45,11 +45,17 @@ public:
         std::string data;
     };
 
+    struct CommandCommitResult {
+        std::int64_t index{0};
+        std::string result;
+    };
+
     struct PersistentState {
         std::string peer_id;
         std::int64_t current_term{0};
         std::optional<std::string> voted_for;
         std::optional<std::string> leader_id;
+        bool joint_consensus{false};
         std::vector<std::string> voting_peers;
         std::int64_t last_log_index{0};
         std::int64_t last_log_term{0};
@@ -82,6 +88,16 @@ public:
         seed_bootstrap_log_locked();
         normalize_voting_peers_locked();
         reset_peer_progress_locked();
+    }
+
+    static constexpr std::string_view kInternalCommandPrefix = "raft-internal:";
+
+    static std::string encode_internal_command(const raft::InternalRaftCommand& command) {
+        std::string payload;
+        if (!command.SerializeToString(&payload)) {
+            throw std::runtime_error("failed to serialize InternalRaftCommand");
+        }
+        return std::string(kInternalCommandPrefix) + payload;
     }
 
     raft::VoteResponse handle_vote_request(const raft::VoteRequest& request) {
@@ -245,14 +261,17 @@ public:
 
     void set_voting_peers(std::vector<std::string> voting_peers) {
         std::scoped_lock lock(mu_);
-        voting_peers_ = std::move(voting_peers);
-        normalize_voting_peers_locked();
-        reset_peer_progress_locked();
+        reconfigure_voting_peers_locked(std::move(voting_peers));
     }
 
     std::vector<std::string> voting_peers() const {
         std::scoped_lock lock(mu_);
         return voting_peers_;
+    }
+
+    bool joint_consensus() const {
+        std::scoped_lock lock(mu_);
+        return joint_consensus_;
     }
 
     std::size_t quorum_size() const {
@@ -543,10 +562,15 @@ public:
         return applied_kv_;
     }
 
-    bool append_and_commit_local_command(const std::string& data) {
+    std::string applied_command_result(std::int64_t index) const {
+        std::scoped_lock lock(mu_);
+        return applied_command_result_at_locked(index);
+    }
+
+    std::optional<CommandCommitResult> append_and_commit_local_command(const std::string& data) {
         std::scoped_lock lock(mu_);
         if (role_ != Role::leader || quorum_size_locked() != 1) {
-            return false;
+            return std::nullopt;
         }
 
         previous_log_index_ = last_log_index_;
@@ -563,7 +587,10 @@ public:
         peer_progress_[peer_id_].next_index = last_log_index_ + 1;
         commit_index_ = last_log_index_;
         apply_committed_entries_locked();
-        return true;
+        return CommandCommitResult{
+            .index = last_log_index_,
+            .result = applied_command_result_at_locked(last_log_index_),
+        };
     }
 
     std::optional<std::string> leader_id() const {
@@ -583,6 +610,7 @@ public:
             .current_term = current_term_,
             .voted_for = voted_for_,
             .leader_id = leader_id_,
+            .joint_consensus = joint_consensus_,
             .voting_peers = voting_peers_,
             .last_log_index = last_log_index_,
             .last_log_term = last_log_term_,
@@ -606,6 +634,7 @@ public:
         current_term_ = state.current_term;
         voted_for_ = state.voted_for;
         leader_id_ = state.leader_id;
+        joint_consensus_ = state.joint_consensus;
         voting_peers_ = state.voting_peers;
         last_log_index_ = state.last_log_index;
         last_log_term_ = state.last_log_term;
@@ -615,6 +644,7 @@ public:
         snapshot_data_ = state.snapshot_data;
         last_applied_ = state.last_applied;
         applied_kv_ = state.applied_kv;
+        applied_command_results_.clear();
         previous_log_index_ = state.previous_log_index;
         previous_log_term_ = state.previous_log_term;
         last_entry_data_ = state.last_entry_data;
@@ -685,36 +715,96 @@ private:
         }
     }
 
-    void apply_state_machine_command_locked(const std::string& data) {
+    std::string apply_state_machine_command_locked(const std::string& data) {
         raft::StateMachineCommand command;
         if (!command.ParseFromString(data)) {
-            return;
+            return {};
         }
 
         switch (command.command_case()) {
         case raft::StateMachineCommand::kPut:
             applied_kv_[command.put().key()] = command.put().value();
-            break;
+            return {};
         case raft::StateMachineCommand::kDelete:
             applied_kv_.erase(command.delete_().key());
-            break;
+            return {};
         case raft::StateMachineCommand::kClear:
             applied_kv_.clear();
-            break;
+            return {};
         case raft::StateMachineCommand::kCas: {
             const auto& cas = command.cas();
             const auto found = applied_kv_.find(cas.key());
             const bool present = found != applied_kv_.end();
             const bool matched = present == cas.expected_present() &&
                                  (!present || found->second == cas.expected_value());
+            bool current_present = present;
+            std::string current_value = present ? found->second : "";
             if (matched) {
                 applied_kv_[cas.key()] = cas.new_value();
+                current_present = true;
+                current_value = cas.new_value();
             }
-            break;
+
+            raft::StateMachineCommandResult result;
+            auto* cas_result = result.mutable_cas();
+            cas_result->set_key(cas.key());
+            cas_result->set_expected_present(cas.expected_present());
+            cas_result->set_expected_value(cas.expected_value());
+            cas_result->set_new_value(cas.new_value());
+            cas_result->set_matched(matched);
+            cas_result->set_current_present(current_present);
+            cas_result->set_current_value(current_value);
+
+            std::string encoded;
+            if (!result.SerializeToString(&encoded)) {
+                throw std::runtime_error("failed to serialize StateMachineCommandResult");
+            }
+            return encoded;
         }
         case raft::StateMachineCommand::COMMAND_NOT_SET:
-            break;
+            return {};
         }
+        return {};
+    }
+
+    bool apply_internal_command_locked(const std::string& data) {
+        if (!data.starts_with(kInternalCommandPrefix)) {
+            return false;
+        }
+
+        raft::InternalRaftCommand command;
+        const auto payload = data.substr(kInternalCommandPrefix.size());
+        if (!command.ParseFromString(payload)) {
+            return false;
+        }
+
+        switch (command.command_case()) {
+        case raft::InternalRaftCommand::kJoint: {
+            std::vector<std::string> peer_ids;
+            peer_ids.reserve(command.joint().members_size());
+            for (const auto& member : command.joint().members()) {
+                if (!member.id().empty() && member.id() != peer_id_) {
+                    peer_ids.push_back(member.id());
+                }
+            }
+            reconfigure_voting_peers_locked(std::move(peer_ids));
+            joint_consensus_ = true;
+            return true;
+        }
+        case raft::InternalRaftCommand::kFinalize:
+            joint_consensus_ = false;
+            return true;
+        case raft::InternalRaftCommand::COMMAND_NOT_SET:
+            return false;
+        }
+        return false;
+    }
+
+    std::string apply_log_entry_locked(const std::string& data) {
+        if (apply_internal_command_locked(data)) {
+            return {};
+        }
+        return apply_state_machine_command_locked(data);
     }
 
     void apply_committed_entries_locked() {
@@ -727,7 +817,8 @@ private:
             if (entry.index <= last_applied_ || entry.index > commit_index_) {
                 continue;
             }
-            apply_state_machine_command_locked(entry.data);
+            applied_command_results_.erase(entry.index);
+            applied_command_results_[entry.index] = apply_log_entry_locked(entry.data);
             last_applied_ = entry.index;
         }
     }
@@ -769,6 +860,35 @@ private:
             }
         }
         voting_peers_ = std::move(normalized);
+    }
+
+    void reconfigure_voting_peers_locked(std::vector<std::string> voting_peers) {
+        voting_peers_ = std::move(voting_peers);
+        normalize_voting_peers_locked();
+
+        std::unordered_map<std::string, PeerProgress> next_progress;
+        next_progress.reserve(voting_peers_.size() + 1);
+        const auto self_found = peer_progress_.find(peer_id_);
+        next_progress.emplace(
+            peer_id_,
+            self_found != peer_progress_.end()
+                ? self_found->second
+                : PeerProgress{.next_index = last_log_index_ + 1, .match_index = last_log_index_}
+        );
+        next_progress[peer_id_].next_index = std::max(next_progress[peer_id_].next_index, last_log_index_ + 1);
+        next_progress[peer_id_].match_index = std::max(next_progress[peer_id_].match_index, last_log_index_);
+
+        for (const auto& peer_id : voting_peers_) {
+            const auto found = peer_progress_.find(peer_id);
+            if (found != peer_progress_.end()) {
+                next_progress.emplace(peer_id, found->second);
+                next_progress[peer_id].next_index = std::max(next_progress[peer_id].next_index, static_cast<std::int64_t>(1));
+            } else {
+                next_progress.emplace(peer_id, PeerProgress{.next_index = last_log_index_ + 1, .match_index = 0});
+            }
+        }
+
+        peer_progress_ = std::move(next_progress);
     }
 
     std::size_t cluster_size_locked() const {
@@ -866,7 +986,15 @@ private:
     void truncate_log_from_locked(std::int64_t index) {
         if (index <= 0) {
             log_entries_.clear();
+            applied_command_results_.clear();
         } else {
+            for (auto it = applied_command_results_.begin(); it != applied_command_results_.end();) {
+                if (it->first >= index) {
+                    it = applied_command_results_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
             log_entries_.erase(
                 std::remove_if(log_entries_.begin(), log_entries_.end(), [index](const auto& entry) {
                     return entry.index >= index;
@@ -897,6 +1025,13 @@ private:
     void truncate_prefix_up_to_locked(std::int64_t index) {
         if (index <= 0) {
             return;
+        }
+        for (auto it = applied_command_results_.begin(); it != applied_command_results_.end();) {
+            if (it->first <= index) {
+                it = applied_command_results_.erase(it);
+            } else {
+                ++it;
+            }
         }
         log_entries_.erase(
             std::remove_if(log_entries_.begin(), log_entries_.end(), [index](const auto& entry) {
@@ -934,12 +1069,21 @@ private:
         votes_responded_.clear();
     }
 
+    std::string applied_command_result_at_locked(std::int64_t index) const {
+        const auto found = applied_command_results_.find(index);
+        if (found == applied_command_results_.end()) {
+            return {};
+        }
+        return found->second;
+    }
+
     mutable std::mutex mu_;
     std::string peer_id_;
     Role role_;
     std::int64_t current_term_;
     std::optional<std::string> voted_for_;
     std::optional<std::string> leader_id_;
+    bool joint_consensus_{false};
     std::int64_t last_log_index_;
     std::int64_t last_log_term_;
     std::int64_t commit_index_;
@@ -948,6 +1092,7 @@ private:
     std::string snapshot_data_;
     std::int64_t last_applied_{0};
     std::unordered_map<std::string, std::string> applied_kv_;
+    std::unordered_map<std::int64_t, std::string> applied_command_results_;
     std::int64_t pending_snapshot_index_{0};
     std::int64_t pending_snapshot_term_{0};
     std::string pending_snapshot_data_;

@@ -5,6 +5,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -62,7 +63,27 @@ public:
     RaftNode& node() { return *node_; }
     const RaftNode& node() const { return *node_; }
     std::shared_ptr<RaftNode> node_ptr() { return node_; }
-    const std::vector<PeerEndpoint>& peers() const { return peers_; }
+    std::vector<PeerEndpoint> peers() const {
+        std::scoped_lock lock(peers_mu_);
+        return peers_;
+    }
+
+    void configure_peers(std::vector<PeerEndpoint> peers) {
+        std::vector<std::string> peer_ids;
+        peer_ids.reserve(peers.size());
+        for (const auto& peer : peers) {
+            if (peer.peer_id.empty()) {
+                throw std::runtime_error("peer id is required");
+            }
+            peer_ids.push_back(peer.peer_id);
+        }
+        {
+            std::scoped_lock lock(peers_mu_);
+            peers_ = std::move(peers);
+        }
+        node_->set_voting_peers(std::move(peer_ids));
+        persist();
+    }
 
     bool run_election_round() {
         const auto request = node_->start_election();
@@ -74,7 +95,7 @@ public:
             << " quorum=" << node_->quorum_size()
             << '\n';
 
-        for (const auto& peer : peers_) {
+        for (const auto& peer : peers()) {
             try {
                 const auto response = client_.call<raft::VoteRequest, raft::VoteResponse>(
                     peer.host,
@@ -108,7 +129,7 @@ public:
         }
 
         std::size_t successes = 0;
-        for (const auto& peer : peers_) {
+        for (const auto& peer : peers()) {
             successes += sync_peer_once(peer) ? 1 : 0;
         }
 
@@ -125,7 +146,7 @@ public:
         persist();
 
         std::size_t successes = 0;
-        for (const auto& peer : peers_) {
+        for (const auto& peer : peers()) {
             successes += replicate_peer_until_caught_up(peer) ? 1 : 0;
         }
 
@@ -134,6 +155,30 @@ public:
         }
 
         return successes;
+    }
+
+    std::optional<std::string> replicate_entry_once_with_result(const std::string& data) {
+        if (node_->role() != RaftNode::Role::leader) {
+            return std::nullopt;
+        }
+
+        const auto initial_commit_index = node_->commit_index();
+        const auto entry_index = node_->append_local_entry(data);
+        persist();
+
+        std::size_t successes = 0;
+        for (const auto& peer : peers_) {
+            successes += replicate_peer_until_caught_up(peer) ? 1 : 0;
+        }
+
+        if (node_->commit_index() > initial_commit_index) {
+            send_heartbeats_once();
+        }
+
+        if (successes == 0) {
+            return std::nullopt;
+        }
+        return node_->applied_command_result(entry_index);
     }
 
 private:
@@ -289,6 +334,7 @@ private:
     }
 
     RaftClient client_;
+    mutable std::mutex peers_mu_;
     std::vector<PeerEndpoint> peers_;
     std::shared_ptr<RaftNode> node_;
     std::function<void(const RaftNode&)> persist_callback_;

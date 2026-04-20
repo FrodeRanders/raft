@@ -184,6 +184,42 @@ private:
                 return std::nullopt;
             }
 
+            if (request_envelope.type() == "JoinClusterRequest") {
+                raft::JoinClusterRequest request;
+                if (!request.ParseFromString(request_envelope.payload())) {
+                    throw std::runtime_error("failed to parse JoinClusterRequest");
+                }
+
+                if (auto response = handler_->on_join_cluster_request(request); response.has_value()) {
+                    return wrap(request_envelope, "JoinClusterResponse", *response);
+                }
+                return std::nullopt;
+            }
+
+            if (request_envelope.type() == "JoinClusterStatusRequest") {
+                raft::JoinClusterStatusRequest request;
+                if (!request.ParseFromString(request_envelope.payload())) {
+                    throw std::runtime_error("failed to parse JoinClusterStatusRequest");
+                }
+
+                if (auto response = handler_->on_join_cluster_status_request(request); response.has_value()) {
+                    return wrap(request_envelope, "JoinClusterStatusResponse", *response);
+                }
+                return std::nullopt;
+            }
+
+            if (request_envelope.type() == "ReconfigureClusterRequest") {
+                raft::ReconfigureClusterRequest request;
+                if (!request.ParseFromString(request_envelope.payload())) {
+                    throw std::runtime_error("failed to parse ReconfigureClusterRequest");
+                }
+
+                if (auto response = handler_->on_reconfigure_cluster_request(request); response.has_value()) {
+                    return wrap(request_envelope, "ReconfigureClusterResponse", *response);
+                }
+                return std::nullopt;
+            }
+
             if (request_envelope.type() == "AppendEntriesRequest") {
                 raft::AppendEntriesRequest request;
                 if (!request.ParseFromString(request_envelope.payload())) {

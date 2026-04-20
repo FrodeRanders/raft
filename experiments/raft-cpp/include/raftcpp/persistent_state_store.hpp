@@ -34,6 +34,7 @@ public:
         out << "current_term=" << state.current_term << '\n';
         out << "voted_for=" << escape(state.voted_for.value_or("")) << '\n';
         out << "leader_id=" << escape(state.leader_id.value_or("")) << '\n';
+        out << "joint_consensus=" << (state.joint_consensus ? 1 : 0) << '\n';
         for (const auto& peer_id : state.voting_peers) {
             out << "voting_peer=" << escape(peer_id) << '\n';
         }
@@ -85,6 +86,8 @@ public:
                 state.voted_for = value.empty() ? std::nullopt : std::optional<std::string>{value};
             } else if (key == "leader_id") {
                 state.leader_id = value.empty() ? std::nullopt : std::optional<std::string>{value};
+            } else if (key == "joint_consensus") {
+                state.joint_consensus = (value == "1" || value == "true");
             } else if (key == "voting_peer") {
                 state.voting_peers.push_back(value);
             } else if (key == "last_log_index") {

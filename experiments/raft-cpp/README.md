@@ -19,9 +19,13 @@ The current scaffold implements:
 - a small CLI with:
   - `cluster-summary`
   - `telemetry`
-  - `client-put`
-  - `client-get`
-  - `vote-request`
+- `client-put`
+- `client-cas`
+- `client-get`
+- `join-cluster`
+- `join-status`
+- `reconfigure`
+- `vote-request`
   - `append-entries`
   - `install-snapshot`
   - `serve`
@@ -92,7 +96,12 @@ Then from the repository root:
 experiments/raft-cpp/build/raft_cpp_smoke cluster-summary 127.0.0.1 10080
 experiments/raft-cpp/build/raft_cpp_smoke telemetry 127.0.0.1 10080
 experiments/raft-cpp/build/raft_cpp_smoke client-put 127.0.0.1 11082 k v1 cpp-node
+experiments/raft-cpp/build/raft_cpp_smoke client-cas 127.0.0.1 11082 k false "" v1 cpp-node
 experiments/raft-cpp/build/raft_cpp_smoke client-get 127.0.0.1 11082 k cpp-node
+experiments/raft-cpp/build/raft_cpp_smoke join-cluster 127.0.0.1 11083 peer-b 127.0.0.1 11084 voter cpp-node
+experiments/raft-cpp/build/raft_cpp_smoke join-status 127.0.0.1 11083 peer-b cpp-node
+experiments/raft-cpp/build/raft_cpp_smoke reconfigure 127.0.0.1 11083 joint peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11084
+experiments/raft-cpp/build/raft_cpp_smoke reconfigure 127.0.0.1 11083 finalize peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11084
 experiments/raft-cpp/build/raft_cpp_smoke vote-request 127.0.0.1 10080 cpp-candidate 0 0
 experiments/raft-cpp/build/raft_cpp_smoke append-entries 127.0.0.1 10080 cpp-leader 0 0 0
 experiments/raft-cpp/build/raft_cpp_smoke install-snapshot 127.0.0.1 10080 cpp-leader 0 0
@@ -537,6 +546,7 @@ The same client API path now also works through the active multi-node prototype.
 
 ```text
 raft_cpp_smoke client-put 127.0.0.1 11391 k v1 cpp-node
+raft_cpp_smoke client-cas 127.0.0.1 11391 k true v1 v2 cpp-node
 raft_cpp_smoke client-get 127.0.0.1 11391 k cpp-node
 ```
 
@@ -579,6 +589,108 @@ kv[k]=v1
 ```
 
 So the bounded C++ prototype now supports the shared client command/query API for both single-node and active multi-node replicated KV operations.
+
+`ClientCommandResponse.result` is now populated for commands that have a typed application result. In the current shared protocol that means `CAS`. For example, in both the single-node and distributed smokes:
+
+```text
+raft_cpp_smoke client-cas 127.0.0.1 11583 k false "" v1 cpp-client
+raft_cpp_smoke client-cas 127.0.0.1 11583 k true nope v2 cpp-client
+```
+
+returned:
+
+```text
+peer_id: cpp-node
+status: OK
+success: true
+leader_id: cpp-node
+leader_host: 127.0.0.1
+leader_port: 11583
+message: command committed and applied
+cas.key: k
+cas.matched: true
+cas.expected_present: false
+cas.expected_value:
+cas.new_value: v1
+cas.current_present: true
+cas.current_value: v1
+```
+
+and then:
+
+```text
+peer_id: cpp-node
+status: OK
+success: true
+leader_id: cpp-node
+leader_host: 127.0.0.1
+leader_port: 11583
+message: command committed and applied
+cas.key: k
+cas.matched: false
+cas.expected_present: true
+cas.expected_value: nope
+cas.new_value: v2
+cas.current_present: true
+cas.current_value: v1
+```
+
+So the C++ prototype now mirrors the Java-side behavior more closely at the client boundary: commands are not just committed and applied, they can also return typed application results when the protocol defines them.
+
+The prototype now also has a bounded membership-control path over the shared admin envelopes:
+
+- `join-cluster`
+  - records a pending joining peer on the current leader
+- `join-status`
+  - reports `PENDING`, `IN_JOINT_CONSENSUS`, `COMPLETED`, or `UNKNOWN`
+- `reconfigure joint`
+  - applies a bounded joint configuration directly to the prototype membership view and active runtime peer set
+- `reconfigure finalize`
+  - clears the joint-consensus flag while keeping the configured membership
+
+This is not yet a full Java-parity membership implementation. In particular:
+
+- it does not replicate membership changes as real internal Raft log entries yet
+- it does not implement learner catch-up rules or joint-quorum commit mechanics
+- it is a bounded control-plane scaffold for the C++ prototype, not a production-grade reconfiguration engine
+
+But it is enough to exercise the shared protocol and a realistic local flow. In a local smoke run:
+
+```text
+raft_cpp_smoke join-cluster 127.0.0.1 11682 peer-b 127.0.0.1 11683 voter cpp-client
+raft_cpp_smoke join-status 127.0.0.1 11682 peer-b cpp-client
+raft_cpp_smoke reconfigure 127.0.0.1 11682 joint peer-a@127.0.0.1:11681 peer-b@127.0.0.1:11683
+raft_cpp_smoke cluster-summary 127.0.0.1 11682 cpp-client
+raft_cpp_smoke reconfigure 127.0.0.1 11682 finalize peer-a@127.0.0.1:11681 peer-b@127.0.0.1:11683
+raft_cpp_smoke join-status 127.0.0.1 11682 peer-b cpp-client
+```
+
+the observed states were:
+
+```text
+status: PENDING
+```
+
+then:
+
+```text
+status: IN_JOINT_CONSENSUS
+joint_consensus: true
+members: 3
+member[cpp-node] ...
+member[peer-a] ...
+member[peer-b] ...
+```
+
+and finally:
+
+```text
+status: COMPLETED
+joint_consensus: false
+members: 3
+```
+
+So the bounded C++ prototype now has the first real membership-control seam needed for further migration work.
 
 Follower-side query behavior is now also aligned with that model. In a two-node smoke run, querying the passive follower directly returned:
 

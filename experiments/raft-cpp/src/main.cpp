@@ -25,7 +25,11 @@ void print_usage() {
         << "  raft_cpp_smoke cluster-summary <host> <port> [peer-id]\n"
         << "  raft_cpp_smoke telemetry <host> <port> [peer-id]\n"
         << "  raft_cpp_smoke client-put <host> <port> <key> <value> [peer-id]\n"
+        << "  raft_cpp_smoke client-cas <host> <port> <key> <expected-present> <expected-value> <new-value> [peer-id]\n"
         << "  raft_cpp_smoke client-get <host> <port> <key> [peer-id]\n"
+        << "  raft_cpp_smoke join-cluster <host> <port> <joining-peer-id> <join-host> <join-port> [role] [peer-id]\n"
+        << "  raft_cpp_smoke join-status <host> <port> <target-peer-id> [peer-id]\n"
+        << "  raft_cpp_smoke reconfigure <host> <port> <action> <peer-spec>... [peer-id]\n"
         << "  raft_cpp_smoke vote-request <host> <port> <candidate-id> <last-log-index> <last-log-term> [term]\n"
         << "  raft_cpp_smoke append-entries <host> <port> <leader-id> <prev-log-index> <prev-log-term> <leader-commit> [term]\n"
         << "  raft_cpp_smoke install-snapshot <host> <port> <leader-id> <last-included-index> <last-included-term> [term] [snapshot-data]\n"
@@ -57,6 +61,16 @@ std::uint16_t parse_port(const std::string& text) {
 std::int64_t parse_int64(const std::string& text, const std::string&) {
     const auto value = std::stoll(text);
     return static_cast<std::int64_t>(value);
+}
+
+bool parse_bool(const std::string& text, const std::string& field_name) {
+    if (text == "true" || text == "1") {
+        return true;
+    }
+    if (text == "false" || text == "0") {
+        return false;
+    }
+    throw std::runtime_error("invalid boolean for " + field_name + ": " + text);
 }
 
 std::vector<raftcpp::PeerEndpoint> parse_peer_specs(char** argv, int start_index, int argc) {
@@ -256,6 +270,84 @@ int run_client_put(
         << "leader_port: " << response.leader_port() << '\n'
         << "message: " << response.message() << '\n';
 
+    if (response.success() && !response.result().empty()) {
+        raft::StateMachineCommandResult result;
+        if (!result.ParseFromString(response.result())) {
+            throw std::runtime_error("failed to parse StateMachineCommandResult");
+        }
+        if (result.result_case() == raft::StateMachineCommandResult::kCas) {
+            std::cout
+                << "cas.key: " << result.cas().key() << '\n'
+                << "cas.matched: " << (result.cas().matched() ? "true" : "false") << '\n'
+                << "cas.expected_present: " << (result.cas().expected_present() ? "true" : "false") << '\n'
+                << "cas.expected_value: " << result.cas().expected_value() << '\n'
+                << "cas.new_value: " << result.cas().new_value() << '\n'
+                << "cas.current_present: " << (result.cas().current_present() ? "true" : "false") << '\n'
+                << "cas.current_value: " << result.cas().current_value() << '\n';
+        }
+    }
+
+    return response.success() ? 0 : 2;
+}
+
+int run_client_cas(
+    const std::string& host,
+    std::uint16_t port,
+    const std::string& key,
+    bool expected_present,
+    const std::string& expected_value,
+    const std::string& new_value,
+    const std::string& peer_id
+) {
+    boost::asio::io_context io_context;
+    raftcpp::RaftClient client(io_context);
+
+    raft::StateMachineCommand command;
+    auto* cas = command.mutable_cas();
+    cas->set_key(key);
+    cas->set_expected_present(expected_present);
+    cas->set_expected_value(expected_value);
+    cas->set_new_value(new_value);
+
+    raft::ClientCommandRequest request;
+    request.set_term(0);
+    request.set_peer_id(peer_id);
+    request.set_command(command.SerializeAsString());
+
+    const auto response = client.call<raft::ClientCommandRequest, raft::ClientCommandResponse>(
+        host,
+        port,
+        "ClientCommandRequest",
+        request,
+        "ClientCommandResponse"
+    );
+
+    std::cout
+        << "peer_id: " << response.peer_id() << '\n'
+        << "status: " << response.status() << '\n'
+        << "success: " << (response.success() ? "true" : "false") << '\n'
+        << "leader_id: " << response.leader_id() << '\n'
+        << "leader_host: " << response.leader_host() << '\n'
+        << "leader_port: " << response.leader_port() << '\n'
+        << "message: " << response.message() << '\n';
+
+    if (response.success() && !response.result().empty()) {
+        raft::StateMachineCommandResult result;
+        if (!result.ParseFromString(response.result())) {
+            throw std::runtime_error("failed to parse StateMachineCommandResult");
+        }
+        if (result.result_case() == raft::StateMachineCommandResult::kCas) {
+            std::cout
+                << "cas.key: " << result.cas().key() << '\n'
+                << "cas.matched: " << (result.cas().matched() ? "true" : "false") << '\n'
+                << "cas.expected_present: " << (result.cas().expected_present() ? "true" : "false") << '\n'
+                << "cas.expected_value: " << result.cas().expected_value() << '\n'
+                << "cas.new_value: " << result.cas().new_value() << '\n'
+                << "cas.current_present: " << (result.cas().current_present() ? "true" : "false") << '\n'
+                << "cas.current_value: " << result.cas().current_value() << '\n';
+        }
+    }
+
     return response.success() ? 0 : 2;
 }
 
@@ -304,6 +396,116 @@ int run_client_get(
                 << "value: " << result.get().value() << '\n';
         }
     }
+
+    return response.success() ? 0 : 2;
+}
+
+int run_join_cluster(
+    const std::string& host,
+    std::uint16_t port,
+    const std::string& joining_peer_id,
+    const std::string& join_host,
+    std::uint16_t join_port,
+    const std::string& role,
+    const std::string& peer_id
+) {
+    boost::asio::io_context io_context;
+    raftcpp::RaftClient client(io_context);
+
+    raft::JoinClusterRequest request;
+    request.set_term(0);
+    request.set_peer_id(peer_id);
+    request.set_joining_peer_id(joining_peer_id);
+    request.set_host(join_host);
+    request.set_port(join_port);
+    request.set_role(role);
+
+    const auto response = client.call<raft::JoinClusterRequest, raft::JoinClusterResponse>(
+        host,
+        port,
+        "JoinClusterRequest",
+        request,
+        "JoinClusterResponse"
+    );
+
+    std::cout
+        << "peer_id: " << response.peer_id() << '\n'
+        << "status: " << response.status() << '\n'
+        << "success: " << (response.success() ? "true" : "false") << '\n'
+        << "leader_id: " << response.leader_id() << '\n'
+        << "message: " << response.message() << '\n';
+
+    return response.success() ? 0 : 2;
+}
+
+int run_join_status(
+    const std::string& host,
+    std::uint16_t port,
+    const std::string& target_peer_id,
+    const std::string& peer_id
+) {
+    boost::asio::io_context io_context;
+    raftcpp::RaftClient client(io_context);
+
+    raft::JoinClusterStatusRequest request;
+    request.set_term(0);
+    request.set_peer_id(peer_id);
+    request.set_target_peer_id(target_peer_id);
+
+    const auto response = client.call<raft::JoinClusterStatusRequest, raft::JoinClusterStatusResponse>(
+        host,
+        port,
+        "JoinClusterStatusRequest",
+        request,
+        "JoinClusterStatusResponse"
+    );
+
+    std::cout
+        << "peer_id: " << response.peer_id() << '\n'
+        << "status: " << response.status() << '\n'
+        << "success: " << (response.success() ? "true" : "false") << '\n'
+        << "leader_id: " << response.leader_id() << '\n'
+        << "message: " << response.message() << '\n';
+
+    return response.success() ? 0 : 2;
+}
+
+int run_reconfigure(
+    const std::string& host,
+    std::uint16_t port,
+    const std::string& action,
+    std::vector<raftcpp::PeerEndpoint> members,
+    const std::string& peer_id
+) {
+    boost::asio::io_context io_context;
+    raftcpp::RaftClient client(io_context);
+
+    raft::ReconfigureClusterRequest request;
+    request.set_term(0);
+    request.set_peer_id(peer_id);
+    request.set_action(action);
+    for (const auto& member : members) {
+        auto* spec = request.add_members();
+        spec->set_id(member.peer_id);
+        spec->set_host(member.host);
+        spec->set_port(member.port);
+        spec->set_role("voter");
+    }
+
+    const auto response = client.call<raft::ReconfigureClusterRequest, raft::ReconfigureClusterResponse>(
+        host,
+        port,
+        "ReconfigureClusterRequest",
+        request,
+        "ReconfigureClusterResponse"
+    );
+
+    std::cout
+        << "peer_id: " << response.peer_id() << '\n'
+        << "status: " << response.status() << '\n'
+        << "success: " << (response.success() ? "true" : "false") << '\n'
+        << "leader_id: " << response.leader_id() << '\n'
+        << "message: " << response.message() << '\n';
 
     return response.success() ? 0 : 2;
 }
@@ -493,13 +695,43 @@ int run_install_snapshot(
     if (auto in_memory = std::dynamic_pointer_cast<raftcpp::InMemoryRpcHandler>(handler)) {
         configure_handler_endpoints(in_memory, bind_host, port, peer_endpoints);
         in_memory->set_command_replicator([&runtime](const std::string& command) {
+            return runtime.replicate_entry_once_with_result(command);
+        });
+        in_memory->set_internal_command_replicator([&runtime](const std::string& command) {
             return runtime.replicate_entry_once(command) > 0;
+        });
+        in_memory->set_membership_updater([&runtime](const std::vector<std::string>& peer_ids, const std::vector<raftcpp::InMemoryRpcHandler::Endpoint>& endpoints) {
+            std::vector<raftcpp::PeerEndpoint> peers;
+            peers.reserve(peer_ids.size());
+            for (std::size_t i = 0; i < peer_ids.size() && i < endpoints.size(); ++i) {
+                peers.push_back(raftcpp::PeerEndpoint{
+                    .peer_id = peer_ids[i],
+                    .host = endpoints[i].host,
+                    .port = static_cast<std::uint16_t>(endpoints[i].port),
+                });
+            }
+            runtime.configure_peers(std::move(peers));
         });
     }
     if (auto persistent = std::dynamic_pointer_cast<raftcpp::PersistentRpcHandler>(handler)) {
         configure_handler_endpoints(persistent, bind_host, port, peer_endpoints);
         persistent->delegate().set_command_replicator([&runtime](const std::string& command) {
+            return runtime.replicate_entry_once_with_result(command);
+        });
+        persistent->delegate().set_internal_command_replicator([&runtime](const std::string& command) {
             return runtime.replicate_entry_once(command) > 0;
+        });
+        persistent->delegate().set_membership_updater([&runtime](const std::vector<std::string>& peer_ids, const std::vector<raftcpp::InMemoryRpcHandler::Endpoint>& endpoints) {
+            std::vector<raftcpp::PeerEndpoint> peers;
+            peers.reserve(peer_ids.size());
+            for (std::size_t i = 0; i < peer_ids.size() && i < endpoints.size(); ++i) {
+                peers.push_back(raftcpp::PeerEndpoint{
+                    .peer_id = peer_ids[i],
+                    .host = endpoints[i].host,
+                    .port = static_cast<std::uint16_t>(endpoints[i].port),
+                });
+            }
+            runtime.configure_peers(std::move(peers));
         });
     }
 
@@ -963,7 +1195,11 @@ int main(int argc, char** argv) {
             command == "cluster-summary" ||
             command == "telemetry" ||
             command == "client-put" ||
+            command == "client-cas" ||
             command == "client-get" ||
+            command == "join-cluster" ||
+            command == "join-status" ||
+            command == "reconfigure" ||
             command == "vote-request" ||
             command == "append-entries" ||
             command == "install-snapshot" ||
@@ -998,6 +1234,21 @@ int main(int argc, char** argv) {
                 return 1;
             }
             exit_code = run_client_put(host, port, argv[4], argv[5], peer_id_or_default(argc, argv, 6));
+        } else if (command == "client-cas") {
+            if (argc < 8) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_client_cas(
+                host,
+                port,
+                argv[4],
+                parse_bool(argv[5], "expected-present"),
+                argv[6],
+                argv[7],
+                peer_id_or_default(argc, argv, 8)
+            );
         } else if (command == "client-get") {
             if (argc < 5) {
                 print_usage();
@@ -1005,6 +1256,41 @@ int main(int argc, char** argv) {
                 return 1;
             }
             exit_code = run_client_get(host, port, argv[4], peer_id_or_default(argc, argv, 5));
+        } else if (command == "join-cluster") {
+            if (argc < 7) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_join_cluster(
+                host,
+                port,
+                argv[4],
+                argv[5],
+                parse_port(argv[6]),
+                argc > 7 ? argv[7] : "voter",
+                peer_id_or_default(argc, argv, 8)
+            );
+        } else if (command == "join-status") {
+            if (argc < 5) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_join_status(host, port, argv[4], peer_id_or_default(argc, argv, 5));
+        } else if (command == "reconfigure") {
+            if (argc < 6) {
+                print_usage();
+                google::protobuf::ShutdownProtobufLibrary();
+                return 1;
+            }
+            exit_code = run_reconfigure(
+                host,
+                port,
+                argv[4],
+                parse_peer_specs(argv, 5, argc),
+                "cpp-cli"
+            );
         } else if (command == "vote-request") {
             if (argc < 7) {
                 print_usage();

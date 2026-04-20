@@ -25,6 +25,9 @@ public:
     virtual std::optional<raft::ClusterSummaryResponse> on_cluster_summary_request(const raft::ClusterSummaryRequest& request) = 0;
     virtual std::optional<raft::ClientCommandResponse> on_client_command_request(const raft::ClientCommandRequest& request) = 0;
     virtual std::optional<raft::ClientQueryResponse> on_client_query_request(const raft::ClientQueryRequest& request) = 0;
+    virtual std::optional<raft::JoinClusterResponse> on_join_cluster_request(const raft::JoinClusterRequest& request) = 0;
+    virtual std::optional<raft::JoinClusterStatusResponse> on_join_cluster_status_request(const raft::JoinClusterStatusRequest& request) = 0;
+    virtual std::optional<raft::ReconfigureClusterResponse> on_reconfigure_cluster_request(const raft::ReconfigureClusterRequest& request) = 0;
     virtual std::optional<raft::VoteResponse> on_vote_request(const raft::VoteRequest& request) = 0;
     virtual std::optional<raft::AppendEntriesResponse> on_append_entries_request(const raft::AppendEntriesRequest& request) = 0;
     virtual std::optional<raft::InstallSnapshotResponse> on_install_snapshot_request(const raft::InstallSnapshotRequest& request) = 0;
@@ -80,6 +83,36 @@ public:
         return response;
     }
 
+    std::optional<raft::JoinClusterResponse> on_join_cluster_request(const raft::JoinClusterRequest& request) override {
+        raft::JoinClusterResponse response;
+        response.set_term(request.term());
+        response.set_peer_id(peer_id_);
+        response.set_success(false);
+        response.set_status("UNSUPPORTED");
+        response.set_message("stub");
+        return response;
+    }
+
+    std::optional<raft::JoinClusterStatusResponse> on_join_cluster_status_request(const raft::JoinClusterStatusRequest& request) override {
+        raft::JoinClusterStatusResponse response;
+        response.set_term(request.term());
+        response.set_peer_id(peer_id_);
+        response.set_success(false);
+        response.set_status("UNSUPPORTED");
+        response.set_message("stub");
+        return response;
+    }
+
+    std::optional<raft::ReconfigureClusterResponse> on_reconfigure_cluster_request(const raft::ReconfigureClusterRequest& request) override {
+        raft::ReconfigureClusterResponse response;
+        response.set_term(request.term());
+        response.set_peer_id(peer_id_);
+        response.set_success(false);
+        response.set_status("UNSUPPORTED");
+        response.set_message("stub");
+        return response;
+    }
+
     std::optional<raft::VoteResponse> on_vote_request(const raft::VoteRequest& request) override {
         raft::VoteResponse response;
         response.set_peer_id(peer_id_);
@@ -116,11 +149,13 @@ using RpcHandlerPtr = std::shared_ptr<RpcHandler>;
 
 class InMemoryRpcHandler final : public RpcHandler {
 public:
-    using CommandReplicator = std::function<bool(const std::string&)>;
+    using CommandReplicator = std::function<std::optional<std::string>(const std::string&)>;
+    using InternalCommandReplicator = std::function<bool(const std::string&)>;
     struct Endpoint {
         std::string host;
         std::int32_t port;
     };
+    using MembershipUpdater = std::function<void(const std::vector<std::string>&, const std::vector<Endpoint>&)>;
 
     InMemoryRpcHandler(std::string peer_id, std::int64_t current_term, std::int64_t last_log_index, std::int64_t last_log_term)
         : node_(std::make_shared<RaftNode>(RaftNode::Config{
@@ -143,6 +178,14 @@ public:
 
     void set_command_replicator(CommandReplicator replicator) {
         command_replicator_ = std::move(replicator);
+    }
+
+    void set_internal_command_replicator(InternalCommandReplicator replicator) {
+        internal_command_replicator_ = std::move(replicator);
+    }
+
+    void set_membership_updater(MembershipUpdater updater) {
+        membership_updater_ = std::move(updater);
     }
 
     void set_local_endpoint(std::string host, std::int32_t port) {
@@ -179,7 +222,7 @@ public:
         response.set_snapshot_term(node_->snapshot_term());
         response.set_last_heartbeat_millis(0);
         response.set_next_election_deadline_millis(0);
-        response.set_joint_consensus(false);
+        response.set_joint_consensus(node_->joint_consensus());
         response.set_cluster_health("HEALTHY");
         response.set_quorum_available(true);
         response.set_current_quorum_available(true);
@@ -208,7 +251,7 @@ public:
         response.set_status("OK");
         response.set_state(role_to_string(node_->role()));
         response.set_leader_id(node_->leader_id().value_or(""));
-        response.set_joint_consensus(false);
+        response.set_joint_consensus(node_->joint_consensus());
         response.set_cluster_health("HEALTHY");
         response.set_cluster_status_reason("ok");
         response.set_quorum_available(true);
@@ -254,14 +297,17 @@ public:
             return response;
         }
 
-        bool replicated = false;
+        std::optional<std::string> command_result;
         if (command_replicator_) {
-            replicated = command_replicator_(request.command());
+            command_result = command_replicator_(request.command());
         } else {
-            replicated = node_->append_and_commit_local_command(request.command());
+            const auto committed = node_->append_and_commit_local_command(request.command());
+            if (committed.has_value()) {
+                command_result = committed->result;
+            }
         }
 
-        if (!replicated) {
+        if (!command_result.has_value()) {
             response.set_success(false);
             response.set_status("UNSUPPORTED");
             response.set_message("client command replication failed");
@@ -272,6 +318,9 @@ public:
         response.set_status("OK");
         response.set_message("command committed and applied");
         populate_leader_endpoint(response);
+        if (!command_result->empty()) {
+            response.set_result(*command_result);
+        }
         return response;
     }
 
@@ -328,6 +377,163 @@ public:
         if (!result.SerializeToString(response.mutable_result())) {
             throw std::runtime_error("failed to serialize StateMachineQueryResult");
         }
+        return response;
+    }
+
+    std::optional<raft::JoinClusterResponse> on_join_cluster_request(const raft::JoinClusterRequest& request) override {
+        raft::JoinClusterResponse response;
+        response.set_term(node_->current_term());
+        response.set_peer_id(node_->peer_id());
+        response.set_leader_id(node_->leader_id().value_or(""));
+
+        if (node_->role() != RaftNode::Role::leader) {
+            response.set_success(false);
+            response.set_status("NOT_LEADER");
+            response.set_message("join must target leader");
+            return response;
+        }
+
+        if (request.joining_peer_id().empty() || request.host().empty() || request.port() <= 0) {
+            response.set_success(false);
+            response.set_status("BAD_REQUEST");
+            response.set_message("joining peer id, host, and port are required");
+            return response;
+        }
+
+        known_peer_endpoints_[request.joining_peer_id()] = Endpoint{request.host(), request.port()};
+        pending_join_ids_.insert(request.joining_peer_id());
+        response.set_success(true);
+        response.set_status("ACCEPTED");
+        response.set_message("join request recorded");
+        response.set_leader_id(node_->peer_id());
+        return response;
+    }
+
+    std::optional<raft::JoinClusterStatusResponse> on_join_cluster_status_request(const raft::JoinClusterStatusRequest& request) override {
+        raft::JoinClusterStatusResponse response;
+        response.set_term(node_->current_term());
+        response.set_peer_id(node_->peer_id());
+        response.set_leader_id(node_->leader_id().value_or(""));
+
+        if (request.target_peer_id().empty()) {
+            response.set_success(false);
+            response.set_status("BAD_REQUEST");
+            response.set_message("target peer id is required");
+            return response;
+        }
+
+        const auto peers = recovered_peer_ids();
+        if (std::find(peers.begin(), peers.end(), request.target_peer_id()) != peers.end()) {
+            response.set_success(true);
+            response.set_status(node_->joint_consensus() ? "IN_JOINT_CONSENSUS" : "COMPLETED");
+            response.set_message(node_->joint_consensus() ? "peer is part of a joint configuration" : "peer is a configured member");
+            return response;
+        }
+
+        if (pending_join_ids_.contains(request.target_peer_id())) {
+            response.set_success(true);
+            response.set_status("PENDING");
+            response.set_message("join request is recorded");
+            return response;
+        }
+
+        response.set_success(true);
+        response.set_status("UNKNOWN");
+        response.set_message("peer is not known");
+        return response;
+    }
+
+    std::optional<raft::ReconfigureClusterResponse> on_reconfigure_cluster_request(const raft::ReconfigureClusterRequest& request) override {
+        raft::ReconfigureClusterResponse response;
+        response.set_term(node_->current_term());
+        response.set_peer_id(node_->peer_id());
+        response.set_leader_id(node_->leader_id().value_or(""));
+
+        if (node_->role() != RaftNode::Role::leader) {
+            response.set_success(false);
+            response.set_status("NOT_LEADER");
+            response.set_message("reconfigure must target leader");
+            return response;
+        }
+
+        if (request.action() != "joint" && request.action() != "finalize") {
+            response.set_success(false);
+            response.set_status("BAD_REQUEST");
+            response.set_message("supported actions are joint and finalize");
+            return response;
+        }
+
+        if (request.action() == "joint") {
+            if (request.members().empty()) {
+                response.set_success(false);
+                response.set_status("BAD_REQUEST");
+                response.set_message("joint reconfigure requires members");
+                return response;
+            }
+
+            std::vector<std::string> peer_ids;
+            std::vector<Endpoint> endpoints;
+            peer_ids.reserve(request.members_size());
+            endpoints.reserve(request.members_size());
+            for (const auto& member : request.members()) {
+                if (member.id().empty() || member.id() == node_->peer_id()) {
+                    continue;
+                }
+                peer_ids.push_back(member.id());
+                endpoints.push_back(Endpoint{member.host(), member.port()});
+                known_peer_endpoints_[member.id()] = Endpoint{member.host(), member.port()};
+                pending_join_ids_.erase(member.id());
+            }
+
+            raft::InternalRaftCommand internal;
+            bool includes_self = false;
+            for (const auto& member : request.members()) {
+                if (member.id() == node_->peer_id()) {
+                    includes_self = true;
+                }
+                auto* spec = internal.mutable_joint()->add_members();
+                *spec = member;
+            }
+            if (!includes_self) {
+                auto* self = internal.mutable_joint()->add_members();
+                self->set_id(node_->peer_id());
+                if (local_endpoint_.has_value()) {
+                    self->set_host(local_endpoint_->host);
+                    self->set_port(local_endpoint_->port);
+                }
+                self->set_role("voter");
+            }
+            if (!internal_command_replicator_ ||
+                !internal_command_replicator_(RaftNode::encode_internal_command(internal))) {
+                response.set_success(false);
+                response.set_status("RETRY");
+                response.set_message("joint configuration was not committed");
+                return response;
+            }
+            if (membership_updater_) {
+                membership_updater_(peer_ids, endpoints);
+            }
+
+            response.set_success(true);
+            response.set_status("ACCEPTED");
+            response.set_message("joint configuration committed");
+            response.set_leader_id(node_->peer_id());
+            return response;
+        }
+
+        raft::InternalRaftCommand internal;
+        internal.mutable_finalize();
+        if (!internal_command_replicator_ ||
+            !internal_command_replicator_(RaftNode::encode_internal_command(internal))) {
+            response.set_success(false);
+            response.set_status("RETRY");
+            response.set_message("configuration finalize was not committed");
+            return response;
+        }
+        response.set_success(true);
+        response.set_status("ACCEPTED");
+        response.set_message("configuration finalize committed");
+        response.set_leader_id(node_->peer_id());
         return response;
     }
 
@@ -481,8 +687,11 @@ private:
 
     std::shared_ptr<RaftNode> node_;
     CommandReplicator command_replicator_;
+    InternalCommandReplicator internal_command_replicator_;
+    MembershipUpdater membership_updater_;
     std::optional<Endpoint> local_endpoint_;
     std::unordered_map<std::string, Endpoint> known_peer_endpoints_;
+    std::unordered_set<std::string> pending_join_ids_;
 };
 
 class PersistentRpcHandler final : public RpcHandler {
@@ -513,6 +722,22 @@ public:
 
     std::optional<raft::ClientQueryResponse> on_client_query_request(const raft::ClientQueryRequest& request) override {
         return delegate_.on_client_query_request(request);
+    }
+
+    std::optional<raft::JoinClusterResponse> on_join_cluster_request(const raft::JoinClusterRequest& request) override {
+        auto response = delegate_.on_join_cluster_request(request);
+        persist();
+        return response;
+    }
+
+    std::optional<raft::JoinClusterStatusResponse> on_join_cluster_status_request(const raft::JoinClusterStatusRequest& request) override {
+        return delegate_.on_join_cluster_status_request(request);
+    }
+
+    std::optional<raft::ReconfigureClusterResponse> on_reconfigure_cluster_request(const raft::ReconfigureClusterRequest& request) override {
+        auto response = delegate_.on_reconfigure_cluster_request(request);
+        persist();
+        return response;
     }
 
     std::optional<raft::VoteResponse> on_vote_request(const raft::VoteRequest& request) override {
