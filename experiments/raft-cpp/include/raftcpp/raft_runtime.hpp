@@ -85,6 +85,20 @@ public:
         persist();
     }
 
+    void track_peer(PeerEndpoint peer) {
+        if (peer.peer_id.empty()) {
+            throw std::runtime_error("peer id is required");
+        }
+        std::scoped_lock lock(peers_mu_);
+        for (auto& existing : peers_) {
+            if (existing.peer_id == peer.peer_id) {
+                existing = std::move(peer);
+                return;
+            }
+        }
+        peers_.push_back(std::move(peer));
+    }
+
     bool run_election_round() {
         const auto request = node_->start_election();
         persist();
@@ -95,7 +109,7 @@ public:
             << " quorum=" << node_->quorum_size()
             << '\n';
 
-        for (const auto& peer : peers()) {
+        for (const auto& peer : voting_peers()) {
             try {
                 const auto response = client_.call<raft::VoteRequest, raft::VoteResponse>(
                     peer.host,
@@ -167,7 +181,7 @@ public:
         persist();
 
         std::size_t successes = 0;
-        for (const auto& peer : peers_) {
+        for (const auto& peer : peers()) {
             successes += replicate_peer_until_caught_up(peer) ? 1 : 0;
         }
 
@@ -182,6 +196,22 @@ public:
     }
 
 private:
+    std::vector<PeerEndpoint> voting_peers() const {
+        const auto all_peers = peers();
+        const auto voting_ids = node_->voting_peers();
+        std::vector<PeerEndpoint> resolved;
+        resolved.reserve(voting_ids.size());
+        for (const auto& voting_id : voting_ids) {
+            for (const auto& peer : all_peers) {
+                if (peer.peer_id == voting_id) {
+                    resolved.push_back(peer);
+                    break;
+                }
+            }
+        }
+        return resolved;
+    }
+
     bool sync_peer_once(const PeerEndpoint& peer) {
         const auto progress = node_->peer_progress();
         const auto found = progress.find(peer.peer_id);

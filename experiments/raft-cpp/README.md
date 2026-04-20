@@ -651,7 +651,7 @@ The prototype now also has a bounded membership-control path over the shared adm
 
 This is not yet a full Java-parity membership implementation. In particular:
 
-- it does not implement learner catch-up rules or joint-quorum commit mechanics
+- it does not implement full learner-promotion policy or joint-quorum commit mechanics
 - it is a bounded control-plane scaffold for the C++ prototype, not a production-grade reconfiguration engine
 
 But it is enough to exercise the shared protocol and a realistic local flow. In a local smoke run:
@@ -728,6 +728,38 @@ members: 3
 ```
 
 So the bounded C++ prototype now has a real replicated membership-control seam: the leader drives reconfiguration through internal log entries, and followers reflect the committed membership state rather than relying on leader-local handler mutation.
+
+The latest refinement also adds bounded learner-style catch-up before promotion. After `join-cluster`, an admitted peer is now:
+
+- tracked by the active runtime
+- shown in summaries as `voting=false`
+- eligible for normal append/snapshot catch-up even before `reconfigure joint`
+
+In a local smoke run with:
+
+```text
+raft_cpp_smoke join-cluster 127.0.0.1 12082 peer-b 127.0.0.1 12083 voter cpp-client
+raft_cpp_smoke cluster-summary 127.0.0.1 12082 cpp-client
+raft_cpp_smoke client-put 127.0.0.1 12082 k v1 cpp-client
+raft_cpp_smoke dump-state /tmp/cpp-learner-b.state
+```
+
+the leader summary showed the admitted learner as non-voting:
+
+```text
+member[peer-b]: local=false voting=false next_index=9 match_index=8 lag=0
+```
+
+and after a real replicated `put`, the learner persisted:
+
+```text
+peer_id: peer-b
+commit_index: 9
+last_applied: 9
+kv[k]=v1
+```
+
+So the bounded C++ prototype can now admit a peer, keep it out of quorum/elections, and still catch it up on real replicated application state before voter promotion.
 
 Follower-side query behavior is now also aligned with that model. In a two-node smoke run, querying the passive follower directly returned:
 

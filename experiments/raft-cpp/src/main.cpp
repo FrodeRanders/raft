@@ -700,6 +700,13 @@ int run_install_snapshot(
         in_memory->set_internal_command_replicator([&runtime](const std::string& command) {
             return runtime.replicate_entry_once(command) > 0;
         });
+        in_memory->set_join_tracker([&runtime](const std::string& peer_id, const raftcpp::InMemoryRpcHandler::Endpoint& endpoint) {
+            runtime.track_peer(raftcpp::PeerEndpoint{
+                .peer_id = peer_id,
+                .host = endpoint.host,
+                .port = static_cast<std::uint16_t>(endpoint.port),
+            });
+        });
         in_memory->set_membership_updater([&runtime](const std::vector<std::string>& peer_ids, const std::vector<raftcpp::InMemoryRpcHandler::Endpoint>& endpoints) {
             std::vector<raftcpp::PeerEndpoint> peers;
             peers.reserve(peer_ids.size());
@@ -720,6 +727,13 @@ int run_install_snapshot(
         });
         persistent->delegate().set_internal_command_replicator([&runtime](const std::string& command) {
             return runtime.replicate_entry_once(command) > 0;
+        });
+        persistent->delegate().set_join_tracker([&runtime](const std::string& peer_id, const raftcpp::InMemoryRpcHandler::Endpoint& endpoint) {
+            runtime.track_peer(raftcpp::PeerEndpoint{
+                .peer_id = peer_id,
+                .host = endpoint.host,
+                .port = static_cast<std::uint16_t>(endpoint.port),
+            });
         });
         persistent->delegate().set_membership_updater([&runtime](const std::vector<std::string>& peer_ids, const std::vector<raftcpp::InMemoryRpcHandler::Endpoint>& endpoints) {
             std::vector<raftcpp::PeerEndpoint> peers;

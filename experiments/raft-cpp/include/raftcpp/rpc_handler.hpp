@@ -155,6 +155,7 @@ public:
         std::string host;
         std::int32_t port;
     };
+    using JoinTracker = std::function<void(const std::string&, const Endpoint&)>;
     using MembershipUpdater = std::function<void(const std::vector<std::string>&, const std::vector<Endpoint>&)>;
 
     InMemoryRpcHandler(std::string peer_id, std::int64_t current_term, std::int64_t last_log_index, std::int64_t last_log_term)
@@ -182,6 +183,10 @@ public:
 
     void set_internal_command_replicator(InternalCommandReplicator replicator) {
         internal_command_replicator_ = std::move(replicator);
+    }
+
+    void set_join_tracker(JoinTracker tracker) {
+        join_tracker_ = std::move(tracker);
     }
 
     void set_membership_updater(MembershipUpdater updater) {
@@ -414,6 +419,9 @@ public:
             response.set_message("join admission was not committed");
             return response;
         }
+        if (join_tracker_) {
+            join_tracker_(request.joining_peer_id(), Endpoint{request.host(), request.port()});
+        }
         response.set_success(true);
         response.set_status("ACCEPTED");
         response.set_message("join admission committed");
@@ -612,15 +620,24 @@ private:
         }
     }
 
+    bool is_voting_member(const std::string& peer_id) const {
+        if (peer_id == node_->peer_id()) {
+            return true;
+        }
+        const auto voting = node_->voting_peers();
+        return std::find(voting.begin(), voting.end(), peer_id) != voting.end();
+    }
+
     void populate_member(raft::ClusterMemberSummary& member, const std::string& peer_id, bool local, std::int64_t next_index, std::int64_t match_index) const {
+        const bool voting = is_voting_member(peer_id);
         member.set_peer_id(peer_id);
         member.set_local(local);
         member.set_current_member(true);
         member.set_next_member(true);
-        member.set_voting(true);
-        member.set_role("voter");
-        member.set_current_role("voter");
-        member.set_next_role("voter");
+        member.set_voting(voting);
+        member.set_role(voting ? "voter" : "learner");
+        member.set_current_role(voting ? "voter" : "learner");
+        member.set_next_role(voting ? "voter" : "learner");
         member.set_reachable(true);
         member.set_health("healthy");
         member.set_freshness(local ? "current" : "unknown");
@@ -699,6 +716,7 @@ private:
     std::shared_ptr<RaftNode> node_;
     CommandReplicator command_replicator_;
     InternalCommandReplicator internal_command_replicator_;
+    JoinTracker join_tracker_;
     MembershipUpdater membership_updater_;
     std::optional<Endpoint> local_endpoint_;
     std::unordered_map<std::string, Endpoint> known_peer_endpoints_;

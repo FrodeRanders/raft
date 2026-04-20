@@ -790,6 +790,8 @@ private:
         case raft::InternalRaftCommand::kJoin:
             if (!command.join().member().id().empty() && command.join().member().id() != peer_id_) {
                 pending_join_ids_.insert(command.join().member().id());
+                auto& progress = peer_progress_[command.join().member().id()];
+                progress.next_index = std::max<std::int64_t>(1, progress.next_index);
             }
             return true;
         case raft::InternalRaftCommand::kJoint: {
