@@ -24,6 +24,8 @@ struct PeerEndpoint {
 
 class RaftRuntime {
 public:
+    static constexpr std::size_t kMaxReplicationAttempts = 16;
+
     RaftRuntime(boost::asio::io_context& io_context, RaftNode::Config config, std::vector<PeerEndpoint> peers)
         : RaftRuntime(io_context, std::make_shared<RaftNode>(std::move(config)), std::move(peers), {}) {
     }
@@ -145,30 +147,7 @@ public:
 
         std::size_t successes = 0;
         for (const auto& peer : peers_) {
-            const auto request = node_->make_replication_request_for(peer.peer_id);
-            try {
-                const auto response = client_.call<raft::AppendEntriesRequest, raft::AppendEntriesResponse>(
-                    peer.host,
-                    peer.port,
-                    "AppendEntriesRequest",
-                    request,
-                    "AppendEntriesResponse"
-                );
-                if (node_->handle_append_entries_response(peer.peer_id, response)) {
-                    successes += 1;
-                }
-                persist();
-                std::cout
-                    << "replication-response peer=" << peer.peer_id
-                    << " success=" << (response.success() ? "true" : "false")
-                    << " match_index=" << response.match_index()
-                    << '\n';
-            } catch (const std::exception& e) {
-                std::cout
-                    << "replication-response peer=" << peer.peer_id
-                    << " error=" << e.what()
-                    << '\n';
-            }
+            successes += replicate_peer_until_caught_up(peer) ? 1 : 0;
         }
 
         if (node_->commit_index() > initial_commit_index) {
@@ -179,6 +158,87 @@ public:
     }
 
 private:
+    bool replicate_peer_until_caught_up(const PeerEndpoint& peer) {
+        const auto target_index = node_->last_log_index();
+        for (std::size_t attempt = 1; attempt <= kMaxReplicationAttempts; ++attempt) {
+            const auto progress = node_->peer_progress();
+            const auto found = progress.find(peer.peer_id);
+            const auto next_index = found != progress.end() ? found->second.next_index : (target_index + 1);
+            if (node_->snapshot_index() > 0 && next_index <= node_->snapshot_index()) {
+                if (!send_snapshot_to_peer(peer, attempt)) {
+                    return false;
+                }
+                continue;
+            }
+
+            const auto request = node_->make_replication_request_for(peer.peer_id);
+            try {
+                const auto response = client_.call<raft::AppendEntriesRequest, raft::AppendEntriesResponse>(
+                    peer.host,
+                    peer.port,
+                    "AppendEntriesRequest",
+                    request,
+                    "AppendEntriesResponse"
+                );
+                const auto advanced = node_->handle_append_entries_response(peer.peer_id, response);
+                persist();
+                std::cout
+                    << "replication-response peer=" << peer.peer_id
+                    << " attempt=" << attempt
+                    << " success=" << (response.success() ? "true" : "false")
+                    << " match_index=" << response.match_index()
+                    << '\n';
+
+                if (response.success() && response.match_index() >= target_index) {
+                    return true;
+                }
+                if (!response.success() && !advanced) {
+                    continue;
+                }
+            } catch (const std::exception& e) {
+                std::cout
+                    << "replication-response peer=" << peer.peer_id
+                    << " attempt=" << attempt
+                    << " error=" << e.what()
+                    << '\n';
+                return false;
+            }
+        }
+
+        const auto progress = node_->peer_progress();
+        const auto found = progress.find(peer.peer_id);
+        return found != progress.end() && found->second.match_index >= target_index;
+    }
+
+    bool send_snapshot_to_peer(const PeerEndpoint& peer, std::size_t attempt) {
+        const auto request = node_->make_install_snapshot_request_for(peer.peer_id);
+        try {
+            const auto response = client_.call<raft::InstallSnapshotRequest, raft::InstallSnapshotResponse>(
+                peer.host,
+                peer.port,
+                "InstallSnapshotRequest",
+                request,
+                "InstallSnapshotResponse"
+            );
+            const auto advanced = node_->handle_install_snapshot_response(peer.peer_id, response);
+            persist();
+            std::cout
+                << "snapshot-response peer=" << peer.peer_id
+                << " attempt=" << attempt
+                << " success=" << (response.success() ? "true" : "false")
+                << " last_included_index=" << response.last_included_index()
+                << '\n';
+            return advanced;
+        } catch (const std::exception& e) {
+            std::cout
+                << "snapshot-response peer=" << peer.peer_id
+                << " attempt=" << attempt
+                << " error=" << e.what()
+                << '\n';
+            return false;
+        }
+    }
+
     void persist() {
         if (persist_callback_) {
             persist_callback_(*node_);

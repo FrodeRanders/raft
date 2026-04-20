@@ -25,7 +25,7 @@ void print_usage() {
         << "  raft_cpp_smoke telemetry <host> <port> [peer-id]\n"
         << "  raft_cpp_smoke vote-request <host> <port> <candidate-id> <last-log-index> <last-log-term> [term]\n"
         << "  raft_cpp_smoke append-entries <host> <port> <leader-id> <prev-log-index> <prev-log-term> <leader-commit> [term]\n"
-        << "  raft_cpp_smoke install-snapshot <host> <port> <leader-id> <last-included-index> <last-included-term> [term]\n"
+        << "  raft_cpp_smoke install-snapshot <host> <port> <leader-id> <last-included-index> <last-included-term> [term] [snapshot-data]\n"
         << "  raft_cpp_smoke serve <bind-host> <port> <peer-id> [current-term]\n"
         << "  raft_cpp_smoke serve-stateful <bind-host> <port> <peer-id> [current-term] [last-log-index] [last-log-term]\n"
         << "  raft_cpp_smoke serve-persistent <bind-host> <port> <peer-id> <state-file> [current-term] [last-log-index] [last-log-term]\n"
@@ -256,7 +256,8 @@ int run_install_snapshot(
     const std::string& leader_id,
     std::int64_t last_included_index,
     std::int64_t last_included_term,
-    std::int64_t term
+    std::int64_t term,
+    const std::string& snapshot_data
 ) {
     boost::asio::io_context io_context;
     raftcpp::RaftClient client(io_context);
@@ -268,7 +269,7 @@ int run_install_snapshot(
     request.set_last_included_term(last_included_term);
     request.set_offset(0);
     request.set_done(true);
-    request.set_snapshot_data(std::string{});
+    request.set_snapshot_data(snapshot_data);
 
     const auto response = client.call<raft::InstallSnapshotRequest, raft::InstallSnapshotResponse>(
         host,
@@ -282,7 +283,8 @@ int run_install_snapshot(
         << "peer_id: " << response.peer_id() << '\n'
         << "term: " << response.term() << '\n'
         << "success: " << (response.success() ? "true" : "false") << '\n'
-        << "last_included_index: " << response.last_included_index() << '\n';
+        << "last_included_index: " << response.last_included_index() << '\n'
+        << "snapshot_data_size: " << snapshot_data.size() << '\n';
 
     return 0;
 }
@@ -777,7 +779,8 @@ int main(int argc, char** argv) {
                 argv[4],
                 parse_int64(argv[5], "last-included-index"),
                 parse_int64(argv[6], "last-included-term"),
-                argc > 7 ? parse_int64(argv[7], "term") : 0
+                argc > 7 ? parse_int64(argv[7], "term") : 0,
+                argc > 8 ? argv[8] : std::string{}
             );
         } else if (command == "serve") {
             if (argc < 5) {

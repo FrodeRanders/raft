@@ -55,6 +55,7 @@ public:
         std::int64_t commit_index{0};
         std::int64_t snapshot_index{0};
         std::int64_t snapshot_term{0};
+        std::string snapshot_data;
         std::int64_t previous_log_index{0};
         std::int64_t previous_log_term{0};
         std::string last_entry_data;
@@ -75,6 +76,7 @@ public:
           previous_log_term_(config.last_log_term),
           last_activity_(std::chrono::steady_clock::now()),
           voting_peers_(std::move(config.voting_peers)) {
+        seed_bootstrap_log_locked();
         normalize_voting_peers_locked();
         reset_peer_progress_locked();
     }
@@ -166,9 +168,14 @@ public:
             if (request.done()) {
                 snapshot_index_ = request.last_included_index();
                 snapshot_term_ = request.last_included_term();
+                snapshot_data_ = request.snapshot_data();
+                truncate_prefix_up_to_locked(snapshot_index_);
                 if (last_log_index_ < snapshot_index_) {
                     last_log_index_ = snapshot_index_;
                     last_log_term_ = snapshot_term_;
+                    previous_log_index_ = snapshot_index_;
+                    previous_log_term_ = snapshot_term_;
+                    last_entry_data_.clear();
                 }
                 commit_index_ = std::max(commit_index_, snapshot_index_);
             }
@@ -345,6 +352,42 @@ public:
         return false;
     }
 
+    raft::InstallSnapshotRequest make_install_snapshot_request_for(const std::string& peer_id) const {
+        std::scoped_lock lock(mu_);
+        (void)peer_id;
+
+        raft::InstallSnapshotRequest request;
+        request.set_term(current_term_);
+        request.set_leader_id(this->peer_id_);
+        request.set_last_included_index(snapshot_index_);
+        request.set_last_included_term(snapshot_term_);
+        request.set_offset(0);
+        request.set_done(true);
+        request.set_snapshot_data(snapshot_data_);
+        return request;
+    }
+
+    bool handle_install_snapshot_response(const std::string& peer_id, const raft::InstallSnapshotResponse& response) {
+        std::scoped_lock lock(mu_);
+
+        if (response.term() > current_term_) {
+            step_down_locked(response.term(), std::nullopt);
+            return false;
+        }
+        if (role_ != Role::leader || response.term() != current_term_) {
+            return false;
+        }
+
+        if (!response.success()) {
+            return false;
+        }
+
+        auto& progress = peer_progress_[peer_id];
+        progress.match_index = std::max(progress.match_index, response.last_included_index());
+        progress.next_index = std::max(progress.next_index, response.last_included_index() + 1);
+        return true;
+    }
+
     std::int64_t append_local_entry(std::string data) {
         std::scoped_lock lock(mu_);
         previous_log_index_ = last_log_index_;
@@ -440,6 +483,11 @@ public:
         return snapshot_term_;
     }
 
+    std::string snapshot_data() const {
+        std::scoped_lock lock(mu_);
+        return snapshot_data_;
+    }
+
     std::optional<std::string> leader_id() const {
         std::scoped_lock lock(mu_);
         return leader_id_;
@@ -463,6 +511,7 @@ public:
             .commit_index = commit_index_,
             .snapshot_index = snapshot_index_,
             .snapshot_term = snapshot_term_,
+            .snapshot_data = snapshot_data_,
             .previous_log_index = previous_log_index_,
             .previous_log_term = previous_log_term_,
             .last_entry_data = last_entry_data_,
@@ -483,10 +532,14 @@ public:
         commit_index_ = state.commit_index;
         snapshot_index_ = state.snapshot_index;
         snapshot_term_ = state.snapshot_term;
+        snapshot_data_ = state.snapshot_data;
         previous_log_index_ = state.previous_log_index;
         previous_log_term_ = state.previous_log_term;
         last_entry_data_ = state.last_entry_data;
         log_entries_ = state.log_entries;
+        if (log_entries_.empty()) {
+            seed_bootstrap_log_locked();
+        }
         role_ = leader_id_.has_value() && *leader_id_ == peer_id_ ? Role::leader : Role::follower;
         last_activity_ = std::chrono::steady_clock::now();
         normalize_voting_peers_locked();
@@ -508,6 +561,30 @@ public:
     }
 
 private:
+    void seed_bootstrap_log_locked() {
+        if (!log_entries_.empty() || last_log_index_ <= snapshot_index_) {
+            return;
+        }
+        log_entries_.reserve(static_cast<std::size_t>(std::max<std::int64_t>(0, last_log_index_ - snapshot_index_)));
+        for (std::int64_t index = snapshot_index_ + 1; index <= last_log_index_; ++index) {
+            log_entries_.push_back(LogEntryRecord{
+                .index = index,
+                .term = last_log_term_,
+                .data = "bootstrap-" + std::to_string(index),
+            });
+        }
+        if (!log_entries_.empty()) {
+            last_entry_data_ = log_entries_.back().data;
+            if (log_entries_.size() >= 2) {
+                previous_log_index_ = log_entries_[log_entries_.size() - 2].index;
+                previous_log_term_ = log_entries_[log_entries_.size() - 2].term;
+            } else {
+                previous_log_index_ = snapshot_index_;
+                previous_log_term_ = snapshot_term_;
+            }
+        }
+    }
+
     void normalize_voting_peers_locked() {
         std::vector<std::string> normalized;
         normalized.reserve(voting_peers_.size());
@@ -646,6 +723,36 @@ private:
         }
     }
 
+    void truncate_prefix_up_to_locked(std::int64_t index) {
+        if (index <= 0) {
+            return;
+        }
+        log_entries_.erase(
+            std::remove_if(log_entries_.begin(), log_entries_.end(), [index](const auto& entry) {
+                return entry.index <= index;
+            }),
+            log_entries_.end()
+        );
+        if (log_entries_.empty()) {
+            last_log_index_ = std::max(last_log_index_, snapshot_index_);
+            last_log_term_ = (last_log_index_ == snapshot_index_) ? snapshot_term_ : last_log_term_;
+            previous_log_index_ = snapshot_index_;
+            previous_log_term_ = snapshot_term_;
+            if (last_log_index_ == snapshot_index_) {
+                last_entry_data_.clear();
+            }
+            return;
+        }
+
+        if (log_entries_.front().index == snapshot_index_ + 1) {
+            previous_log_index_ = snapshot_index_;
+            previous_log_term_ = snapshot_term_;
+        }
+        last_log_index_ = log_entries_.back().index;
+        last_log_term_ = log_entries_.back().term;
+        last_entry_data_ = log_entries_.back().data;
+    }
+
     void step_down_locked(std::int64_t new_term, std::optional<std::string> leader_id) {
         current_term_ = new_term;
         role_ = Role::follower;
@@ -667,6 +774,7 @@ private:
     std::int64_t commit_index_;
     std::int64_t snapshot_index_;
     std::int64_t snapshot_term_;
+    std::string snapshot_data_;
     std::int64_t previous_log_index_;
     std::int64_t previous_log_term_;
     std::string last_entry_data_;

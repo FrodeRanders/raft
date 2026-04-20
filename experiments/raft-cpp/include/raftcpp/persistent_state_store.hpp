@@ -42,6 +42,7 @@ public:
         out << "commit_index=" << state.commit_index << '\n';
         out << "snapshot_index=" << state.snapshot_index << '\n';
         out << "snapshot_term=" << state.snapshot_term << '\n';
+        out << "snapshot_data=" << escape(state.snapshot_data) << '\n';
         out << "previous_log_index=" << state.previous_log_index << '\n';
         out << "previous_log_term=" << state.previous_log_term << '\n';
         out << "last_entry_data=" << escape(state.last_entry_data) << '\n';
@@ -92,6 +93,8 @@ public:
                 state.snapshot_index = std::stoll(value);
             } else if (key == "snapshot_term") {
                 state.snapshot_term = std::stoll(value);
+            } else if (key == "snapshot_data") {
+                state.snapshot_data = value;
             } else if (key == "previous_log_index") {
                 state.previous_log_index = std::stoll(value);
             } else if (key == "previous_log_term") {
