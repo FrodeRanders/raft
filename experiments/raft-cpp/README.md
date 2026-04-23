@@ -46,6 +46,13 @@ This is enough to establish the wire-level interoperability path before migratin
 
 There is also a disconnected Java-side probe under [java-probe/README.md](java-probe/README.md) which reuses the existing Netty transport client to send real Java-originated Raft RPCs into the C++ endpoint.
 
+The experiment now also includes a bounded mixed Java/C++ replicated-node smoke:
+
+- one real Java KV peer using the existing adapter/runtime stack
+- one active persistent C++ peer
+- Java client requests sent through the shared client API into the C++ leader
+- Java follower verification through shared telemetry and redirect responses
+
 ## Why Boost.Asio
 
 The Java implementation uses Netty, but Netty is only the transport substrate. The actual on-the-wire protocol is:
@@ -121,6 +128,7 @@ experiments/raft-cpp/build/raft_cpp_smoke replicate-put-persistent cpp-node /tmp
 experiments/raft-cpp/build/raft_cpp_smoke compact-snapshot cpp-node /tmp/cpp-node.state 8 compact-alpha 3 8 3
 experiments/raft-cpp/build/raft_cpp_smoke dump-state /tmp/cpp-node.state
 experiments/raft-cpp/run-interop-smoke.sh
+experiments/raft-cpp/run-mixed-smoke.sh
 ```
 
 Optional peer id override:
@@ -209,6 +217,15 @@ For the bounded prototype, queries operate on the applied KV state with leader-o
 - active leaders replicate them through the existing distributed runtime
 
 The remaining gap is broader cluster-grade behavior such as redirect host/port metadata, retries, and richer client semantics, not the basic replicated command path itself.
+
+For a bounded mixed-language validation path, `run-mixed-smoke.sh` now proves:
+
+- Java client -> C++ leader `client-put`
+- Java client -> C++ leader `client-get`
+- Java follower telemetry under a C++ leader
+- Java follower redirect metadata for query and cluster-summary
+
+This is still a smoke-level scenario, not a full mixed-language cluster test suite, but it moves the experiment beyond raw RPC compatibility and into one real replicated-node path.
 
 The stateful and active C++ servers now also answer the existing admin probes:
 

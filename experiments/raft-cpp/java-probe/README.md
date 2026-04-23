@@ -2,7 +2,15 @@
 
 This is a disconnected Java-side interoperability probe for the C++ transport experiment.
 
-It reuses the existing Java Netty transport client and sends real Raft RPCs to a target endpoint, which is useful for verifying that the C++ listener can decode and answer Java-originated messages.
+It reuses the existing Java transport/runtime stack in two ways:
+
+- `InteropProbe` sends real Java-originated requests to a target endpoint
+- `JavaPeerMain` starts one bounded Java KV peer that can participate in a mixed Java/C++ smoke
+
+That makes this directory useful for both:
+
+- RPC interoperability checks against the C++ endpoint
+- one bounded replicated-node check with a Java follower and a C++ leader
 
 ## Commands
 
@@ -10,6 +18,11 @@ It reuses the existing Java Netty transport client and sends real Raft RPCs to a
 ../run-java-probe.sh vote-request <host> <port> <candidate-id> <last-log-index> <last-log-term> [term]
 ../run-java-probe.sh append-entries <host> <port> <leader-id> <prev-log-index> <prev-log-term> <leader-commit> [term]
 ../run-java-probe.sh install-snapshot <host> <port> <leader-id> <last-included-index> <last-included-term> [term]
+../run-java-probe.sh client-put <host> <port> <key> <value> [peer-id]
+../run-java-probe.sh client-get <host> <port> <key> [peer-id]
+../run-java-probe.sh telemetry <host> <port> [require-leader-summary]
+../run-java-probe.sh cluster-summary <host> <port>
+../run-java-peer.sh <peer-id> <host> <port> <timeout-millis> <data-dir> [peer-id@host:port ...] [--join-seed <peer-id@host:port>]
 ```
 
 ## Prerequisite
@@ -30,6 +43,19 @@ For the current end-to-end mixed-language check, use:
 
 ```text
 ../run-interop-smoke.sh
+../run-mixed-smoke.sh
 ```
 
-That script starts the C++ stateful server, runs the Java probe commands against it, and tears the server down afterward.
+`run-interop-smoke.sh` starts the C++ stateful server, runs Java probe commands against it, and tears the server down afterward.
+
+`run-mixed-smoke.sh` starts:
+
+- one real Java KV peer
+- one active persistent C++ peer
+
+and then verifies a bounded replicated-node scenario:
+
+- Java client command to the C++ leader
+- successful Java client read from the C++ leader
+- Java follower telemetry showing replicated/committed progress under the C++ leader
+- Java follower redirect behavior for client query and cluster-summary

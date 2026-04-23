@@ -18,6 +18,11 @@
     <dependencies>
         <dependency>
             <groupId>org.gautelis</groupId>
+            <artifactId>raft-app-kv</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.gautelis</groupId>
             <artifactId>raft-wire</artifactId>
             <version>${project.version}</version>
         </dependency>
@@ -56,7 +61,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.5.0</version>
                 <configuration>
-                    <mainClass>org.gautelis.raft.experiments.cpp.InteropProbe</mainClass>
+                    <mainClass>${exec.mainClass}</mainClass>
                 </configuration>
             </plugin>
         </plugins>
