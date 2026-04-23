@@ -42,7 +42,10 @@ target_link_libraries(raftcpp_proto PUBLIC
 )
 
 add_library(raftcpp_transport STATIC
+    src/persistent_state_store.cpp
     src/raft_node.cpp
+    src/raft_runtime.cpp
+    src/raft_server.cpp
     src/rpc_handler.cpp
 )
 
