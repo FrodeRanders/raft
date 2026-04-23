@@ -76,4 +76,19 @@ and then verifies a bounded replicated-node scenario:
 - learner promotion through the Java leader
 - verification that the promoted C++ member becomes voting and continues replicating state
 
-`run-mixed-suite.sh` runs both bounded mixed-language scenarios serially.
+`run-mixed-membership-cpp-leader-smoke.sh` exercises the opposite membership direction:
+
+- C++ leader with one C++ voting follower
+- admission of a Java node as learner
+- learner catch-up on real replicated KV state before promotion
+- joint and finalized membership changes replicated from the C++ leader
+- verification that the promoted Java member stays caught up and redirects reads to the C++ leader
+
+`run-mixed-snapshot-smoke.sh` exercises bounded snapshot-backed recovery:
+
+- C++ leader with a low local snapshot threshold
+- Java follower taken offline so it falls behind
+- C++ leader continues committing writes and compacts locally
+- restarted Java follower catches up through snapshot-backed replication
+
+`run-mixed-suite.sh` runs the bounded mixed-language scenarios serially.

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -406,12 +408,31 @@ public:
         }
 
         known_peer_endpoints_[request.joining_peer_id()] = Endpoint{request.host(), request.port()};
+        if (node_->has_pending_join(request.joining_peer_id())) {
+            if (join_tracker_) {
+                join_tracker_(request.joining_peer_id(), Endpoint{request.host(), request.port()});
+            }
+            response.set_success(true);
+            response.set_status("PENDING");
+            response.set_message("join admission already recorded");
+            response.set_leader_id(node_->peer_id());
+            return response;
+        }
+        const auto configured_peers = node_->voting_peers();
+        if (std::find(configured_peers.begin(), configured_peers.end(), request.joining_peer_id()) != configured_peers.end()) {
+            response.set_success(true);
+            response.set_status("COMPLETED");
+            response.set_message("peer is already a configured member");
+            response.set_leader_id(node_->peer_id());
+            return response;
+        }
+
         raft::InternalRaftCommand internal;
         auto* member = internal.mutable_join()->mutable_member();
         member->set_id(request.joining_peer_id());
         member->set_host(request.host());
         member->set_port(request.port());
-        member->set_role(request.role().empty() ? "voter" : request.role());
+        member->set_role(request.role().empty() ? "VOTER" : normalize_peer_role(request.role()));
         if (!internal_command_replicator_ ||
             !internal_command_replicator_(RaftNode::encode_internal_command(internal))) {
             response.set_success(false);
@@ -442,18 +463,18 @@ public:
             return response;
         }
 
+        if (node_->has_pending_join(request.target_peer_id())) {
+            response.set_success(true);
+            response.set_status("PENDING");
+            response.set_message("join request is recorded");
+            return response;
+        }
+
         const auto peers = recovered_peer_ids();
         if (std::find(peers.begin(), peers.end(), request.target_peer_id()) != peers.end()) {
             response.set_success(true);
             response.set_status(node_->joint_consensus() ? "IN_JOINT_CONSENSUS" : "COMPLETED");
             response.set_message(node_->joint_consensus() ? "peer is part of a joint configuration" : "peer is a configured member");
-            return response;
-        }
-
-        if (node_->has_pending_join(request.target_peer_id())) {
-            response.set_success(true);
-            response.set_status("PENDING");
-            response.set_message("join request is recorded");
             return response;
         }
 
@@ -520,7 +541,7 @@ public:
                     self->set_host(local_endpoint_->host);
                     self->set_port(local_endpoint_->port);
                 }
-                self->set_role("voter");
+                self->set_role("VOTER");
             }
             if (!internal_command_replicator_ ||
                 !internal_command_replicator_(RaftNode::encode_internal_command(internal))) {
@@ -569,6 +590,13 @@ public:
     std::shared_ptr<RaftNode> node_ptr() { return node_; }
 
 private:
+    static std::string normalize_peer_role(std::string role) {
+        std::transform(role.begin(), role.end(), role.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::toupper(ch));
+        });
+        return role;
+    }
+
     std::vector<std::string> recovered_peer_ids() const {
         std::vector<std::string> peer_ids = node_->voting_peers();
         std::unordered_set<std::string> seen(peer_ids.begin(), peer_ids.end());
@@ -595,13 +623,13 @@ private:
     void add_peer_specs(raft::TelemetryResponse& response) const {
         auto* local = response.add_current_members();
         local->set_id(node_->peer_id());
-        local->set_role(node_->role() == RaftNode::Role::leader ? "voter" : "voter");
+        local->set_role("VOTER");
         auto* local_known = response.add_known_peers();
         *local_known = *local;
         for (const auto& peer_id : recovered_peer_ids()) {
             auto* peer = response.add_current_members();
             peer->set_id(peer_id);
-            peer->set_role("voter");
+            peer->set_role("VOTER");
             auto* known = response.add_known_peers();
             *known = *peer;
         }
@@ -635,9 +663,9 @@ private:
         member.set_current_member(true);
         member.set_next_member(true);
         member.set_voting(voting);
-        member.set_role(voting ? "voter" : "learner");
-        member.set_current_role(voting ? "voter" : "learner");
-        member.set_next_role(voting ? "voter" : "learner");
+        member.set_role(voting ? "VOTER" : "LEARNER");
+        member.set_current_role(voting ? "VOTER" : "LEARNER");
+        member.set_next_role(voting ? "VOTER" : "LEARNER");
         member.set_reachable(true);
         member.set_health("healthy");
         member.set_freshness(local ? "current" : "unknown");

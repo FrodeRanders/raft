@@ -15,4 +15,12 @@ echo "==> Scenario 3: Java leader admits and promotes C++ learner"
 ./run-mixed-membership-smoke.sh
 
 echo
+echo "==> Scenario 4: C++ leader admits and promotes Java learner"
+./run-mixed-membership-cpp-leader-smoke.sh
+
+echo
+echo "==> Scenario 5: C++ leader snapshot catch-up to lagged Java follower"
+./run-mixed-snapshot-smoke.sh
+
+echo
 echo "Mixed Java/C++ suite passed."

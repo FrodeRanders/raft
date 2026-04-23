@@ -54,6 +54,8 @@ The experiment now also includes a bounded mixed Java/C++ replicated-node smoke:
 - Java follower verification through shared telemetry and redirect responses
 - the reverse direction with a Java leader and persistent C++ follower
 - a bounded mixed-language membership flow with a Java leader and C++ learner promotion
+- a bounded mixed-language membership flow with a C++ leader and Java learner promotion
+- a bounded mixed-language snapshot catch-up flow with a C++ leader and lagged Java follower
 
 ## Why Boost.Asio
 
@@ -133,6 +135,7 @@ experiments/raft-cpp/run-interop-smoke.sh
 experiments/raft-cpp/run-mixed-smoke.sh
 experiments/raft-cpp/run-mixed-smoke-java-leader.sh
 experiments/raft-cpp/run-mixed-membership-smoke.sh
+experiments/raft-cpp/run-mixed-snapshot-smoke.sh
 experiments/raft-cpp/run-mixed-suite.sh
 ```
 
@@ -245,7 +248,22 @@ For a bounded mixed-language validation path, `run-mixed-smoke.sh` now proves:
 - promotion to voting membership through the Java leader
 - continued replicated-state application on the promoted C++ member
 
-`run-mixed-suite.sh` runs both scenarios serially.
+`run-mixed-membership-cpp-leader-smoke.sh` proves the opposite membership direction:
+
+- C++ leader with one C++ voter
+- admission of a Java node as learner
+- learner catch-up before promotion
+- joint and finalized membership changes replicated from the C++ leader
+- continued replicated-state application on the promoted Java member
+
+`run-mixed-snapshot-smoke.sh` proves one bounded mixed-language recovery path:
+
+- C++ leader compaction with a low local snapshot threshold
+- Java follower goes offline and falls behind
+- C++ leader continues committing writes while the follower is down
+- restarted Java follower catches up through snapshot-backed recovery
+
+`run-mixed-suite.sh` runs the mixed replicated-node, membership, and snapshot scenarios serially.
 
 This is still smoke-level validation, not a full mixed-language cluster test suite, but it moves the experiment beyond raw RPC compatibility and into real replicated-node paths in both directions.
 

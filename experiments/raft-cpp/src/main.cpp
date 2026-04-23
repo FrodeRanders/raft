@@ -1,6 +1,7 @@
 #include <boost/asio.hpp>
-#include <cstdint>
 #include <chrono>
+#include <cctype>
+#include <cstdint>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -71,6 +72,13 @@ bool parse_bool(const std::string& text, const std::string& field_name) {
         return false;
     }
     throw std::runtime_error("invalid boolean for " + field_name + ": " + text);
+}
+
+std::string normalize_peer_role(std::string role) {
+    std::transform(role.begin(), role.end(), role.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::toupper(ch));
+    });
+    return role;
 }
 
 std::vector<raftcpp::PeerEndpoint> parse_peer_specs(char** argv, int start_index, int argc) {
@@ -418,7 +426,7 @@ int run_join_cluster(
     request.set_joining_peer_id(joining_peer_id);
     request.set_host(join_host);
     request.set_port(join_port);
-    request.set_role(role);
+    request.set_role(normalize_peer_role(role));
 
     const auto response = client.call<raft::JoinClusterRequest, raft::JoinClusterResponse>(
         host,
@@ -489,7 +497,7 @@ int run_reconfigure(
         spec->set_id(member.peer_id);
         spec->set_host(member.host);
         spec->set_port(member.port);
-        spec->set_role("voter");
+        spec->set_role("VOTER");
     }
 
     const auto response = client.call<raft::ReconfigureClusterRequest, raft::ReconfigureClusterResponse>(
@@ -1282,7 +1290,7 @@ int main(int argc, char** argv) {
                 argv[4],
                 argv[5],
                 parse_port(argv[6]),
-                argc > 7 ? argv[7] : "voter",
+                argc > 7 ? argv[7] : "VOTER",
                 peer_id_or_default(argc, argv, 8)
             );
         } else if (command == "join-status") {
