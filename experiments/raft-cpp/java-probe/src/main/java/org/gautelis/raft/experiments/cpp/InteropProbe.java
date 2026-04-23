@@ -7,11 +7,17 @@ import org.gautelis.raft.protocol.ClientQueryResponse;
 import org.gautelis.raft.protocol.ClusterMemberSummary;
 import org.gautelis.raft.protocol.ClusterSummaryRequest;
 import org.gautelis.raft.protocol.ClusterSummaryResponse;
+import org.gautelis.raft.protocol.JoinClusterRequest;
+import org.gautelis.raft.protocol.JoinClusterResponse;
+import org.gautelis.raft.protocol.JoinClusterStatusRequest;
+import org.gautelis.raft.protocol.JoinClusterStatusResponse;
 import org.gautelis.raft.protocol.AppendEntriesRequest;
 import org.gautelis.raft.protocol.AppendEntriesResponse;
 import org.gautelis.raft.protocol.InstallSnapshotRequest;
 import org.gautelis.raft.protocol.InstallSnapshotResponse;
 import org.gautelis.raft.protocol.Peer;
+import org.gautelis.raft.protocol.ReconfigureClusterRequest;
+import org.gautelis.raft.protocol.ReconfigureClusterResponse;
 import org.gautelis.raft.protocol.StateMachineCommand;
 import org.gautelis.raft.protocol.StateMachineCommandResult;
 import org.gautelis.raft.protocol.StateMachineQuery;
@@ -54,6 +60,9 @@ public final class InteropProbe {
                 case "client-get" -> runClientGet(client, target, args);
                 case "telemetry" -> runTelemetry(client, target, args);
                 case "cluster-summary" -> runClusterSummary(client, target, args);
+                case "join-cluster" -> runJoinCluster(client, target, args);
+                case "join-status" -> runJoinStatus(client, target, args);
+                case "reconfigure" -> runReconfigure(client, target, args);
                 default -> {
                     usage();
                     System.exit(1);
@@ -222,6 +231,95 @@ public final class InteropProbe {
         }
     }
 
+    private static void runJoinCluster(RaftTransportClient client, Peer target, String[] args) throws Exception {
+        if (args.length < 4) {
+            usage();
+            System.exit(1);
+            return;
+        }
+
+        Peer joining = parsePeer(args[3]);
+        String peerId = args.length > 4 ? args[4] : "java-probe";
+
+        JoinClusterResponse response = client
+                .sendJoinClusterRequest(target, new JoinClusterRequest(0L, peerId, joining))
+                .get(5, TimeUnit.SECONDS);
+
+        System.out.println("peerId: " + response.getPeerId());
+        System.out.println("status: " + response.getStatus());
+        System.out.println("success: " + response.isSuccess());
+        System.out.println("leaderId: " + response.getLeaderId());
+        System.out.println("message: " + response.getMessage());
+    }
+
+    private static void runJoinStatus(RaftTransportClient client, Peer target, String[] args) throws Exception {
+        if (args.length < 4) {
+            usage();
+            System.exit(1);
+            return;
+        }
+
+        String targetPeerId = args[3];
+        String peerId = args.length > 4 ? args[4] : "java-probe";
+
+        JoinClusterStatusResponse response = client
+                .sendJoinClusterStatusRequest(target, new JoinClusterStatusRequest(0L, peerId, targetPeerId))
+                .get(5, TimeUnit.SECONDS);
+
+        System.out.println("peerId: " + response.getPeerId());
+        System.out.println("status: " + response.getStatus());
+        System.out.println("success: " + response.isSuccess());
+        System.out.println("leaderId: " + response.getLeaderId());
+        System.out.println("message: " + response.getMessage());
+    }
+
+    private static void runReconfigure(RaftTransportClient client, Peer target, String[] args) throws Exception {
+        if (args.length < 4) {
+            usage();
+            System.exit(1);
+            return;
+        }
+
+        ReconfigureClusterRequest.Action action = ReconfigureClusterRequest.Action.valueOf(args[3].trim().toUpperCase());
+        List<Peer> members = new java.util.ArrayList<>();
+        for (int i = 4; i < args.length; i++) {
+            members.add(parsePeer(args[i]));
+        }
+
+        ReconfigureClusterResponse response = client
+                .sendReconfigureClusterRequest(target, new ReconfigureClusterRequest(0L, "java-probe", action, members))
+                .get(5, TimeUnit.SECONDS);
+
+        System.out.println("peerId: " + response.getPeerId());
+        System.out.println("status: " + response.getStatus());
+        System.out.println("success: " + response.isSuccess());
+        System.out.println("leaderId: " + response.getLeaderId());
+        System.out.println("message: " + response.getMessage());
+    }
+
+    private static Peer parsePeer(String spec) {
+        int at = spec.indexOf('@');
+        int slash = spec.lastIndexOf('/');
+        int colon = spec.lastIndexOf(':');
+        if (at <= 0 || colon <= at + 1 || colon == spec.length() - 1) {
+            throw new IllegalArgumentException("Invalid peer spec: " + spec);
+        }
+
+        String id = spec.substring(0, at);
+        String host = spec.substring(at + 1, colon);
+        String portText;
+        Peer.Role role = Peer.Role.VOTER;
+        if (slash > colon) {
+            portText = spec.substring(colon + 1, slash);
+            role = Peer.Role.valueOf(spec.substring(slash + 1).trim().toUpperCase());
+        } else {
+            portText = spec.substring(colon + 1);
+        }
+
+        int port = Integer.parseInt(portText);
+        return new Peer(id, new InetSocketAddress(host, port), role);
+    }
+
     private static void printClientCommandResponse(ClientCommandResponse response) {
         System.out.println("peerId: " + response.getPeerId());
         System.out.println("status: " + response.getStatus());
@@ -269,5 +367,8 @@ public final class InteropProbe {
         System.err.println("  InteropProbe client-get <host> <port> <key> [peer-id]");
         System.err.println("  InteropProbe telemetry <host> <port> [require-leader-summary]");
         System.err.println("  InteropProbe cluster-summary <host> <port>");
+        System.err.println("  InteropProbe join-cluster <host> <port> <peer-id@host:port[/role]> [peer-id]");
+        System.err.println("  InteropProbe join-status <host> <port> <target-peer-id> [peer-id]");
+        System.err.println("  InteropProbe reconfigure <host> <port> <joint|finalize|promote|demote> [peer-id@host:port[/role]]...");
     }
 }

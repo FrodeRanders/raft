@@ -52,6 +52,8 @@ The experiment now also includes a bounded mixed Java/C++ replicated-node smoke:
 - one active persistent C++ peer
 - Java client requests sent through the shared client API into the C++ leader
 - Java follower verification through shared telemetry and redirect responses
+- the reverse direction with a Java leader and persistent C++ follower
+- a bounded mixed-language membership flow with a Java leader and C++ learner promotion
 
 ## Why Boost.Asio
 
@@ -129,6 +131,9 @@ experiments/raft-cpp/build/raft_cpp_smoke compact-snapshot cpp-node /tmp/cpp-nod
 experiments/raft-cpp/build/raft_cpp_smoke dump-state /tmp/cpp-node.state
 experiments/raft-cpp/run-interop-smoke.sh
 experiments/raft-cpp/run-mixed-smoke.sh
+experiments/raft-cpp/run-mixed-smoke-java-leader.sh
+experiments/raft-cpp/run-mixed-membership-smoke.sh
+experiments/raft-cpp/run-mixed-suite.sh
 ```
 
 Optional peer id override:
@@ -225,7 +230,24 @@ For a bounded mixed-language validation path, `run-mixed-smoke.sh` now proves:
 - Java follower telemetry under a C++ leader
 - Java follower redirect metadata for query and cluster-summary
 
-This is still a smoke-level scenario, not a full mixed-language cluster test suite, but it moves the experiment beyond raw RPC compatibility and into one real replicated-node path.
+`run-mixed-smoke-java-leader.sh` proves the reverse direction:
+
+- Java leader election with a C++ follower in the peer set
+- Java client write/read through the Java leader
+- C++ follower application-state recovery via `dump-state`
+- C++ follower redirect metadata back to the Java leader
+
+`run-mixed-membership-smoke.sh` proves one bounded mixed-language membership path:
+
+- Java leader with one C++ voter
+- admission of a second C++ node as learner
+- learner catch-up before promotion
+- promotion to voting membership through the Java leader
+- continued replicated-state application on the promoted C++ member
+
+`run-mixed-suite.sh` runs both scenarios serially.
+
+This is still smoke-level validation, not a full mixed-language cluster test suite, but it moves the experiment beyond raw RPC compatibility and into real replicated-node paths in both directions.
 
 The stateful and active C++ servers now also answer the existing admin probes:
 

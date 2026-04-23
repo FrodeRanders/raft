@@ -775,17 +775,32 @@ private:
         return {};
     }
 
-    bool apply_internal_command_locked(const std::string& data) {
-        if (!data.starts_with(kInternalCommandPrefix)) {
-            return false;
-        }
-
+    std::optional<raft::InternalRaftCommand> parse_internal_command_locked(const std::string& data) const {
         raft::InternalRaftCommand command;
-        const auto payload = data.substr(kInternalCommandPrefix.size());
-        if (!command.ParseFromString(payload)) {
+        if (data.starts_with(kInternalCommandPrefix)) {
+            const auto payload = data.substr(kInternalCommandPrefix.size());
+            if (!command.ParseFromString(payload)) {
+                return std::nullopt;
+            }
+            return command;
+        }
+
+        if (!command.ParseFromString(data)) {
+            return std::nullopt;
+        }
+        if (command.command_case() == raft::InternalRaftCommand::COMMAND_NOT_SET) {
+            return std::nullopt;
+        }
+        return command;
+    }
+
+    bool apply_internal_command_locked(const std::string& data) {
+        const auto parsed = parse_internal_command_locked(data);
+        if (!parsed.has_value()) {
             return false;
         }
 
+        const auto& command = *parsed;
         switch (command.command_case()) {
         case raft::InternalRaftCommand::kJoin:
             if (!command.join().member().id().empty() && command.join().member().id() != peer_id_) {

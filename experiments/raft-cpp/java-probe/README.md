@@ -59,3 +59,21 @@ and then verifies a bounded replicated-node scenario:
 - successful Java client read from the C++ leader
 - Java follower telemetry showing replicated/committed progress under the C++ leader
 - Java follower redirect behavior for client query and cluster-summary
+
+`run-mixed-smoke-java-leader.sh` exercises the reverse direction:
+
+- one real Java KV leader
+- one persistent C++ follower
+- Java client write/read against the Java leader
+- C++ follower state verification through `dump-state`
+- C++ follower redirect metadata back to the Java leader
+
+`run-mixed-membership-smoke.sh` exercises a bounded mixed-language membership flow:
+
+- Java leader with one C++ voting follower
+- admission of a second C++ node as learner
+- learner catch-up on real replicated KV state before promotion
+- learner promotion through the Java leader
+- verification that the promoted C++ member becomes voting and continues replicating state
+
+`run-mixed-suite.sh` runs both bounded mixed-language scenarios serially.
