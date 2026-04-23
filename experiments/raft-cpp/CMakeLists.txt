@@ -41,20 +41,23 @@ target_link_libraries(raftcpp_proto PUBLIC
     protobuf::libprotobuf
 )
 
-add_library(raftcpp_transport INTERFACE)
+add_library(raftcpp_transport STATIC
+    src/raft_node.cpp
+    src/rpc_handler.cpp
+)
 
-target_include_directories(raftcpp_transport INTERFACE
+target_include_directories(raftcpp_transport PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}
     ${Boost_INCLUDE_DIRS}
     ${Protobuf_INCLUDE_DIRS}
 )
 
-target_link_libraries(raftcpp_transport INTERFACE
+target_link_libraries(raftcpp_transport PUBLIC
     raftcpp_proto
 )
 
-target_compile_definitions(raftcpp_transport INTERFACE
+target_compile_definitions(raftcpp_transport PUBLIC
     BOOST_ERROR_CODE_HEADER_ONLY
 )
 
@@ -68,9 +71,11 @@ target_link_libraries(raft_cpp_smoke PRIVATE
 
 if(MSVC)
     target_compile_options(raftcpp_proto PRIVATE /W4)
+    target_compile_options(raftcpp_transport PRIVATE /W4)
     target_compile_options(raft_cpp_smoke PRIVATE /W4)
 else()
     target_compile_options(raftcpp_proto PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(raftcpp_transport PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(raft_cpp_smoke PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
