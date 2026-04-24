@@ -22,4 +22,4 @@ raft-demo/
 jepsen/.cpcache/
 jepsen/store/
 jepsen/work/
-experiments/raft-cpp/build/
+experiments/graft-cpp/build/

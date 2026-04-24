@@ -39,3 +39,10 @@ This repository is organized as a Maven reactor with a small set of focused modu
 - `raft-core` stays small and reusable.
 - application-specific behavior lives in app modules, not in core.
 - concrete transport and persistence implementations sit behind separate module boundaries.
+
+### C++ implementation relationship
+- `experiments/graft-cpp` contains the disconnected C++ implementation work. It is intentionally outside the Maven reactor, but it shares the same `raft-wire/src/main/proto/raft.proto` contract.
+- The strongest Java/C++ cohesion is at the wire boundary: protobuf messages, `Envelope` request/response shape, Raft RPCs, client commands, membership commands, telemetry, and snapshot messages.
+- The Java implementation is the reference for internal layering today: wire, core, storage, state-machine, membership, runtime, transport, and application modules.
+- The C++ implementation mirrors those concepts in a smaller CMake subtree: generated protobufs, Boost.Asio transport, `RaftNode`, `RaftRuntime`, RPC handlers, persistence, KV state-machine behavior, CLI, Catch2 tests, and mixed Java/C++ smoke scripts.
+- The intended migration path is behavioral parity at the shared protocol boundary first, then gradual convergence toward the same internal seams as the Java modules.
