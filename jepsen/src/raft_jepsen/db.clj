@@ -11,6 +11,9 @@
 (defonce processes (atom {}))
 
 (defn node-index [test node]
+  ;; Jepsen node names are strings like "n1". The local harness maps them to
+  ;; deterministic localhost ports so clients, nemeses, and observers can all
+  ;; derive the same address from the test map.
   (or (first (keep-indexed (fn [idx candidate]
                              (when (= candidate node) idx))
                            (:nodes test)))
@@ -72,6 +75,9 @@
   (and process (.isAlive process)))
 
 (defn stop-node! [test node]
+  ;; DB and nemesis code both use this helper. A Jepsen DB should leave the
+  ;; system in a known state after teardown, so process termination is explicit
+  ;; and falls back to destroyForcibly if graceful shutdown hangs.
   (when-let [^Process process (get @processes node)]
     (.destroy process)
     (when-not (.waitFor process 5 java.util.concurrent.TimeUnit/SECONDS)
@@ -80,14 +86,22 @@
     (swap! processes dissoc node)))
 
 (defn wipe-node! [test node]
+  ;; Normal DB teardown removes the whole node work directory. That gives each
+  ;; Jepsen test run a fresh cluster unless a nemesis intentionally preserves
+  ;; or deletes selected state.
   (stop-node! test node)
   (delete-recursively! (node-root test node)))
 
 (defn wipe-node-data! [test node]
+  ;; Persistence-loss tests deliberately delete only the durable Raft state for
+  ;; one stopped node, then restart it to check catch-up and snapshot recovery.
   (stop-node! test node)
   (delete-recursively! (node-data-dir test node)))
 
 (defn- await-port! [port timeout-ms]
+  ;; setup! should not return until the node can accept client connections.
+  ;; Without this readiness gate, early Jepsen operations would mostly test
+  ;; startup races instead of Raft behavior.
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
       (let [connected?
@@ -127,6 +141,9 @@
                       {:node node :port (node-port test node) :log-file (.getAbsolutePath log-file)})))))
 
 (defn resolved-jar-path [test]
+  ;; Most Jepsen harnesses copy binaries to remote machines. This local harness
+  ;; resolves artifacts from the repository instead, while still allowing an
+  ;; explicit --jar override for reproducible runs.
   (if-let [configured (:jar-path test)]
     (.getAbsolutePath (io/file configured))
     (let [target-dir (io/file (repo-root test) "raft-dist" "target")
@@ -142,6 +159,8 @@
                         {:target-dir (.getAbsolutePath target-dir)}))))))
 
 (defn resolved-cpp-bin [test]
+  ;; C++ support is optional. Resolve the smoke binary lazily so Java-only runs
+  ;; do not depend on the experimental C++ build.
   (if-let [configured (:cpp-bin test)]
     (.getAbsolutePath (io/file configured))
     (let [candidates [(io/file (repo-root test) "experiments" "graft-cpp" "build" "graft_smoke")
@@ -153,6 +172,8 @@
                         {:candidates (mapv #(.getAbsolutePath ^File %) candidates)}))))))
 
 (defn- java-props [test node]
+  ;; Per-node JVM properties are part of the DB command line because Jepsen
+  ;; treats each node as a separate process with its own data directory.
   (vec
    (concat
     [(str "-Draft.data.dir=" (.getAbsolutePath (node-data-dir test node)))]
@@ -222,6 +243,9 @@
        (launch-node! test node command preserve-state?)))))
 
 (defn local-db []
+  ;; DB is Jepsen's system lifecycle abstraction. setup!/teardown! run once per
+  ;; node around the test. The Kill extension is what lets nemeses stop and
+  ;; restart nodes using Jepsen's standard db/kill! and db/start! concepts.
   (reify db/DB
     (setup! [_ test node]
       (start-node! test node false)

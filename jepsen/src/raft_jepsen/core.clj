@@ -32,6 +32,9 @@
   (.getCanonicalPath (io/file "work")))
 
 (defn- parse-args [args]
+  ;; Jepsen tests are ordinary Clojure values, so this harness keeps CLI
+  ;; parsing deliberately small: parse flags into one opts map, validate it in
+  ;; normalize-opts, then pass the same opts through test construction.
   (loop [opts {:repo-root (default-repo-root)
                :workdir (default-workdir)
                ;; Mixed Java/C++ support is explicit per node so peer ids and
@@ -104,6 +107,10 @@
     "  --workdir <path>      Local work directory, default ./work"]))
 
 (defn- normalize-opts [opts]
+  ;; Normalize command-line sugar into values the rest of the harness can use.
+  ;; The important Jepsen convention here is that :nodes are opaque node names;
+  ;; implementation type, ports, and paths live in the test map instead of
+  ;; being encoded into those names.
   (let [nodes (:nodes opts)
         impls (or (:node-impl-list opts) (vec (repeat (count nodes) :java)))
         joining-impl (:joining-impl opts)
@@ -148,6 +155,8 @@
   (assoc op :key (random-key opts)))
 
 (defn- write-op [opts & _]
+  ;; Generators emit operation maps. Jepsen will pass each map to the client
+  ;; invoke! method and record the returned map in the history.
   (op-with-key opts
   {:type :invoke
    :f :write
@@ -170,6 +179,9 @@
      :value [expected next-value]})))
 
 (defn- filter-history-checker [inner-checker pred]
+  ;; Checkers see the whole history, including nemesis events. Linearizability
+  ;; models only client operations, so this wrapper trims the history before
+  ;; delegating to Knossos.
   (reify
     checker/Checker
     (check [_ test history opts]
@@ -181,6 +193,9 @@
                       (= key (:key %))))))
 
 (defn- key-checker [key]
+  ;; Knossos' CAS register model understands reads, writes, and CAS operations.
+  ;; For multi-key workloads, each key is an independent register and must be
+  ;; checked with only the operations that touched that key.
   (filter-history-checker
    (checker/linearizable {:model (model/cas-register)})
    #(= key (:key %))))
@@ -197,6 +212,10 @@
          :results results}))))
 
 (defn- workload [opts]
+  ;; A Jepsen workload usually contributes two things: a generator that creates
+  ;; client operations, and a checker that judges the completed history. This
+  ;; function returns those two pieces so raft-test can merge them into the
+  ;; final test map.
   (let [keys (workload-keys opts)]
     {:checker (checker/compose
                {:linearizable (if (= "multi-key" (:workload-mode opts))
@@ -211,6 +230,9 @@
                      (gen/limit 100))}))
 
 (defn- nemesis-object [opts]
+  ;; The nemesis object is the imperative part: Jepsen calls its invoke! method
+  ;; when the nemesis generator emits {:f :start} or {:f :stop}. Each mode below
+  ;; returns a different object implementing jepsen.nemesis/Nemesis.
   (case (:nemesis-mode opts)
     "none" nemesis/noop
     "crash-restart" (raft-nemesis/crash-restart)
@@ -226,6 +248,10 @@
     (throw (ex-info "Unknown nemesis mode" {:nemesis-mode (:nemesis-mode opts)}))))
 
 (defn- nemesis-generator [opts]
+  ;; The nemesis generator decides when fault operations are injected. It is
+  ;; separate from the nemesis object, which decides what those operations do.
+  ;; One-shot membership scenarios emit a single :start; partition scenarios
+  ;; alternate :stop/:start in a cycle so failures and healing are both tested.
   (case (:nemesis-mode opts)
     "none" nil
     "membership-join-promote"
@@ -258,6 +284,13 @@
       (gen/sleep (:nemesis-interval opts))))))
 
 (defn- generator [opts]
+  ;; The full generator combines client load and optional nemesis activity:
+  ;; - gen/clients assigns workload ops to client threads
+  ;; - gen/stagger spaces invocations out slightly
+  ;; - gen/nemesis interleaves fault operations on the special :nemesis process
+  ;; - gen/time-limit bounds the run
+  ;; The final read phase is useful because it gives the checker a settled
+  ;; observation after the last fault or write.
   (let [client-gen (:generator (workload opts))
         base (->> client-gen
                   gen/clients
@@ -275,6 +308,10 @@
        (gen/once {:f :read :value nil}))))))
 
 (defn raft-test [opts]
+  ;; This is the Jepsen test map. jepsen/run! treats it as the complete
+  ;; description of a test: what nodes exist, how to control them, what client
+  ;; to run, what faults to inject, what history to generate, and how to check
+  ;; the result.
   (merge
    tests/noop-test
    (workload opts)
@@ -306,6 +343,9 @@
     :key (:key opts)}))
 
 (defn -main [& args]
+  ;; jepsen/run! is the entry point: it sets up the DB on every node, opens
+  ;; clients, runs the generator, tears everything down, saves logs/history, and
+  ;; invokes the checker.
   (let [opts (normalize-opts (parse-args args))]
     (if (:help opts)
       (println (usage))

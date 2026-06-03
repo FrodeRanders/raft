@@ -10,6 +10,9 @@
 (declare leader-node)
 
 (defn- random-node
+  ;; Nemeses choose targets from Jepsen's logical :nodes list. Keeping target
+  ;; choice here, rather than in the generator, lets the same generator drive
+  ;; several fault types.
   ([nodes]
    (when (seq nodes)
      (rand-nth (vec nodes))))
@@ -17,6 +20,10 @@
    (random-node nodes)))
 
 (defn crash-restart []
+  ;; A Nemesis is like a client for faults. Its invoke! receives operations
+  ;; emitted by the nemesis generator, typically {:f :stop} and {:f :start}.
+  ;; It returns :info operations because faults are observations in the history,
+  ;; not register operations checked for linearizability.
   (let [disrupted-node (atom nil)]
     (reify
       jepsen.nemesis/Nemesis
@@ -51,6 +58,10 @@
     (first (remove #(= leader %) (:nodes test)))))
 
 (defn persistence-loss-restart []
+  ;; This variant restarts a follower after deleting its data directory. The
+  ;; follower choice avoids intentionally destroying the current leader's local
+  ;; state, so the scenario focuses on catch-up/recovery rather than immediate
+  ;; quorum disruption.
   (let [disrupted-node (atom nil)]
     (reify
       jepsen.nemesis/Nemesis
@@ -90,6 +101,9 @@
   (.getAbsolutePath (io/file (:repo-root test) "jepsen" "scripts" "partition.sh")))
 
 (defn- run-script! [test & args]
+  ;; Network partitions are delegated to a small shell helper because packet
+  ;; filtering is OS-specific and may require sudo. The nemesis raises if the
+  ;; helper fails so the Jepsen run does not silently continue without a fault.
   (let [{:keys [exit err out]}
         (apply sh/sh (concat [(partition-script test)] args [:dir (:repo-root test)]))]
     (when-not (zero? exit)
@@ -118,6 +132,9 @@
   (str node "@127.0.0.1:" (raft-db/node-port test node)))
 
 (defn- cluster-summary [test node]
+  ;; Nemeses often need current cluster state, for example to locate the leader
+  ;; before isolating it. These probes are outside the checked workload; they
+  ;; are control-plane observations used to aim faults.
   (let [{:keys [exit out err]}
         (shell! (:repo-root test)
                 (java-command (:jar-path test) "cluster-summary" "--json" (target-spec test node)))
@@ -173,6 +190,9 @@
      :stdout out}))
 
 (defn- leader-node [test]
+  ;; Leader discovery tries every known node and accepts the first successful
+  ;; summary that names a valid peer. During elections or partitions this may
+  ;; temporarily return nil, which callers treat as "no safe target yet".
   (let [known-nodes (conj (vec (:nodes test)) (raft-db/membership-node test))]
     (some (fn [node]
             (try
@@ -190,6 +210,10 @@
   (some #(when (= node (:peerId %)) %) (:members summary)))
 
 (defn- stable-learner-state [summary member]
+  ;; Membership nemeses wait for externally visible stable states instead of
+  ;; assuming a reconfiguration command has taken effect when the CLI returns.
+  ;; That keeps the generated fault event aligned with the cluster state the
+  ;; workload actually experiences.
   (let [member-state (member-summary summary member)]
     (when (and (:success summary)
                (not (:jointConsensus summary))
@@ -260,6 +284,9 @@
      :summary summary}))
 
 (defn- wait-for! [timeout-ms interval-ms pred]
+  ;; Polling is common in nemeses: fault setup often depends on eventual Raft
+  ;; state. Returning nil on timeout lets callers attach scenario-specific
+  ;; context to the exception they throw.
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
       (if-let [value (pred)]
@@ -275,6 +302,9 @@
     :else [target]))
 
 (defn- isolate-nodes! [test nodes]
+  ;; Partition helpers work at the port level, but nemesis histories are easier
+  ;; to read in node terms. Return both so logs show the logical target and the
+  ;; actual ports that were filtered.
   (let [ports (mapv #(raft-db/node-port test %) nodes)]
     (apply run-script! test "isolate" (map str ports))
     {:nodes (vec nodes)
@@ -291,6 +321,9 @@
         [leader other]))))
 
 (defn- partition-nemesis [target-node-fn context-name]
+  ;; A reusable partition nemesis: target-node-fn chooses the node or nodes to
+  ;; isolate at :start time, and :stop heals the same isolation. The atom tracks
+  ;; active state because Jepsen may call start/stop across different invokes.
   (let [isolated (atom nil)]
     (reify
       jepsen.nemesis/Nemesis
@@ -330,6 +363,9 @@
   (partition-nemesis leader-minority-nodes "nemesis-partition-leader-minority"))
 
 (defn- demote-member! [test leader member]
+  ;; Membership changes are injected through the public raft-dist CLI. That is
+  ;; intentional: Jepsen should exercise the same administrative surface an
+  ;; operator or integration test would use, not private in-process hooks.
   (let [{:keys [exit out err]}
         (shell! (:repo-root test)
                 (java-command (:jar-path test)
@@ -383,6 +419,9 @@
     out))
 
 (defn membership-join-promote []
+  ;; This is a one-shot membership scenario. The generator emits one :start;
+  ;; the nemesis starts an extra learner, requests admission, waits for learner
+  ;; stability, promotes it, then waits for stable voter state under workload.
   (let [membership-state (atom {:started? false})]
     (reify
       jepsen.nemesis/Nemesis
@@ -467,6 +506,9 @@
           (raft-db/stop-node! test member))))))
 
 (defn membership-demote []
+  ;; Demotion keeps the node running but removes it from the voting set. The
+  ;; checker still validates client-visible register behavior while the cluster
+  ;; changes quorum membership.
   (let [demotion-state (atom {:started? false})]
     (reify
       jepsen.nemesis/Nemesis
@@ -526,6 +568,9 @@
         nil))))
 
 (defn membership-remove-follower []
+  ;; Removal is modeled as explicit joint consensus followed by finalize. The
+  ;; nemesis waits for each phase so a failure points at the phase that got
+  ;; stuck, and the history records a single high-level membership event.
   (let [removal-state (atom {:started? false})]
     (reify
       jepsen.nemesis/Nemesis
@@ -620,6 +665,9 @@
         nil))))
 
 (defn membership-remove-leader []
+  ;; Removing the current leader uses the same external reconfiguration flow as
+  ;; follower removal, but the target is chosen as the leader to force leadership
+  ;; transfer/election behavior during the workload.
   (let [removal-state (atom {:started? false})]
     (reify
       jepsen.nemesis/Nemesis
@@ -713,6 +761,10 @@
         nil))))
 
 (defn membership-remove-follower-partition-leader []
+  ;; This compound nemesis starts a membership removal, waits until joint
+  ;; consensus is visible, then partitions the leader. The matching :stop heals
+  ;; the partition and tries to finalize, testing reconfiguration progress
+  ;; across an overlapping network fault.
   (let [state (atom {:started? false
                      :isolation nil})]
     (reify

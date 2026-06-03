@@ -10,6 +10,9 @@
     (.mkdirs parent)))
 
 (defn- shell-command [context cmd]
+  ;; Jepsen's control layer is designed for SSH remotes. This harness runs all
+  ;; nodes locally, so commands are executed through /bin/sh with the same :dir
+  ;; semantics Jepsen would provide on a remote host.
   (let [dir (:dir context)
         wrapped (if dir
                   (str "cd " (control/escape dir) " && " cmd)
@@ -17,6 +20,9 @@
     ["/bin/sh" "-lc" wrapped]))
 
 (defrecord LocalRemote [host]
+  ;; LocalRemote implements the subset of jepsen.control Remote needed by this
+  ;; harness: execute shell commands, upload files, and download logs. That lets
+  ;; jepsen/run! use normal Jepsen plumbing without requiring SSH or containers.
   control/Remote
   (connect [this conn-spec]
     (assoc this :host (:host conn-spec)))

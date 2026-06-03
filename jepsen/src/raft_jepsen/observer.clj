@@ -12,6 +12,9 @@
   (io/file (observations-dir test) "cluster-events.jsonl"))
 
 (defn- append-json-line! [test event]
+  ;; Store observations outside Jepsen's EDN history as JSONL. That keeps the
+  ;; checked history focused on operations while preserving detailed cluster
+  ;; snapshots for debugging failed runs.
   (spit (observations-file test)
         (str (json/generate-string event) "\n")
         :append true))
@@ -30,6 +33,8 @@
   (apply sh/sh (concat command [:dir repo-root])))
 
 (defn- capture-command [test node command-name command]
+  ;; A capture records both raw CLI output and parsed JSON. Raw output helps
+  ;; diagnose parser/CLI failures; parsed output is easier to scan and diff.
   (let [{:keys [exit out err]} (shell! (:repo-root test) command)]
     {:node node
      :command command-name
@@ -69,6 +74,10 @@
 
 (defn capture! [test context & [{:keys [node op extra]
                                  :or {extra {}}}]]
+  ;; Capture is called from DB, client, and nemesis code at interesting points.
+  ;; If a focus node is supplied, only that node is probed; otherwise all test
+  ;; nodes are sampled. This is intentionally observational and does not affect
+  ;; Jepsen's checker result.
   (let [jar-path (resolved-jar-path test)
         nodes (if node [node] (:nodes test))
         base-event {:observedAtMillis (System/currentTimeMillis)
@@ -94,6 +103,9 @@
       (append-json-line! test event))))
 
 (defn capture-safe! [test context & [opts]]
+  ;; Observability must not make the test fail by itself. If a capture command
+  ;; fails during a crash or partition, record the observer error and let the
+  ;; original Jepsen operation outcome stand.
   (try
     (capture! test context opts)
     (catch Throwable t

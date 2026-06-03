@@ -7,6 +7,8 @@
             [raft-jepsen.observer :as observer]))
 
 (defn- parse-json [text]
+  ;; Java CLI commands emit JSON, which maps cleanly into Clojure maps that the
+  ;; classifier functions can inspect.
   (when-let [trimmed (some-> text str/trim not-empty)]
     (json/parse-string trimmed true)))
 
@@ -17,6 +19,9 @@
     nil))
 
 (defn- parse-cpp-lines [text]
+  ;; The C++ smoke CLI emits stable "key: value" lines instead of JSON. This
+  ;; adapter normalizes that output to the same shape as the Java JSON CLI so
+  ;; the rest of the Jepsen client can classify both implementations uniformly.
   (let [raw (into {}
                   (keep (fn [line]
                           (when-let [[_ key value] (re-matches #"([^:]+):\s*(.*)" line)]
@@ -53,6 +58,9 @@
   (vec (concat [cpp-bin] args)))
 
 (defn- client-impl-for-node [test node]
+  ;; In Jepsen, each client instance is opened against one logical node. The
+  ;; :mixed mode uses that target node's implementation to choose the CLI,
+  ;; which lets one run exercise both Java and C++ client surfaces.
   (case (get test :client-impl :java)
     :java :java
     :cpp :cpp
@@ -62,6 +70,10 @@
   (apply sh/sh (concat command [:dir repo-root])))
 
 (defn- classify-write [op exit response key value]
+  ;; invoke! must return a completed operation map. :ok operations become part
+  ;; of the linearizability history. :fail operations did not take effect from
+  ;; the client's perspective. :info means uncertain; Knossos may consider both
+  ;; possibilities when checking the history.
   (let [status (:status response)
         success? (and (zero? exit) (#{"ACCEPTED" "OK"} status) (:success response))]
     (cond
@@ -71,6 +83,8 @@
       :else (assoc op :type :fail :error (or status :command-failed)))))
 
 (defn- classify-read [op exit response key]
+  ;; Reads return :ok with the observed value. A missing key is represented as
+  ;; nil, matching the CAS register model's initial state.
   (let [status (:status response)
         success? (and (zero? exit) (= "OK" status) (:success response))
         value (when success?
@@ -84,6 +98,9 @@
       :else (assoc op :type :fail :error (or status :query-failed)))))
 
 (defn- classify-cas [op exit response]
+  ;; A failed CAS due to value mismatch is a definite :fail, not an error in
+  ;; the system. It tells the checker that the compare-and-set did not update
+  ;; the register.
   (let [status (:status response)
         success? (and (zero? exit) (#{"ACCEPTED" "OK"} status) (:success response))
         result (:result response)
@@ -96,6 +113,9 @@
       :else (assoc op :type :fail :error (or status :command-failed)))))
 
 (defn- maybe-capture! [test node op result]
+  ;; Jepsen histories contain operation outcomes, but root-causing failures is
+  ;; easier with extra cluster state. This hook snapshots telemetry on failed
+  ;; or uncertain client operations without changing the operation result.
   (when (#{:fail :info} (:type result))
     (observer/capture-safe! test "client-anomaly"
                             {:node node
@@ -106,12 +126,18 @@
                              :extra {:rawResponse (:raw-response result)}})))
 
 (defrecord RaftCliClient [node repo-root jar-path cpp-bin]
+  ;; Client is Jepsen's per-worker handle for driving the system. Jepsen calls:
+  ;; open! once per worker/node pairing, setup! before the run, invoke! for each
+  ;; generated operation, and teardown!/close! at the end.
   client/Client
   (open! [this _test node]
     (assoc this :node node))
   (setup! [this _test]
     this)
   (invoke! [this test op]
+    ;; The op's :f selects the workload action generated in core.clj. The
+    ;; client translates that abstract operation into a concrete CLI command,
+    ;; parses the response, then classifies it back into Jepsen history terms.
     (let [target (raft-db/peer-spec test node)
           host "127.0.0.1"
           port (str (raft-db/node-port test node))
@@ -179,6 +205,9 @@
     this))
 
 (defn client [opts]
+  ;; Construct the prototype client stored in the test map. Jepsen clones it
+  ;; through open!, so mutable per-worker state should be attached there rather
+  ;; than hidden globally.
   (->RaftCliClient nil
                    (:repo-root opts)
                    (raft-db/resolved-jar-path opts)
