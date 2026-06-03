@@ -15,6 +15,13 @@ That means the default Maven test path now depends on:
 - a working local Jepsen environment
 - non-interactive `sudo` for the partition helper
 
+Mixed Java/C++ Jepsen runs are not part of the default Maven path. They also require a built C++ smoke binary:
+
+```text
+cmake -S experiments/graft-cpp -B experiments/graft-cpp/build
+cmake --build experiments/graft-cpp/build --target graft_smoke
+```
+
 ### 1. Fast Java feedback
 
 Run the focused unit and adapter tests first when changing the KV, protocol, or runtime layers:
@@ -57,6 +64,7 @@ To run a whole local Jepsen suite serially in separate processes:
 ```text
 ./run-suite.sh smoke
 ./run-suite.sh extended
+./run-suite.sh mixed
 ./run-suite.sh all
 ```
 
@@ -74,6 +82,23 @@ Then run one fault mode at a time:
 ./run-local.sh --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-remove-leader --workdir /tmp/raft-jepsen-membership-remove-leader
 ./run-local.sh --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-remove-follower-partition-leader --workdir /tmp/raft-jepsen-membership-remove-follower-partition-leader
 ```
+
+For mixed Java/C++ validation, build `graft_smoke` first and then run the mixed suite:
+
+```text
+./run-suite.sh mixed
+```
+
+Useful focused mixed runs:
+
+```text
+./run-local.sh --node-count 3 --node-impls java,cpp,java --time-limit 8 --concurrency 4
+./run-local.sh --node-count 3 --node-impls java,cpp,java --client-impl cpp --time-limit 8 --concurrency 4
+./run-local.sh --node-count 3 --node-impls cpp,java,java --client-impl mixed --time-limit 8 --concurrency 4
+./run-local.sh --node-count 3 --node-impls cpp,java,java --nemesis membership-join-promote --joining-impl cpp --time-limit 12 --concurrency 4
+```
+
+The last case exercises C++ leader handling for join admission, `reconfiguration-status`, learner promotion, and the C++ joiner path.
 
 Run local Jepsen tests serially, not in parallel. The harness shares host-local ports and packet-filter state.
 

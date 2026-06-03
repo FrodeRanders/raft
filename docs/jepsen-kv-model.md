@@ -1,6 +1,8 @@
 # Minimal Jepsen KV Model
 
-This document defines the first Jepsen model for this repository. It is intentionally narrow: a 3-node cluster, the key-value application only, no membership changes yet.
+This document defines the first Jepsen model that was used for this repository. It is intentionally narrow: a 3-node cluster, the key-value application only, and no membership changes.
+
+It is now historical baseline documentation. The current harness has grown beyond this model: it defaults to 5-node Java runs, uses a CAS-register workload, includes multi-key and snapshot/fault scenarios, and has mixed Java/C++ coverage. For current commands and scope, use [jepsen/README.md](../jepsen/README.md) and [docs/jepsen-workflow.md](jepsen-workflow.md).
 
 ## Scope
 

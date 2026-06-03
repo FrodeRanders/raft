@@ -19,13 +19,14 @@ The current implementation provides:
 - a small CLI with:
   - `cluster-summary`
   - `telemetry`
-- `client-put`
-- `client-cas`
-- `client-get`
-- `join-cluster`
-- `join-status`
-- `reconfigure`
-- `vote-request`
+  - `reconfiguration-status`
+  - `client-put`
+  - `client-cas`
+  - `client-get`
+  - `join-cluster`
+  - `join-status`
+  - `reconfigure`
+  - `vote-request`
   - `append-entries`
   - `install-snapshot`
   - `serve`
@@ -53,9 +54,9 @@ The implementation now also includes a bounded mixed Java/C++ replicated-node sm
 - Java client requests sent through the shared client API into the C++ leader
 - Java follower verification through shared telemetry and redirect responses
 - the reverse direction with a Java leader and persistent C++ follower
-- a bounded mixed-language membership flow with a Java leader and C++ learner promotion
-- a bounded mixed-language membership flow with a C++ leader and Java learner promotion
+- bounded mixed-language membership flows with Java or C++ leaders and Java or C++ learner promotion
 - a bounded mixed-language snapshot catch-up flow with a C++ leader and lagged Java follower
+- local Jepsen mixed-suite coverage for C++ clients, C++ joiners, and C++ leader membership administration
 
 ## Java/C++ Design Relationship
 
@@ -83,7 +84,7 @@ The strongest cohesion is the shared wire contract:
 - both sides use the same raw varint32 length-prefix framing
 - both sides encode replicated client work as `StateMachineCommand`
 - both sides encode membership transitions as `InternalRaftCommand`
-- both sides expose telemetry, cluster summaries, and redirect metadata through shared messages
+- both sides expose telemetry, cluster summaries, reconfiguration status, and redirect metadata through shared messages
 
 The Java implementation is currently the more mature layered design:
 
@@ -173,13 +174,16 @@ Then from the repository root:
 ```text
 experiments/graft-cpp/build/graft_smoke cluster-summary 127.0.0.1 10080
 experiments/graft-cpp/build/graft_smoke telemetry 127.0.0.1 10080
+experiments/graft-cpp/build/graft_smoke reconfiguration-status 127.0.0.1 10080
 experiments/graft-cpp/build/graft_smoke client-put 127.0.0.1 11082 k v1 cpp-node
 experiments/graft-cpp/build/graft_smoke client-cas 127.0.0.1 11082 k false "" v1 cpp-node
 experiments/graft-cpp/build/graft_smoke client-get 127.0.0.1 11082 k cpp-node
 experiments/graft-cpp/build/graft_smoke join-cluster 127.0.0.1 11083 peer-b 127.0.0.1 11084 voter cpp-node
 experiments/graft-cpp/build/graft_smoke join-status 127.0.0.1 11083 peer-b cpp-node
-experiments/graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 joint peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11084
+experiments/graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 joint peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11084 peer-c@127.0.0.1:11085/learner
 experiments/graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 finalize peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11084
+experiments/graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 promote peer-c@127.0.0.1:11085/learner
+experiments/graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 demote peer-b@127.0.0.1:11084/voter
 experiments/graft-cpp/build/graft_smoke vote-request 127.0.0.1 10080 cpp-candidate 0 0
 experiments/graft-cpp/build/graft_smoke append-entries 127.0.0.1 10080 cpp-leader 0 0 0
 experiments/graft-cpp/build/graft_smoke install-snapshot 127.0.0.1 10080 cpp-leader 0 0
@@ -291,7 +295,7 @@ For the bounded implementation, queries operate on the applied KV state with lea
 - single-node persistent servers auto-commit locally
 - active leaders replicate them through the existing distributed runtime
 
-The remaining gap is broader cluster-grade behavior such as redirect host/port metadata, retries, and richer client semantics, not the basic replicated command path itself.
+The remaining client-side gap is production-grade behavior around retries, timeouts, and richer administrative workflows. The basic shared command/query path, redirect metadata, and typed CAS result path are now covered.
 
 For a bounded mixed-language validation path, `run-mixed-smoke.sh` now proves:
 
@@ -323,6 +327,14 @@ For a bounded mixed-language validation path, `run-mixed-smoke.sh` now proves:
 - joint and finalized membership changes replicated from the C++ leader
 - continued replicated-state application on the promoted Java member
 
+The local Jepsen `mixed` suite adds broader mixed validation:
+
+- static Java/C++ clusters
+- C++ CLI workload clients
+- target-matched Java/C++ client dispatch
+- C++ joining learners
+- C++ leader handling of join admission, `reconfiguration-status`, and learner promotion
+
 `run-mixed-snapshot-smoke.sh` proves one bounded mixed-language recovery path:
 
 - C++ leader compaction with a low local snapshot threshold
@@ -338,6 +350,7 @@ The stateful and active C++ servers now also answer the existing admin probes:
 
 - `cluster-summary`
 - `telemetry`
+- `reconfiguration-status`
 
 That makes it possible to inspect follower and leader log/commit state through the same shared protocol, instead of relying only on server log output. After restart, both views rebuild member rows from persisted voting membership plus per-peer progress, so recovered topology and replication state stay visible without reading the state file directly.
 
@@ -473,25 +486,25 @@ This is still only a partial implementation, but it moves the C++ code from "tra
 
 ## Next Steps
 
-The natural next steps, in order, are:
+The natural next steps are now convergence and hardening rather than first proof-of-concept work:
 
-1. make the server event-driven
-2. implement semantic multi-chunk `install-snapshot`
-3. move the inbound server from a blocking loop to the same async/event-driven model as the active scheduler
-4. implement a minimal C++ Raft node using the shared wire protocol
-5. test mixed Java/C++ clusters explicitly
+1. move the inbound server from a blocking loop to the same async/event-driven model as the active scheduler
+2. split the C++ subtree into clearer wire/core/storage/state-machine/runtime/transport/app units as the code grows
+3. make C++ membership status expose richer transition metadata instead of the current bounded stable-state view
+4. broaden mixed Jepsen coverage beyond `membership-join-promote`
+5. continue aligning C++ persistence and recovery semantics with the Java reference implementation
 
 ## Important Boundary
 
-This implementation reuses the existing protocol and framing, but it does not yet attempt to reproduce:
+This implementation reuses the existing protocol and framing and now exercises real bounded replicated-node paths, but it is still not a production-grade peer. The Java implementation remains the reference for:
 
 - Java runtime wiring
-- storage implementation
-- membership logic
-- state-machine application
-- Jepsen integration
+- full storage implementation
+- richer membership-transition telemetry
+- operational policy and authentication integration
+- the default Maven/JUnit/Jepsen validation path
 
-It is deliberately focused on transport compatibility first.
+The C++ side is currently best understood as an interoperability and convergence track: it proves the shared wire protocol, selected replicated KV behavior, membership admission/promotion, persistence, snapshot catch-up, and mixed Java/C++ Jepsen scenarios.
 
 Recent bounded replication work also means the implementation can now demonstrate follower catch-up over multiple `AppendEntries` attempts instead of only a single happy-path append. In a local smoke run with the leader at log index `7` and a follower at index `5`, `replicate-once` needed three attempts before the follower accepted the new entry and the leader advanced commit:
 

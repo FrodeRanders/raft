@@ -47,6 +47,7 @@ At a high level, the Jepsen tests check that the key-value demo remains lineariz
 - aggressive snapshot/compaction settings during faults
 - 5-node and 7-node quorum topologies
 - single-key CAS-register and multi-key workloads
+- mixed Java/C++ clusters, including C++ client operations and C++ leader membership admission/promotion
 
 The default `mvn test` path now includes a small Jepsen smoke suite in addition to the normal Java tests. That smoke suite covers:
 
@@ -132,6 +133,7 @@ Cluster management and ordinary client access use typed protobuf messages:
 - `ReconfigureClusterRequest` / `ReconfigureClusterResponse`
 
 `ClientCommandRequest` carries a typed `StateMachineCommand` payload for ordinary replicated writes. `ClientQueryRequest` carries a typed `StateMachineQuery` payload for ordinary reads. Both respond with explicit status and include the leader endpoint on redirects so a client can retry directly. The first query type is key-value `GET(key)`. `JoinClusterRequest` is the convenience path for adding a single new member. The leader turns it into a joint-consensus transition and finalizes it automatically after the joining node has caught up enough. `JoinClusterStatusRequest` reports whether the join is still pending, active in joint consensus, completed, or unknown. `ReconfigureClusterRequest` exposes explicit `JOINT` and `FINALIZE` actions for manual control.
+`ReconfigureClusterRequest` also supports focused `PROMOTE` and `DEMOTE` actions for role changes.
 
 Peers are either:
 
@@ -400,6 +402,33 @@ Those counters and age gauges are intended for alerting on long-running role cha
 ## Next Steps
 There are no committed follow-up items at the moment.
 
+## Java/C++ Interoperability
+
+The Java implementation remains the primary implementation in the Maven reactor. The C++ implementation under `experiments/graft-cpp` is a separate CMake subtree, but it shares the same protobuf schema, envelope framing, client command/query messages, membership messages, telemetry messages, and snapshot messages.
+
+Current mixed-language validation covers:
+
+- Java and C++ nodes participating in the same local cluster
+- Java CLI clients talking to Java or C++ leaders
+- C++ `graft_smoke` clients driving Jepsen put/get/CAS workloads
+- C++ followers catching up from Java leaders
+- Java followers catching up from C++ leaders
+- C++ membership joiners admitted by Java or C++ leaders
+- C++ leader handling of join admission, reconfiguration status, learner promotion, and role-aware membership summaries
+
+The local Jepsen mixed suite is the current high-signal validation path:
+
+```text
+cd jepsen
+./run-suite.sh mixed
+```
+
+The C++ smoke suite remains useful for narrower protocol and runtime checks:
+
+```text
+experiments/graft-cpp/run-mixed-suite.sh
+```
+
 ### Other discovery mechanisms
 If you do not want to rely on a full static peer list at startup, typical alternatives are:
 
@@ -456,5 +485,5 @@ Protobuf (lite) codegen
 ./scripts/protoc-lite.sh
 ```
 The protobuf Maven plugin uses this wrapper to force lite code generation. It prefers the Maven-cached protoc
-(`com.google.protobuf:protoc` at `PROTOC_VERSION`, defined in the script) and falls back to `protoc` on `PATH`.
+(`com.google.protobuf:protoc` at `PROTOC_VERSION`, defined in the script). If Maven downloaded the file without the executable bit, the wrapper fixes that before invoking it. It no longer falls back to a system `protoc`, because that can silently use the wrong protobuf version.
 If you bump `protobuf.version` in `pom.xml`, update `PROTOC_VERSION` in `scripts/protoc-lite.sh` as well.

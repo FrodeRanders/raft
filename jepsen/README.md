@@ -9,7 +9,7 @@ This directory contains the first Jepsen harness for the repository: a local key
 - linearizable CAS-register workload over a single hot key
 - optional membership-change scenarios for join, role changes, and explicit removal
 - optional multi-key and snapshot-stress runs for broader recovery coverage
-- optional static mixed Java/C++ clusters when `graft_smoke` is available
+- optional mixed Java/C++ clusters when `graft_smoke` is available
 
 ## Prerequisites
 
@@ -122,7 +122,7 @@ The workload layer can also be varied:
 ## Mixed Java/C++ Runs
 
 The default Jepsen suites remain Java-only so normal validation does not depend on the experimental C++ build.
-To run a static mixed cluster, build the C++ smoke binary and pass node implementations explicitly:
+To run mixed Java/C++ validation, build the C++ smoke binary and pass node implementations explicitly:
 
 ```text
 ./run-local.sh --node-count 3 --node-impls java,cpp,java --time-limit 8 --concurrency 4
@@ -169,7 +169,7 @@ Current mixed-run limitations:
 - `run-suite.sh` supports three suite levels:
   - `smoke`: baseline, crash/restart, and `partition-one`
   - `extended`: the richer validated scenarios including persistence loss, leader partitions, membership changes, multi-key, snapshot stress, and 7-node minority partition
-  - `mixed`: static Java/C++ interop smoke cases
+  - `mixed`: Java/C++ interop smoke cases, including C++ client and C++ membership-admin paths
   - `all`: both suites in one serial run
 - Extra arguments passed to `run-suite.sh` are forwarded to every `run-local.sh` invocation in the suite. For example, `./run-suite.sh smoke --concurrency 12` applies that override to each smoke case.
 - The partition helper re-execs itself through `sudo -n` when needed. Jepsen invokes it non-interactively, so passwordless sudo must be configured for the helper path.
