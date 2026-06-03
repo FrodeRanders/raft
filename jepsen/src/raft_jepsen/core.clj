@@ -34,11 +34,10 @@
 (defn- parse-args [args]
   (loop [opts {:repo-root (default-repo-root)
                :workdir (default-workdir)
-               ;; The harness currently models a homogeneous Java cluster.
-               ;; Mixed Java/C++ support should enter here as an explicit node
-               ;; implementation map, e.g. n1=java,n2=cpp, rather than by
-               ;; overloading node names or ports.
+               ;; Mixed Java/C++ support is explicit per node so peer ids and
+               ;; port assignments stay independent from implementation type.
                :node-impl-list nil
+               :client-impl :java
                :joining-impl :java
                :cpp-bin nil
                :base-port 10080
@@ -61,6 +60,7 @@
           "--jar" (recur (assoc opts :jar-path (.getCanonicalPath (io/file value))) rest)
           "--cpp-bin" (recur (assoc opts :cpp-bin (.getCanonicalPath (io/file value))) rest)
           "--node-impls" (recur (assoc opts :node-impl-list (parse-node-impls value)) rest)
+          "--client-impl" (recur (assoc opts :client-impl (keyword (str/lower-case value))) rest)
           "--joining-impl" (recur (assoc opts :joining-impl (keyword (str/lower-case value))) rest)
           "--time-limit" (recur (assoc opts :time-limit (parse-long-arg value)) rest)
           "--concurrency" (recur (assoc opts :concurrency (parse-long-arg value)) rest)
@@ -89,6 +89,7 @@
     "  --jar <path>          Path to raft-dist jar"
     "  --cpp-bin <path>      Path to graft_smoke for C++ nodes"
     "  --node-impls <list>   Comma-separated node implementations, e.g. java,cpp,java"
+    "  --client-impl <impl>  Client CLI implementation, java|cpp|mixed"
     "  --joining-impl <impl> Implementation for membership-join-promote joining node, java|cpp"
     "  --time-limit <sec>    Workload duration, default 30"
     "  --concurrency <n>     Client concurrency, default 10"
@@ -106,6 +107,7 @@
   (let [nodes (:nodes opts)
         impls (or (:node-impl-list opts) (vec (repeat (count nodes) :java)))
         joining-impl (:joining-impl opts)
+        client-impl (:client-impl opts)
         allowed #{:java :cpp}]
     (when-not (= (count nodes) (count impls))
       (throw (ex-info "--node-impls count must match --node-count"
@@ -119,6 +121,9 @@
     (when-not (allowed joining-impl)
       (throw (ex-info "Unsupported joining node implementation"
                       {:impl joining-impl :allowed allowed})))
+    (when-not (#{:java :cpp :mixed} client-impl)
+      (throw (ex-info "Unsupported client implementation"
+                      {:impl client-impl :allowed #{:java :cpp :mixed}})))
     (-> opts
         (assoc :node-impls (zipmap nodes impls))
         (dissoc :node-impl-list))))
@@ -280,10 +285,8 @@
     ;; local-db starts and kills local OS processes, dispatching each node to
     ;; the Java or C++ command builder according to :node-impls.
     :db (raft-db/local-db)
-    ;; The Jepsen client is also Java CLI based today. That is fine for a
-    ;; mixed cluster as long as the Java CLI can talk to any leader, but it
-    ;; should become implementation-neutral if C++ exposes different command
-    ;; output or if client behavior itself must be tested across languages.
+    ;; The Jepsen client can drive operations through the Java CLI, the C++
+    ;; graft_smoke CLI, or by matching each target node's implementation.
     :client (raft-client/client opts)
     :nemesis (nemesis-object opts)
     :generator (generator opts)
@@ -293,6 +296,10 @@
     :concurrency (:concurrency opts)
     :snapshot-min-entries (:snapshot-min-entries opts)
     :snapshot-chunk-bytes (:snapshot-chunk-bytes opts)
+    :node-impls (:node-impls opts)
+    :client-impl (:client-impl opts)
+    :joining-impl (:joining-impl opts)
+    :cpp-bin (:cpp-bin opts)
     :repo-root (:repo-root opts)
     :workdir (:workdir opts)
     :jar-path (:jar-path opts)

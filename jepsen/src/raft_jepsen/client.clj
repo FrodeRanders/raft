@@ -10,12 +10,53 @@
   (when-let [trimmed (some-> text str/trim not-empty)]
     (json/parse-string trimmed true)))
 
+(defn- parse-bool [value]
+  (case (some-> value str/lower-case)
+    "true" true
+    "false" false
+    nil))
+
+(defn- parse-cpp-lines [text]
+  (let [raw (into {}
+                  (keep (fn [line]
+                          (when-let [[_ key value] (re-matches #"([^:]+):\s*(.*)" line)]
+                            [(keyword key) value])))
+                  (str/split-lines (or text "")))
+        result (cond
+                 (contains? raw :found)
+                 {:found (parse-bool (:found raw))
+                  :value (:value raw)}
+
+                 (contains? raw :cas.matched)
+                 {:key (:cas.key raw)
+                  :matched (parse-bool (:cas.matched raw))
+                  :expectedPresent (parse-bool (:cas.expected_present raw))
+                  :expectedValue (:cas.expected_value raw)
+                  :newValue (:cas.new_value raw)
+                  :currentPresent (parse-bool (:cas.current_present raw))
+                  :currentValue (:cas.current_value raw)}
+
+                 :else nil)]
+    (cond-> {:peerId (:peer_id raw)
+             :status (:status raw)
+             :success (parse-bool (:success raw))
+             :leaderId (:leader_id raw)
+             :leaderHost (:leader_host raw)
+             :leaderPort (some-> (:leader_port raw) parse-long)
+             :message (:message raw)}
+      result (assoc :result result))))
+
 (defn- java-command [jar-path & args]
-  ;; Jepsen operations are driven through the Java CLI even when the target
-  ;; node could eventually be C++. This tests protocol interoperability from
-  ;; one client surface. To test C++ client behavior too, replace this with a
-  ;; client-command dispatcher selected from test options.
   (vec (concat ["java" "-jar" jar-path] args)))
+
+(defn- cpp-command [cpp-bin & args]
+  (vec (concat [cpp-bin] args)))
+
+(defn- client-impl-for-node [test node]
+  (case (get test :client-impl :java)
+    :java :java
+    :cpp :cpp
+    :mixed (raft-db/node-impl test node)))
 
 (defn- run-command [repo-root command]
   (apply sh/sh (concat command [:dir repo-root])))
@@ -25,7 +66,7 @@
         success? (and (zero? exit) (#{"ACCEPTED" "OK"} status) (:success response))]
     (cond
       success? (assoc op :type :ok :value value)
-      (#{"RETRY" "REDIRECT"} status) (assoc op :type :fail :error status)
+      (#{"RETRY" "REDIRECT" "NOT_LEADER"} status) (assoc op :type :fail :error status)
       (#{"UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
       :else (assoc op :type :fail :error (or status :command-failed)))))
 
@@ -38,7 +79,7 @@
                     (:value result))))]
     (cond
       success? (assoc op :type :ok :value value)
-      (#{"RETRY" "REDIRECT"} status) (assoc op :type :fail :error status)
+      (#{"RETRY" "REDIRECT" "NOT_LEADER"} status) (assoc op :type :fail :error status)
       (#{"UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
       :else (assoc op :type :fail :error (or status :query-failed)))))
 
@@ -50,7 +91,7 @@
     (cond
       (and success? matched?) (assoc op :type :ok)
       (and success? (contains? result :matched)) (assoc op :type :fail :error :cas-mismatch)
-      (#{"RETRY" "REDIRECT"} status) (assoc op :type :fail :error status)
+      (#{"RETRY" "REDIRECT" "NOT_LEADER"} status) (assoc op :type :fail :error status)
       (#{"UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
       :else (assoc op :type :fail :error (or status :command-failed)))))
 
@@ -64,7 +105,7 @@
                                   :type (:type result)}
                              :extra {:rawResponse (:raw-response result)}})))
 
-(defrecord RaftCliClient [node repo-root jar-path]
+(defrecord RaftCliClient [node repo-root jar-path cpp-bin]
   client/Client
   (open! [this _test node]
     (assoc this :node node))
@@ -72,6 +113,9 @@
     this)
   (invoke! [this test op]
     (let [target (raft-db/peer-spec test node)
+          host "127.0.0.1"
+          port (str (raft-db/node-port test node))
+          impl (client-impl-for-node test node)
           key (or (:key op) (:key test))
           cli-key (str key)
           value (some-> (:value op) str)]
@@ -79,8 +123,13 @@
         (case (:f op)
           :write (let [{:keys [exit out err]}
                        (run-command repo-root
-                                    (java-command jar-path "command" "--json" "put" target cli-key value))
-                       response (or (parse-json out) {})]
+                                    (case impl
+                                      :java (java-command jar-path "command" "--json" "put" target cli-key value)
+                                      :cpp (cpp-command cpp-bin "client-put" host port cli-key value "jepsen-cpp-client")))
+                       response (or (case impl
+                                      :java (parse-json out)
+                                      :cpp (parse-cpp-lines out))
+                                    {})]
                    (let [result (-> op
                                     (classify-write exit response key value)
                                     (assoc :raw-response response :stderr err))]
@@ -88,8 +137,13 @@
                      result))
           :read (let [{:keys [exit out err]}
                       (run-command repo-root
-                                   (java-command jar-path "query" "--json" "get" target cli-key))
-                      response (or (parse-json out) {})]
+                                   (case impl
+                                     :java (java-command jar-path "query" "--json" "get" target cli-key)
+                                     :cpp (cpp-command cpp-bin "client-get" host port cli-key "jepsen-cpp-client")))
+                      response (or (case impl
+                                     :java (parse-json out)
+                                     :cpp (parse-cpp-lines out))
+                                   {})]
                   (let [result (-> op
                                     (classify-read exit response key)
                                     (assoc :raw-response response :stderr err))]
@@ -97,11 +151,18 @@
                     result))
           :cas (let [[expected new-value] (:value op)
                      expected-arg (if (nil? expected) "__nil__" (str expected))
+                     expected-present (if (nil? expected) "false" "true")
+                     expected-value (if (nil? expected) "" (str expected))
                      new-value (str new-value)
                      {:keys [exit out err]}
                      (run-command repo-root
-                                  (java-command jar-path "command" "--json" "cas" target cli-key expected-arg new-value))
-                     response (or (parse-json out) {})]
+                                  (case impl
+                                    :java (java-command jar-path "command" "--json" "cas" target cli-key expected-arg new-value)
+                                    :cpp (cpp-command cpp-bin "client-cas" host port cli-key expected-present expected-value new-value "jepsen-cpp-client")))
+                     response (or (case impl
+                                    :java (parse-json out)
+                                    :cpp (parse-cpp-lines out))
+                                  {})]
                  (let [result (-> op
                                   (classify-cas exit response)
                                   (assoc :raw-response response :stderr err))]
@@ -118,4 +179,8 @@
     this))
 
 (defn client [opts]
-  (->RaftCliClient nil (:repo-root opts) (raft-db/resolved-jar-path opts)))
+  (->RaftCliClient nil
+                   (:repo-root opts)
+                   (raft-db/resolved-jar-path opts)
+                   (when (#{:cpp :mixed} (:client-impl opts))
+                     (raft-db/resolved-cpp-bin opts))))

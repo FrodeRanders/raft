@@ -76,6 +76,7 @@ Supported options:
 - `--jar <path>`: explicit path to `raft-dist` jar
 - `--cpp-bin <path>`: explicit path to the C++ `graft_smoke` executable
 - `--node-impls <list>`: comma-separated implementation list matching `--node-count`, for example `java,cpp,java`
+- `--client-impl <impl>`: client CLI implementation, `java`, `cpp`, or `mixed`
 - `--joining-impl <impl>`: implementation for the extra `membership-join-promote` learner, `java` or `cpp`
 - `--time-limit <seconds>`: Jepsen workload duration
 - `--concurrency <n>`: Jepsen client concurrency
@@ -126,6 +127,8 @@ To run a static mixed cluster, build the C++ smoke binary and pass node implemen
 ```text
 ./run-local.sh --node-count 3 --node-impls java,cpp,java --time-limit 8 --concurrency 4
 ./run-local.sh --node-count 3 --node-impls cpp,java,java --time-limit 8 --concurrency 4
+./run-local.sh --node-count 3 --node-impls java,cpp,java --client-impl cpp --time-limit 8 --concurrency 4
+./run-local.sh --node-count 3 --node-impls cpp,java,java --client-impl mixed --time-limit 8 --concurrency 4
 ./run-local.sh --node-count 3 --node-impls java,cpp,java --nemesis membership-join-promote --joining-impl cpp
 ./run-suite.sh mixed
 ```
@@ -133,19 +136,24 @@ To run a static mixed cluster, build the C++ smoke binary and pass node implemen
 `--node-impls` must contain exactly one implementation per node. Supported values are `java` and `cpp`.
 The harness starts Java nodes with the shaded `raft-dist` jar and initial C++ nodes with `graft_smoke serve-active-persistent`.
 C++ membership joiners are started with `graft_smoke serve-persistent` and admitted through the same explicit join request as Java joiners.
-Client operations are still driven through the Java CLI, which intentionally exercises the shared wire protocol against both Java and C++ leaders/followers.
+
+`--client-impl` controls the CLI used by Jepsen operations:
+
+- `java`: use the Java JSON CLI for every operation; this is the default and keeps the normal suites independent from the experimental C++ build
+- `cpp`: use `graft_smoke client-put`, `client-get`, and `client-cas` for every operation
+- `mixed`: use the C++ CLI when the target node is configured as `cpp`, otherwise use the Java CLI
 
 Current mixed-run limitations:
 
 - only `membership-join-promote` currently supports choosing a C++ joining node
 - the suite does not force C++ leadership; it validates whichever implementation wins election
-- C++ client behavior is covered by the existing `experiments/graft-cpp/run-mixed-*.sh` scripts, not by this Jepsen client
+- the C++ client path currently covers key-value put/get/CAS operations, not every raft-dist administrative command
 
 ## Layout
 
 - `src/raft_jepsen/core.clj`: main Jepsen test definition and CLI entrypoint
 - `src/raft_jepsen/db.clj`: local process lifecycle for Java and optional C++ nodes
-- `src/raft_jepsen/client.clj`: shell-based client using the Java JSON KV CLI
+- `src/raft_jepsen/client.clj`: shell-based Java/C++ KV client adapter
 - `src/raft_jepsen/nemesis.clj`: process crash/restart nemesis
 - `src/raft_jepsen/observer.clj`: JSONL observability snapshots for correlation
 - `run-suite.sh`: serial suite runner for multiple Jepsen scenarios in separate processes
