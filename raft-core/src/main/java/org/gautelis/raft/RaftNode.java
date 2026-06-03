@@ -1802,11 +1802,33 @@ public class RaftNode {
         ClusterConfigurationCommand.Parsed configurationCommand = parsed.get();
         ClusterConfiguration updated;
         switch (configurationCommand.type()) {
+            case JOIN -> updated = applyJoinAdmission(baseConfiguration, configurationCommand.members(), updateTransport);
             case JOINT -> updated = applyJointConfiguration(baseConfiguration, configurationCommand.members(), updateTransport);
             case FINALIZE -> updated = applyFinalizedConfiguration(baseConfiguration, updateTransport);
             default -> throw new IllegalStateException("Unhandled configuration command " + configurationCommand.type());
         }
         return updated;
+    }
+
+    private ClusterConfiguration applyJoinAdmission(ClusterConfiguration baseConfiguration, List<Peer> proposedMembers, boolean updateTransport) {
+        if (!updateTransport) {
+            return baseConfiguration;
+        }
+        for (Peer peer : proposedMembers) {
+            if (peer == null || peer.getId() == null || peer.getId().isBlank()) {
+                continue;
+            }
+            registerPeer(peer);
+            if (!baseConfiguration.contains(peer.getId())) {
+                pendingJoinIds.add(peer.getId());
+                if (state == State.LEADER) {
+                    long next = Math.max(logStore.snapshotIndex() + 1, logStore.lastIndex() + 1);
+                    nextIndex.putIfAbsent(peer.getId(), next);
+                    matchIndex.putIfAbsent(peer.getId(), logStore.snapshotIndex());
+                }
+            }
+        }
+        return baseConfiguration;
     }
 
     private ClusterConfiguration applyJointConfiguration(ClusterConfiguration baseConfiguration, List<Peer> proposedMembers, boolean updateTransport) {
@@ -2326,6 +2348,10 @@ public class RaftNode {
         }
         ClusterConfigurationCommand.Parsed configurationCommand = parsed.get();
         return switch (configurationCommand.type()) {
+            case JOIN -> "join-admission command " + configurationCommand.members().stream()
+                    .map(peer -> peer.getId() + ":" + peer.getRole())
+                    .sorted()
+                    .toList();
             case JOINT -> "joint-configuration command " + configurationCommand.members().stream()
                     .map(peer -> peer.getId() + ":" + peer.getRole())
                     .sorted()

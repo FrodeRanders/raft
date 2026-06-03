@@ -21,6 +21,10 @@
 (defn- node-names [node-count]
   (mapv #(str "n" %) (range 1 (inc node-count))))
 
+(defn- parse-node-impls [value]
+  (mapv #(keyword (str/lower-case (str/trim %)))
+        (str/split (str value) #",")))
+
 (defn- default-repo-root []
   (.getCanonicalPath (io/file "..")))
 
@@ -30,6 +34,12 @@
 (defn- parse-args [args]
   (loop [opts {:repo-root (default-repo-root)
                :workdir (default-workdir)
+               ;; The harness currently models a homogeneous Java cluster.
+               ;; Mixed Java/C++ support should enter here as an explicit node
+               ;; implementation map, e.g. n1=java,n2=cpp, rather than by
+               ;; overloading node names or ports.
+               :node-impl-list nil
+               :cpp-bin nil
                :base-port 10080
                :time-limit 30
                :concurrency 10
@@ -48,6 +58,8 @@
       (let [[flag value & rest] remaining]
         (case flag
           "--jar" (recur (assoc opts :jar-path (.getCanonicalPath (io/file value))) rest)
+          "--cpp-bin" (recur (assoc opts :cpp-bin (.getCanonicalPath (io/file value))) rest)
+          "--node-impls" (recur (assoc opts :node-impl-list (parse-node-impls value)) rest)
           "--time-limit" (recur (assoc opts :time-limit (parse-long-arg value)) rest)
           "--concurrency" (recur (assoc opts :concurrency (parse-long-arg value)) rest)
           "--base-port" (recur (assoc opts :base-port (parse-long-arg value)) rest)
@@ -73,6 +85,8 @@
     ""
     "Options:"
     "  --jar <path>          Path to raft-dist jar"
+    "  --cpp-bin <path>      Path to graft_smoke for C++ nodes"
+    "  --node-impls <list>   Comma-separated node implementations, e.g. java,cpp,java"
     "  --time-limit <sec>    Workload duration, default 30"
     "  --concurrency <n>     Client concurrency, default 10"
     "  --base-port <port>    First node port, default 10080"
@@ -84,6 +98,23 @@
     "  --nemesis <mode>      none|crash-restart|persistence-loss-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower|membership-remove-leader|membership-remove-follower-partition-leader, default none"
     "  --nemesis-interval <sec> Nemesis interval, default 5"
     "  --workdir <path>      Local work directory, default ./work"]))
+
+(defn- normalize-opts [opts]
+  (let [nodes (:nodes opts)
+        impls (or (:node-impl-list opts) (vec (repeat (count nodes) :java)))
+        allowed #{:java :cpp}]
+    (when-not (= (count nodes) (count impls))
+      (throw (ex-info "--node-impls count must match --node-count"
+                      {:node-count (count nodes)
+                       :node-impl-count (count impls)
+                       :node-impls impls})))
+    (doseq [impl impls]
+      (when-not (allowed impl)
+        (throw (ex-info "Unsupported node implementation"
+                        {:impl impl :allowed allowed}))))
+    (-> opts
+        (assoc :node-impls (zipmap nodes impls))
+        (dissoc :node-impl-list))))
 
 (def cas-values ["v0" "v1" "v2" "v3" "v4"])
 
@@ -239,7 +270,13 @@
     :os os/noop
     :remote local-remote/remote
     :nodes (:nodes opts)
+    ;; local-db starts and kills local OS processes, dispatching each node to
+    ;; the Java or C++ command builder according to :node-impls.
     :db (raft-db/local-db)
+    ;; The Jepsen client is also Java CLI based today. That is fine for a
+    ;; mixed cluster as long as the Java CLI can talk to any leader, but it
+    ;; should become implementation-neutral if C++ exposes different command
+    ;; output or if client behavior itself must be tested across languages.
     :client (raft-client/client opts)
     :nemesis (nemesis-object opts)
     :generator (generator opts)
@@ -255,7 +292,7 @@
     :key (:key opts)}))
 
 (defn -main [& args]
-  (let [opts (parse-args args)]
+  (let [opts (normalize-opts (parse-args args))]
     (if (:help opts)
       (println (usage))
       (do

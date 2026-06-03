@@ -11,6 +11,10 @@
     (json/parse-string trimmed true)))
 
 (defn- java-command [jar-path & args]
+  ;; Jepsen operations are driven through the Java CLI even when the target
+  ;; node could eventually be C++. This tests protocol interoperability from
+  ;; one client surface. To test C++ client behavior too, replace this with a
+  ;; client-command dispatcher selected from test options.
   (vec (concat ["java" "-jar" jar-path] args)))
 
 (defn- run-command [repo-root command]
@@ -18,7 +22,7 @@
 
 (defn- classify-write [op exit response key value]
   (let [status (:status response)
-        success? (and (zero? exit) (= "ACCEPTED" status) (:success response))]
+        success? (and (zero? exit) (#{"ACCEPTED" "OK"} status) (:success response))]
     (cond
       success? (assoc op :type :ok :value value)
       (#{"RETRY" "REDIRECT"} status) (assoc op :type :fail :error status)
@@ -40,7 +44,7 @@
 
 (defn- classify-cas [op exit response]
   (let [status (:status response)
-        success? (and (zero? exit) (= "ACCEPTED" status) (:success response))
+        success? (and (zero? exit) (#{"ACCEPTED" "OK"} status) (:success response))
         result (:result response)
         matched? (= true (:matched result))]
     (cond

@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -74,5 +75,16 @@ class ClusterConfigurationTest {
         assertFalse(configuration.isVoter("L"));
         assertTrue(configuration.hasJointMajority(List.of("A", "B")));
         assertFalse(configuration.hasJointMajority(List.of("A")));
+    }
+
+    @Test
+    void joinCommandIsRecognizedAsInternalMembershipCommand() {
+        byte[] command = ClusterConfigurationCommand.join(new Peer("D", null, Peer.Role.VOTER));
+
+        var parsed = ClusterConfigurationCommand.parse(command).orElseThrow();
+
+        assertTrue(ClusterConfigurationCommand.isInternalCommand(command));
+        assertEquals(ClusterConfigurationCommand.Type.JOIN, parsed.type());
+        assertEquals(List.of(new Peer("D", null, Peer.Role.VOTER)), parsed.members());
     }
 }

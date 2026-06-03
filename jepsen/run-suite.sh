@@ -10,11 +10,13 @@ Usage: ./run-suite.sh [suite] [extra run-local args...]
 Suites:
   smoke     baseline + crash-restart + partition-one
   extended  richer validated local scenarios
+  mixed     static Java/C++ interop smoke cases
   all       smoke + extended
 
 Examples:
   ./run-suite.sh
   ./run-suite.sh smoke
+  ./run-suite.sh mixed --cpp-bin ../experiments/graft-cpp/build/graft_smoke
   ./run-suite.sh extended --time-limit 30 --concurrency 12
 EOF
 }
@@ -22,7 +24,7 @@ EOF
 suite="all"
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    smoke|extended|all)
+    smoke|extended|mixed|all)
       suite="$1"
       shift
       ;;
@@ -84,12 +86,20 @@ run_extended() {
   run_case seven-node-partition-leader-minority 21380 --time-limit 20 --concurrency 10 --node-count 7 --nemesis partition-leader-minority --nemesis-interval 5
 }
 
+run_mixed() {
+  run_case mixed-java-leader-cpp-follower 21480 --time-limit 8 --concurrency 4 --node-count 3 --node-impls java,cpp,java
+  run_case mixed-cpp-first 21580 --time-limit 8 --concurrency 4 --node-count 3 --node-impls cpp,java,java
+}
+
 case "${suite}" in
   smoke)
     run_smoke
     ;;
   extended)
     run_extended
+    ;;
+  mixed)
+    run_mixed
     ;;
   all)
     run_smoke

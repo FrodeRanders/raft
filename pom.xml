@@ -30,12 +30,12 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>21</maven.compiler.release>
-        <log4j.version>2.25.4</log4j.version>
-        <slf4j.version>2.0.17</slf4j.version>
+        <log4j.version>2.26.0</log4j.version>
+        <slf4j.version>2.0.18</slf4j.version>
         <vopn.version>3.0-SNAPSHOT</vopn.version>
-        <junit.version>6.0.3</junit.version>
-        <netty.version>4.2.12.Final</netty.version>
-        <protobuf.version>4.34.1</protobuf.version>
+        <junit.version>6.1.0</junit.version>
+        <netty.version>4.2.14.Final</netty.version>
+        <protobuf.version>4.35.0</protobuf.version> <!-- must match PROTOC_VERSION in scripts/protoc-lite.sh -->
         <protobuf.plugin.version>0.6.1</protobuf.plugin.version>
         <skipJepsenTests>false</skipJepsenTests>
     </properties>
@@ -229,4 +229,28 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <profile>
+            <id>deps</id>          <!-- mvn -Pdeps validate -->
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>versions-maven-plugin</artifactId>
+                        <version>2.18.0</version>
+                        <executions>
+                            <execution>
+                                <id>show‑updates</id>
+                                <phase>validate</phase>   <!-- any phase works; validate is fast -->
+                                <goals>
+                                    <goal>display-dependency-updates</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

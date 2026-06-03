@@ -29,6 +29,7 @@ import java.util.Optional;
  */
 final class ClusterConfigurationCommand {
     enum Type {
+        JOIN,
         JOINT,
         FINALIZE
     }
@@ -57,6 +58,21 @@ final class ClusterConfigurationCommand {
                 .toByteArray();
     }
 
+    static byte[] join(Peer member) {
+        var peerBuilder = org.gautelis.raft.proto.PeerSpec.newBuilder()
+                .setId(member.getId())
+                .setRole(member.getRole().name());
+        if (member.getAddress() != null) {
+            peerBuilder.setHost(member.getAddress().getHostString())
+                    .setPort(member.getAddress().getPort());
+        }
+        return org.gautelis.raft.proto.InternalRaftCommand.newBuilder()
+                .setJoin(org.gautelis.raft.proto.JoinPeerCommand.newBuilder()
+                        .setMember(peerBuilder))
+                .build()
+                .toByteArray();
+    }
+
     static byte[] finalizeTransition() {
         return org.gautelis.raft.proto.InternalRaftCommand.newBuilder()
                 .setFinalize(org.gautelis.raft.proto.FinalizeConfigurationCommand.newBuilder().build())
@@ -78,17 +94,22 @@ final class ClusterConfigurationCommand {
             case JOINT -> {
                 List<Peer> members = new ArrayList<>();
                 for (org.gautelis.raft.proto.PeerSpec member : parsed.getJoint().getMembersList()) {
-                    InetSocketAddress address = member.getHost().isBlank() || member.getPort() <= 0
-                            ? null
-                            : new InetSocketAddress(member.getHost(), member.getPort());
-                    Peer.Role role = member.getRole().isBlank() ? Peer.Role.VOTER : Peer.Role.valueOf(member.getRole());
-                    members.add(new Peer(member.getId(), address, role));
+                    members.add(toPeer(member));
                 }
                 yield Optional.of(new Parsed(Type.JOINT, members));
             }
             case FINALIZE -> Optional.of(new Parsed(Type.FINALIZE, List.of()));
+            case JOIN -> Optional.of(new Parsed(Type.JOIN, List.of(toPeer(parsed.getJoin().getMember()))));
             case COMMAND_NOT_SET -> Optional.empty();
         };
+    }
+
+    private static Peer toPeer(org.gautelis.raft.proto.PeerSpec member) {
+        InetSocketAddress address = member.getHost().isBlank() || member.getPort() <= 0
+                ? null
+                : new InetSocketAddress(member.getHost(), member.getPort());
+        Peer.Role role = member.getRole().isBlank() ? Peer.Role.VOTER : Peer.Role.valueOf(member.getRole());
+        return new Peer(member.getId(), address, role);
     }
 
     static boolean isInternalCommand(byte[] payload) {

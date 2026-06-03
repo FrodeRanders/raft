@@ -48,6 +48,12 @@
 (defn node-log-file [test node]
   (io/file (node-root test node) "raft.log"))
 
+(defn node-impl [test node]
+  (get (:node-impls test) node :java))
+
+(defn- cpp-state-file [test node]
+  (io/file (node-root test node) "graft.state"))
+
 (defn- ensure-dir! [^File dir]
   (.mkdirs dir)
   dir)
@@ -96,6 +102,10 @@
           :else false)))))
 
 (defn- launch-node! [test node command preserve-state?]
+  ;; Shared local process lifecycle for all node implementations. The caller
+  ;; is responsible for building the implementation-specific command line; this
+  ;; function only handles work directories, stdout/stderr capture, and port
+  ;; readiness. That makes it the right boundary for adding C++ nodes.
   (let [root (node-root test node)
         data-dir (node-data-dir test node)
         log-file (node-log-file test node)
@@ -126,7 +136,18 @@
       (if-let [jar (first jars)]
         (.getAbsolutePath ^File jar)
         (throw (ex-info "No raft-dist jar found; build raft-dist first"
-                         {:target-dir (.getAbsolutePath target-dir)}))))))
+                        {:target-dir (.getAbsolutePath target-dir)}))))))
+
+(defn resolved-cpp-bin [test]
+  (if-let [configured (:cpp-bin test)]
+    (.getAbsolutePath (io/file configured))
+    (let [candidates [(io/file (repo-root test) "experiments" "graft-cpp" "build" "graft_smoke")
+                      (io/file "/tmp" "graft-cpp-build" "graft_smoke")]
+          found (first (filter #(.canExecute ^File %) candidates))]
+      (if found
+        (.getAbsolutePath ^File found)
+        (throw (ex-info "No executable graft_smoke found; build experiments/graft-cpp or pass --cpp-bin"
+                        {:candidates (mapv #(.getAbsolutePath ^File %) candidates)}))))))
 
 (defn- java-props [test node]
   (vec
@@ -141,24 +162,39 @@
   ([test node]
    (start-node! test node false))
   ([test node preserve-state?]
+   ;; Mixed clusters dispatch here. Java and C++ nodes share stable peer ids,
+   ;; host-local ports, and the generic process lifecycle above; only the
+   ;; command line and persistence path differ by implementation.
    (when-not (process-alive? (get @processes node))
-     (let [self-spec (peer-spec test node)
-           peer-specs (->> (:nodes test)
+     (let [peer-specs (->> (:nodes test)
                            (remove #(= % node))
                            (map #(peer-spec test %)))
-           command (vec (concat ["java"]
-                                (java-props test node)
-                                ["-jar"
-                                 (resolved-jar-path test)
-                                 self-spec]
-                                peer-specs))
-           ]
+           command (case (node-impl test node)
+                     :java (vec (concat ["java"]
+                                        (java-props test node)
+                                        ["-jar"
+                                         (resolved-jar-path test)
+                                         (peer-spec test node)]
+                                        peer-specs))
+                     :cpp (vec (concat [(resolved-cpp-bin test)
+                                        "serve-active-persistent"
+                                        "127.0.0.1"
+                                        (str (node-port test node))
+                                        (str node)
+                                        (.getAbsolutePath (cpp-state-file test node))
+                                        "0"
+                                        "0"
+                                        "0"]
+                                       peer-specs)))]
        (launch-node! test node command preserve-state?)))))
 
 (defn start-joining-node!
   ([test node]
    (start-joining-node! test node false))
   ([test node preserve-state?]
+   ;; Membership nemeses currently introduce Java learner nodes. Mixed-cluster
+   ;; coverage needs this path to choose whether the joining member is Java or
+   ;; C++, and to use the matching CLI/startup convention for join mode.
    (when-not (process-alive? (get @processes node))
      (let [seed (membership-seed-node test)
            command (vec (concat ["java"]

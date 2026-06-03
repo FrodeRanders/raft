@@ -9,12 +9,14 @@ This directory contains the first Jepsen harness for the repository: a local key
 - linearizable CAS-register workload over a single hot key
 - optional membership-change scenarios for join, role changes, and explicit removal
 - optional multi-key and snapshot-stress runs for broader recovery coverage
+- optional static mixed Java/C++ clusters when `graft_smoke` is available
 
 ## Prerequisites
 
 - Java 21
 - Clojure CLI
 - built runnable jar
+- built `experiments/graft-cpp/build/graft_smoke` for mixed Java/C++ runs
 - non-interactive `sudo` for partition tests
 
 Build the jar from the repository root:
@@ -60,6 +62,7 @@ Optional overrides:
 ./run-local.sh --node-count 5 --nemesis membership-remove-follower-partition-leader
 ./run-suite.sh smoke
 ./run-suite.sh extended
+./run-suite.sh mixed
 ./run-suite.sh all
 ```
 
@@ -71,6 +74,8 @@ The harness uses host-local ports and a shared packet-filter helper, so two loca
 Supported options:
 
 - `--jar <path>`: explicit path to `raft-dist` jar
+- `--cpp-bin <path>`: explicit path to the C++ `graft_smoke` executable
+- `--node-impls <list>`: comma-separated implementation list matching `--node-count`, for example `java,cpp,java`
 - `--time-limit <seconds>`: Jepsen workload duration
 - `--concurrency <n>`: Jepsen client concurrency
 - `--base-port <port>`: first node port, default `10080`
@@ -112,11 +117,32 @@ The workload layer can also be varied:
 - multi-key workload: independent per-key histories to catch routing or state-application errors that do not appear on a single key
 - aggressive snapshot settings: lower `--snapshot-min-entries` and smaller `--snapshot-chunk-bytes` to force snapshot creation and transfer during fault runs
 
+## Mixed Java/C++ Runs
+
+The default Jepsen suites remain Java-only so normal validation does not depend on the experimental C++ build.
+To run a static mixed cluster, build the C++ smoke binary and pass node implementations explicitly:
+
+```text
+./run-local.sh --node-count 3 --node-impls java,cpp,java --time-limit 8 --concurrency 4
+./run-local.sh --node-count 3 --node-impls cpp,java,java --time-limit 8 --concurrency 4
+./run-suite.sh mixed
+```
+
+`--node-impls` must contain exactly one implementation per node. Supported values are `java` and `cpp`.
+The harness starts Java nodes with the shaded `raft-dist` jar and C++ nodes with `graft_smoke serve-active-persistent`.
+Client operations are still driven through the Java CLI, which intentionally exercises the shared wire protocol against both Java and C++ leaders/followers.
+
+Current mixed-run limitations:
+
+- membership nemeses still add Java learner nodes
+- the suite does not force C++ leadership; it validates whichever implementation wins election
+- C++ client behavior is covered by the existing `experiments/graft-cpp/run-mixed-*.sh` scripts, not by this Jepsen client
+
 ## Layout
 
 - `src/raft_jepsen/core.clj`: main Jepsen test definition and CLI entrypoint
-- `src/raft_jepsen/db.clj`: local process lifecycle for N JVM nodes
-- `src/raft_jepsen/client.clj`: shell-based client using the JSON KV CLI
+- `src/raft_jepsen/db.clj`: local process lifecycle for Java and optional C++ nodes
+- `src/raft_jepsen/client.clj`: shell-based client using the Java JSON KV CLI
 - `src/raft_jepsen/nemesis.clj`: process crash/restart nemesis
 - `src/raft_jepsen/observer.clj`: JSONL observability snapshots for correlation
 - `run-suite.sh`: serial suite runner for multiple Jepsen scenarios in separate processes
@@ -131,6 +157,7 @@ The workload layer can also be varied:
 - `run-suite.sh` supports three suite levels:
   - `smoke`: baseline, crash/restart, and `partition-one`
   - `extended`: the richer validated scenarios including persistence loss, leader partitions, membership changes, multi-key, snapshot stress, and 7-node minority partition
+  - `mixed`: static Java/C++ interop smoke cases
   - `all`: both suites in one serial run
 - Extra arguments passed to `run-suite.sh` are forwarded to every `run-local.sh` invocation in the suite. For example, `./run-suite.sh smoke --concurrency 12` applies that override to each smoke case.
 - The partition helper re-execs itself through `sudo -n` when needed. Jepsen invokes it non-interactively, so passwordless sudo must be configured for the helper path.

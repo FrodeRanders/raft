@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # This should match /project/properties/protobuf.version in pom.xml
-PROTOC_VERSION="4.33.5"
+PROTOC_VERSION="4.35.0"
 
 os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch_name="$(uname -m)"
@@ -22,12 +22,12 @@ esac
 
 protoc_bin="${HOME}/.m2/repository/com/google/protobuf/protoc/${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${os_id}-${arch_id}.exe"
 
-if [[ ! -x "$protoc_bin" ]] && command -v protoc >/dev/null 2>&1; then
-  protoc_bin="$(command -v protoc)"
+if [[ -f "$protoc_bin" && ! -x "$protoc_bin" ]]; then
+  chmod +x "$protoc_bin"
 fi
 
 if [[ ! -x "$protoc_bin" ]]; then
-  echo "protoc not found; install it or download com.google.protobuf:protoc:${PROTOC_VERSION} (${protoc_bin})" >&2
+  echo "protoc not found; run Maven to download com.google.protobuf:protoc:${PROTOC_VERSION} (${protoc_bin})" >&2
   exit 1
 fi
 
