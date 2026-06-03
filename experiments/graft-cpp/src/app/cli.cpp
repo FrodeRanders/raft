@@ -38,6 +38,7 @@ namespace {
         std::cerr
                 << "Usage:\n"
                 << "  graft_smoke cluster-summary <host> <port> [peer-id]\n"
+                << "  graft_smoke reconfiguration-status <host> <port> [peer-id]\n"
                 << "  graft_smoke telemetry <host> <port> [peer-id]\n"
                 << "  graft_smoke client-put <host> <port> <key> <value> [peer-id]\n"
                 << "  graft_smoke client-cas <host> <port> <key> <expected-present> <expected-value> <new-value> [peer-id]\n"
@@ -102,15 +103,19 @@ namespace {
             const std::string spec = argv[i];
             const auto at = spec.find('@');
             const auto colon = spec.rfind(':');
+            const auto slash = spec.find('/', colon == std::string::npos ? 0 : colon);
             if (at == std::string::npos || colon == std::string::npos || at == 0 || colon <= at + 1 || colon == spec.
-                size() - 1) {
+                size() - 1 || (slash != std::string::npos && slash == spec.size() - 1)) {
                 throw std::runtime_error("invalid peer spec: " + spec);
             }
 
             peers.push_back(graft::PeerEndpoint{
                 .peer_id = spec.substr(0, at),
                 .host = spec.substr(at + 1, colon - at - 1),
-                .port = parse_port(spec.substr(colon + 1)),
+                .port = parse_port(spec.substr(colon + 1, slash == std::string::npos
+                                                            ? std::string::npos
+                                                            : slash - colon - 1)),
+                .role = slash == std::string::npos ? "VOTER" : normalize_peer_role(spec.substr(slash + 1)),
             });
         }
         if (peers.empty()) {
@@ -250,6 +255,55 @@ namespace {
                     << "member[" << member.peer_id() << "]:"
                     << " local=" << (member.local() ? "true" : "false")
                     << " voting=" << (member.voting() ? "true" : "false")
+                    << " next_index=" << member.next_index()
+                    << " match_index=" << member.match_index()
+                    << " lag=" << member.lag()
+                    << '\n';
+        }
+
+        return response.success() ? 0 : 2;
+    }
+
+    int run_reconfiguration_status(const std::string &host, std::uint16_t port, const std::string &peer_id) {
+        boost::asio::io_context io_context;
+        graft::RaftClient client(io_context);
+
+        raft::ReconfigurationStatusRequest request;
+        request.set_term(0);
+        request.set_peer_id(peer_id);
+
+        const auto response = client.call<raft::ReconfigurationStatusRequest, raft::ReconfigurationStatusResponse>(
+            host,
+            port,
+            "ReconfigurationStatusRequest",
+            request,
+            "ReconfigurationStatusResponse"
+        );
+
+        std::cout
+                << "peer_id: " << response.peer_id() << '\n'
+                << "status: " << response.status() << '\n'
+                << "success: " << (response.success() ? "true" : "false") << '\n'
+                << "leader_id: " << response.leader_id() << '\n'
+                << "state: " << response.state() << '\n'
+                << "reconfiguration_active: " << (response.reconfiguration_active() ? "true" : "false") << '\n'
+                << "joint_consensus: " << (response.joint_consensus() ? "true" : "false") << '\n'
+                << "cluster_health: " << response.cluster_health() << '\n'
+                << "cluster_status_reason: " << response.cluster_status_reason() << '\n'
+                << "quorum_available: " << (response.quorum_available() ? "true" : "false") << '\n'
+                << "current_quorum_available: " << (response.current_quorum_available() ? "true" : "false") << '\n'
+                << "next_quorum_available: " << (response.next_quorum_available() ? "true" : "false") << '\n'
+                << "members: " << response.members_size() << '\n';
+
+        for (const auto &member: response.members()) {
+            std::cout
+                    << "member[" << member.peer_id() << "]:"
+                    << " local=" << (member.local() ? "true" : "false")
+                    << " voting=" << (member.voting() ? "true" : "false")
+                    << " role=" << member.role()
+                    << " current_role=" << member.current_role()
+                    << " next_role=" << member.next_role()
+                    << " transition=" << member.role_transition()
                     << " next_index=" << member.next_index()
                     << " match_index=" << member.match_index()
                     << " lag=" << member.lag()
@@ -514,7 +568,7 @@ namespace {
             spec->set_id(member.peer_id);
             spec->set_host(member.host);
             spec->set_port(member.port);
-            spec->set_role("VOTER");
+            spec->set_role(member.role.empty() ? "VOTER" : normalize_peer_role(member.role));
         }
 
         const auto response = client.call<raft::ReconfigureClusterRequest, raft::ReconfigureClusterResponse>(
@@ -1244,6 +1298,7 @@ int run_cli(int argc, char **argv) {
         const auto uses_host_port =
                 command == "cluster-summary" ||
                 command == "telemetry" ||
+                command == "reconfiguration-status" ||
                 command == "client-put" ||
                 command == "client-cas" ||
                 command == "client-get" ||
@@ -1276,6 +1331,8 @@ int run_cli(int argc, char **argv) {
             exit_code = run_cluster_summary(host, port, peer_id_or_default(argc, argv, 4));
         } else if (command == "telemetry") {
             exit_code = run_telemetry(host, port, peer_id_or_default(argc, argv, 4));
+        } else if (command == "reconfiguration-status") {
+            exit_code = run_reconfiguration_status(host, port, peer_id_or_default(argc, argv, 4));
         } else if (command == "client-put") {
             if (argc < 6) {
                 print_usage();

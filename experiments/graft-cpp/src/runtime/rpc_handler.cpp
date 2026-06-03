@@ -92,6 +92,19 @@ namespace graft {
         return response;
     }
 
+    std::optional<raft::ReconfigurationStatusResponse> StubRpcHandler::on_reconfiguration_status_request(
+        const raft::ReconfigurationStatusRequest &request) {
+        raft::ReconfigurationStatusResponse response;
+        response.set_term(request.term());
+        response.set_peer_id(peer_id_);
+        response.set_success(false);
+        response.set_status("UNSUPPORTED");
+        response.set_state("FOLLOWER");
+        response.set_cluster_health("UNKNOWN");
+        response.set_cluster_status_reason("stub");
+        return response;
+    }
+
     std::optional<raft::VoteResponse> StubRpcHandler::on_vote_request(const raft::VoteRequest &request) {
         raft::VoteResponse response;
         response.set_peer_id(peer_id_);
@@ -475,26 +488,82 @@ namespace graft {
             return response;
         }
 
-        if (request.action() != "joint" && request.action() != "finalize") {
+        const auto action = normalize_peer_role(request.action());
+        if (action != "JOINT" && action != "FINALIZE" && action != "PROMOTE" && action != "DEMOTE") {
             response.set_success(false);
             response.set_status("BAD_REQUEST");
-            response.set_message("supported actions are joint and finalize");
+            response.set_message("supported actions are joint, finalize, promote, and demote");
             return response;
         }
 
-        if (request.action() == "joint") {
+        if (action == "JOINT" || action == "PROMOTE" || action == "DEMOTE") {
             if (request.members().empty()) {
                 response.set_success(false);
                 response.set_status("BAD_REQUEST");
-                response.set_message("joint reconfigure requires members");
+                response.set_message("reconfigure action requires members");
                 return response;
+            }
+            if ((action == "PROMOTE" || action == "DEMOTE") && request.members_size() != 1) {
+                response.set_success(false);
+                response.set_status("BAD_REQUEST");
+                response.set_message("promote and demote require exactly one member");
+                return response;
+            }
+
+            std::vector<raft::PeerSpec> members;
+            if (action == "JOINT") {
+                members.reserve(request.members_size());
+                for (const auto &member: request.members()) {
+                    members.push_back(member);
+                }
+            } else {
+                const auto &target = request.members(0);
+                if (target.id().empty()) {
+                    response.set_success(false);
+                    response.set_status("BAD_REQUEST");
+                    response.set_message("target member id is required");
+                    return response;
+                }
+                if (!target.host().empty() && target.port() > 0) {
+                    known_peer_endpoints_[target.id()] = Endpoint{target.host(), target.port()};
+                }
+
+                auto add_member = [&](const std::string &peer_id, const std::string &role) {
+                    raft::PeerSpec spec;
+                    spec.set_id(peer_id);
+                    if (peer_id == node_->peer_id()) {
+                        if (local_endpoint_.has_value()) {
+                            spec.set_host(local_endpoint_->host);
+                            spec.set_port(local_endpoint_->port);
+                        }
+                    } else if (const auto found = known_peer_endpoints_.find(peer_id); found != known_peer_endpoints_.end()) {
+                        spec.set_host(found->second.host);
+                        spec.set_port(found->second.port);
+                    }
+                    spec.set_role(role);
+                    members.push_back(std::move(spec));
+                };
+
+                add_member(node_->peer_id(), "VOTER");
+                for (const auto &peer_id: recovered_peer_ids()) {
+                    add_member(peer_id, peer_id == target.id()
+                                            ? (action == "PROMOTE" ? "VOTER" : "LEARNER")
+                                            : (is_voting_member(peer_id) ? "VOTER" : "LEARNER"));
+                }
+                if (std::none_of(members.begin(), members.end(), [&](const raft::PeerSpec &member) {
+                    return member.id() == target.id();
+                })) {
+                    raft::PeerSpec spec = target;
+                    spec.set_role(action == "PROMOTE" ? "VOTER" : "LEARNER");
+                    members.push_back(std::move(spec));
+                }
             }
 
             std::vector<std::string> peer_ids;
             std::vector<Endpoint> endpoints;
-            peer_ids.reserve(request.members_size());
-            endpoints.reserve(request.members_size());
-            for (const auto &member: request.members()) {
+            peer_ids.reserve(members.size());
+            endpoints.reserve(members.size());
+            for (const auto &member: members) {
                 if (member.id().empty() || member.id() == node_->peer_id()) {
                     continue;
                 }
@@ -505,7 +574,7 @@ namespace graft {
 
             raft::InternalRaftCommand internal;
             bool includes_self = false;
-            for (const auto &member: request.members()) {
+            for (const auto &member: members) {
                 if (member.id() == node_->peer_id()) {
                     includes_self = true;
                 }
@@ -532,9 +601,25 @@ namespace graft {
                 membership_updater_(peer_ids, endpoints);
             }
 
+            if (action == "PROMOTE" || action == "DEMOTE") {
+                raft::InternalRaftCommand finalize;
+                finalize.mutable_finalize();
+                if (!internal_command_replicator_ ||
+                    !internal_command_replicator_(RaftNode::encode_internal_command(finalize))) {
+                    response.set_success(false);
+                    response.set_status("RETRY");
+                    response.set_message("role change was committed but finalize was not committed");
+                    return response;
+                }
+            }
+
             response.set_success(true);
             response.set_status("ACCEPTED");
-            response.set_message("joint configuration committed");
+            response.set_message(action == "PROMOTE"
+                                     ? "learner promotion committed"
+                                     : action == "DEMOTE"
+                                           ? "voter demotion committed"
+                                           : "joint configuration committed");
             response.set_leader_id(node_->peer_id());
             return response;
         }
@@ -552,6 +637,37 @@ namespace graft {
         response.set_status("ACCEPTED");
         response.set_message("configuration finalize committed");
         response.set_leader_id(node_->peer_id());
+        return response;
+    }
+
+    std::optional<raft::ReconfigurationStatusResponse> InMemoryRpcHandler::on_reconfiguration_status_request(
+        const raft::ReconfigurationStatusRequest &) {
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        raft::ReconfigurationStatusResponse response;
+        response.set_observed_at_millis(now);
+        response.set_term(node_->current_term());
+        response.set_peer_id(node_->peer_id());
+        response.set_success(true);
+        response.set_status("OK");
+        response.set_state(role_to_string(node_->role()));
+        response.set_leader_id(node_->leader_id().value_or(""));
+        response.set_reconfiguration_active(node_->joint_consensus());
+        response.set_joint_consensus(node_->joint_consensus());
+        response.set_reconfiguration_age_millis(0);
+        response.set_cluster_health("HEALTHY");
+        response.set_cluster_status_reason("ok");
+        response.set_quorum_available(true);
+        response.set_current_quorum_available(true);
+        response.set_next_quorum_available(true);
+
+        raft::ClusterSummaryResponse summary;
+        add_summary_members(summary);
+        for (const auto &member: summary.members()) {
+            auto *target = response.add_members();
+            *target = member;
+        }
         return response;
     }
 
@@ -654,6 +770,8 @@ namespace graft {
         member.set_role(voting ? "VOTER" : "LEARNER");
         member.set_current_role(voting ? "VOTER" : "LEARNER");
         member.set_next_role(voting ? "VOTER" : "LEARNER");
+        member.set_role_transition("steady");
+        member.set_transition_age_millis(0);
         member.set_reachable(true);
         member.set_health("healthy");
         member.set_freshness(local ? "current" : "unknown");
@@ -779,6 +897,11 @@ namespace graft {
         auto response = delegate_.on_reconfigure_cluster_request(request);
         persist();
         return response;
+    }
+
+    std::optional<raft::ReconfigurationStatusResponse> PersistentRpcHandler::on_reconfiguration_status_request(
+        const raft::ReconfigurationStatusRequest &request) {
+        return delegate_.on_reconfiguration_status_request(request);
     }
 
     std::optional<raft::VoteResponse> PersistentRpcHandler::on_vote_request(const raft::VoteRequest &request) {

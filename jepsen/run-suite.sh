@@ -90,8 +90,9 @@ run_mixed() {
   run_case mixed-java-leader-cpp-follower 21480 --time-limit 8 --concurrency 4 --node-count 3 --node-impls java,cpp,java
   run_case mixed-cpp-first 21580 --time-limit 8 --concurrency 4 --node-count 3 --node-impls cpp,java,java
   run_case mixed-cpp-joiner 21680 --time-limit 12 --concurrency 4 --node-count 3 --node-impls java,cpp,java --nemesis membership-join-promote --nemesis-interval 3 --joining-impl cpp
-  run_case mixed-cpp-client 21780 --time-limit 8 --concurrency 4 --node-count 3 --node-impls java,cpp,java --client-impl cpp
-  run_case mixed-target-client 21880 --time-limit 8 --concurrency 4 --node-count 3 --node-impls cpp,java,java --client-impl mixed
+  run_case mixed-cpp-leader-cpp-joiner 21780 --time-limit 12 --concurrency 4 --node-count 3 --node-impls cpp,java,java --nemesis membership-join-promote --nemesis-interval 3 --joining-impl cpp
+  run_case mixed-cpp-client 21880 --time-limit 8 --concurrency 4 --node-count 3 --node-impls java,cpp,java --client-impl cpp
+  run_case mixed-target-client 21980 --time-limit 8 --concurrency 4 --node-count 3 --node-impls cpp,java,java --client-impl mixed
 }
 
 case "${suite}" in

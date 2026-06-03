@@ -32,6 +32,7 @@ namespace graft {
         std::string peer_id;
         std::string host;
         std::uint16_t port;
+        std::string role;
     };
 
     class RaftRuntime {

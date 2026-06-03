@@ -190,6 +190,18 @@ namespace graft {
                 return std::nullopt;
             }
 
+            if (request_envelope.type() == "ReconfigurationStatusRequest") {
+                raft::ReconfigurationStatusRequest request;
+                if (!request.ParseFromString(request_envelope.payload())) {
+                    throw std::runtime_error("failed to parse ReconfigurationStatusRequest");
+                }
+
+                if (auto response = handler_->on_reconfiguration_status_request(request); response.has_value()) {
+                    return wrap(request_envelope, "ReconfigurationStatusResponse", *response);
+                }
+                return std::nullopt;
+            }
+
             if (request_envelope.type() == "AppendEntriesRequest") {
                 raft::AppendEntriesRequest request;
                 if (!request.ParseFromString(request_envelope.payload())) {

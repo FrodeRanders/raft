@@ -130,12 +130,14 @@ To run a static mixed cluster, build the C++ smoke binary and pass node implemen
 ./run-local.sh --node-count 3 --node-impls java,cpp,java --client-impl cpp --time-limit 8 --concurrency 4
 ./run-local.sh --node-count 3 --node-impls cpp,java,java --client-impl mixed --time-limit 8 --concurrency 4
 ./run-local.sh --node-count 3 --node-impls java,cpp,java --nemesis membership-join-promote --joining-impl cpp
+./run-local.sh --node-count 3 --node-impls cpp,java,java --nemesis membership-join-promote --joining-impl cpp
 ./run-suite.sh mixed
 ```
 
 `--node-impls` must contain exactly one implementation per node. Supported values are `java` and `cpp`.
 The harness starts Java nodes with the shaded `raft-dist` jar and initial C++ nodes with `graft_smoke serve-active-persistent`.
 C++ membership joiners are started with `graft_smoke serve-persistent` and admitted through the same explicit join request as Java joiners.
+The mixed suite includes a C++-first membership case, which exercises C++ leader handling for join admission, reconfiguration status, and learner promotion.
 
 `--client-impl` controls the CLI used by Jepsen operations:
 
@@ -146,7 +148,6 @@ C++ membership joiners are started with `graft_smoke serve-persistent` and admit
 Current mixed-run limitations:
 
 - only `membership-join-promote` currently supports choosing a C++ joining node
-- the suite does not force C++ leadership; it validates whichever implementation wins election
 - the C++ client path currently covers key-value put/get/CAS operations, not every raft-dist administrative command
 
 ## Layout

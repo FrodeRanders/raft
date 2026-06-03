@@ -1007,8 +1007,12 @@ namespace graft {
                 peer_ids.reserve(command.joint().members_size());
                 for (const auto &member: command.joint().members()) {
                     if (!member.id().empty() && member.id() != peer_id_) {
-                        peer_ids.push_back(member.id());
                         pending_join_ids_.erase(member.id());
+                        auto &progress = peer_progress_[member.id()];
+                        progress.next_index = std::max<std::int64_t>(1, progress.next_index);
+                        if (member.role() == "VOTER") {
+                            peer_ids.push_back(member.id());
+                        }
                     }
                 }
                 reconfigure_voting_peers_locked(std::move(peer_ids));

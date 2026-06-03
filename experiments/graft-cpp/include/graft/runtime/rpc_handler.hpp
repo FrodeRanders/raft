@@ -53,6 +53,9 @@ namespace graft {
         virtual std::optional<raft::ReconfigureClusterResponse> on_reconfigure_cluster_request(
             const raft::ReconfigureClusterRequest &request) = 0;
 
+        virtual std::optional<raft::ReconfigurationStatusResponse> on_reconfiguration_status_request(
+            const raft::ReconfigurationStatusRequest &request) = 0;
+
         virtual std::optional<raft::VoteResponse> on_vote_request(const raft::VoteRequest &request) = 0;
 
         virtual std::optional<raft::AppendEntriesResponse> on_append_entries_request(
@@ -85,6 +88,9 @@ namespace graft {
 
         std::optional<raft::ReconfigureClusterResponse> on_reconfigure_cluster_request(
             const raft::ReconfigureClusterRequest &request) override;
+
+        std::optional<raft::ReconfigurationStatusResponse> on_reconfiguration_status_request(
+            const raft::ReconfigurationStatusRequest &request) override;
 
         std::optional<raft::VoteResponse> on_vote_request(const raft::VoteRequest &request) override;
 
@@ -153,6 +159,9 @@ namespace graft {
 
         std::optional<raft::ReconfigureClusterResponse> on_reconfigure_cluster_request(
             const raft::ReconfigureClusterRequest &request) override;
+
+        std::optional<raft::ReconfigurationStatusResponse> on_reconfiguration_status_request(
+            const raft::ReconfigurationStatusRequest &request) override;
 
         std::optional<raft::AppendEntriesResponse>
         on_append_entries_request(const raft::AppendEntriesRequest &request) override;
@@ -224,6 +233,9 @@ namespace graft {
 
         std::optional<raft::ReconfigureClusterResponse> on_reconfigure_cluster_request(
             const raft::ReconfigureClusterRequest &request) override;
+
+        std::optional<raft::ReconfigurationStatusResponse> on_reconfiguration_status_request(
+            const raft::ReconfigurationStatusRequest &request) override;
 
         std::optional<raft::VoteResponse> on_vote_request(const raft::VoteRequest &request) override;
 
