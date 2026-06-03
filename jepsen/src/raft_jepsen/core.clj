@@ -39,6 +39,7 @@
                ;; implementation map, e.g. n1=java,n2=cpp, rather than by
                ;; overloading node names or ports.
                :node-impl-list nil
+               :joining-impl :java
                :cpp-bin nil
                :base-port 10080
                :time-limit 30
@@ -60,6 +61,7 @@
           "--jar" (recur (assoc opts :jar-path (.getCanonicalPath (io/file value))) rest)
           "--cpp-bin" (recur (assoc opts :cpp-bin (.getCanonicalPath (io/file value))) rest)
           "--node-impls" (recur (assoc opts :node-impl-list (parse-node-impls value)) rest)
+          "--joining-impl" (recur (assoc opts :joining-impl (keyword (str/lower-case value))) rest)
           "--time-limit" (recur (assoc opts :time-limit (parse-long-arg value)) rest)
           "--concurrency" (recur (assoc opts :concurrency (parse-long-arg value)) rest)
           "--base-port" (recur (assoc opts :base-port (parse-long-arg value)) rest)
@@ -87,6 +89,7 @@
     "  --jar <path>          Path to raft-dist jar"
     "  --cpp-bin <path>      Path to graft_smoke for C++ nodes"
     "  --node-impls <list>   Comma-separated node implementations, e.g. java,cpp,java"
+    "  --joining-impl <impl> Implementation for membership-join-promote joining node, java|cpp"
     "  --time-limit <sec>    Workload duration, default 30"
     "  --concurrency <n>     Client concurrency, default 10"
     "  --base-port <port>    First node port, default 10080"
@@ -102,6 +105,7 @@
 (defn- normalize-opts [opts]
   (let [nodes (:nodes opts)
         impls (or (:node-impl-list opts) (vec (repeat (count nodes) :java)))
+        joining-impl (:joining-impl opts)
         allowed #{:java :cpp}]
     (when-not (= (count nodes) (count impls))
       (throw (ex-info "--node-impls count must match --node-count"
@@ -112,6 +116,9 @@
       (when-not (allowed impl)
         (throw (ex-info "Unsupported node implementation"
                         {:impl impl :allowed allowed}))))
+    (when-not (allowed joining-impl)
+      (throw (ex-info "Unsupported joining node implementation"
+                      {:impl joining-impl :allowed allowed})))
     (-> opts
         (assoc :node-impls (zipmap nodes impls))
         (dissoc :node-impl-list))))

@@ -76,6 +76,7 @@ Supported options:
 - `--jar <path>`: explicit path to `raft-dist` jar
 - `--cpp-bin <path>`: explicit path to the C++ `graft_smoke` executable
 - `--node-impls <list>`: comma-separated implementation list matching `--node-count`, for example `java,cpp,java`
+- `--joining-impl <impl>`: implementation for the extra `membership-join-promote` learner, `java` or `cpp`
 - `--time-limit <seconds>`: Jepsen workload duration
 - `--concurrency <n>`: Jepsen client concurrency
 - `--base-port <port>`: first node port, default `10080`
@@ -125,16 +126,18 @@ To run a static mixed cluster, build the C++ smoke binary and pass node implemen
 ```text
 ./run-local.sh --node-count 3 --node-impls java,cpp,java --time-limit 8 --concurrency 4
 ./run-local.sh --node-count 3 --node-impls cpp,java,java --time-limit 8 --concurrency 4
+./run-local.sh --node-count 3 --node-impls java,cpp,java --nemesis membership-join-promote --joining-impl cpp
 ./run-suite.sh mixed
 ```
 
 `--node-impls` must contain exactly one implementation per node. Supported values are `java` and `cpp`.
-The harness starts Java nodes with the shaded `raft-dist` jar and C++ nodes with `graft_smoke serve-active-persistent`.
+The harness starts Java nodes with the shaded `raft-dist` jar and initial C++ nodes with `graft_smoke serve-active-persistent`.
+C++ membership joiners are started with `graft_smoke serve-persistent` and admitted through the same explicit join request as Java joiners.
 Client operations are still driven through the Java CLI, which intentionally exercises the shared wire protocol against both Java and C++ leaders/followers.
 
 Current mixed-run limitations:
 
-- membership nemeses still add Java learner nodes
+- only `membership-join-promote` currently supports choosing a C++ joining node
 - the suite does not force C++ leadership; it validates whichever implementation wins election
 - C++ client behavior is covered by the existing `experiments/graft-cpp/run-mixed-*.sh` scripts, not by this Jepsen client
 

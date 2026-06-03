@@ -51,6 +51,9 @@
 (defn node-impl [test node]
   (get (:node-impls test) node :java))
 
+(defn joining-node-impl [test]
+  (get test :joining-impl :java))
+
 (defn- cpp-state-file [test node]
   (io/file (node-root test node) "graft.state"))
 
@@ -192,18 +195,30 @@
   ([test node]
    (start-joining-node! test node false))
   ([test node preserve-state?]
-   ;; Membership nemeses currently introduce Java learner nodes. Mixed-cluster
-   ;; coverage needs this path to choose whether the joining member is Java or
-   ;; C++, and to use the matching CLI/startup convention for join mode.
+   ;; Membership nemeses introduce one extra learner node outside the initial
+   ;; :nodes set. Java joiners use raft-dist join mode; C++ joiners mirror the
+   ;; mixed smoke tests by starting as passive persistent servers and waiting
+   ;; for the leader's explicit join request.
    (when-not (process-alive? (get @processes node))
      (let [seed (membership-seed-node test)
-           command (vec (concat ["java"]
-                                (java-props test node)
-                                ["-jar"
-                                 (resolved-jar-path test)
-                                 "join"
-                                 (str (peer-spec test node) "/learner")
-                                 (peer-spec test seed)]))]
+           command (case (joining-node-impl test)
+                     :java (vec (concat ["java"]
+                                        (java-props test node)
+                                        ["-jar"
+                                         (resolved-jar-path test)
+                                         "join"
+                                         (str (peer-spec test node) "/learner")
+                                         (peer-spec test seed)]))
+                     :cpp [(resolved-cpp-bin test)
+                           "serve-persistent"
+                           "127.0.0.1"
+                           (str (node-port test node))
+                           (str node)
+                           (.getAbsolutePath (cpp-state-file test node))
+                           "0"
+                           "0"
+                           "0"
+                           (peer-spec test seed)])]
        (launch-node! test node command preserve-state?)))))
 
 (defn local-db []
