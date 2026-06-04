@@ -26,6 +26,8 @@ else
   exit 1
 fi
 
+./prepare-java-probe.sh
+
 tmp_root="${TMPDIR:-/tmp}/graft-cpp-mixed-membership-cpp-leader-smoke"
 cpp_state="${tmp_root}/cpp-node.state"
 cpp_voter_state="${tmp_root}/cpp-voter.state"

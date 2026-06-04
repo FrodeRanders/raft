@@ -362,6 +362,8 @@ namespace graft {
         }
 
         auto &progress = peer_progress_[peer_id];
+        progress.reachable = true;
+        progress.consecutive_failures = 0;
         if (response.success()) {
             progress.match_index = std::max(progress.match_index, response.match_index());
             progress.next_index = std::max(progress.next_index, response.match_index() + 1);
@@ -401,14 +403,23 @@ namespace graft {
             return false;
         }
 
+        auto &progress = peer_progress_[peer_id];
+        progress.reachable = true;
+        progress.consecutive_failures = 0;
         if (!response.success()) {
             return false;
         }
 
-        auto &progress = peer_progress_[peer_id];
         progress.match_index = std::max(progress.match_index, response.last_included_index());
         progress.next_index = std::max(progress.next_index, response.last_included_index() + 1);
         return true;
+    }
+
+    void RaftNode::record_peer_failure(const std::string &peer_id) {
+        std::scoped_lock lock(mu_);
+        auto &progress = peer_progress_[peer_id];
+        progress.reachable = false;
+        progress.consecutive_failures += 1;
     }
 
     std::int64_t RaftNode::append_local_entry(std::string data) {
@@ -425,6 +436,8 @@ namespace graft {
         last_entry_data_ = std::move(data);
         peer_progress_[peer_id_].match_index = last_log_index_;
         peer_progress_[peer_id_].next_index = last_log_index_ + 1;
+        peer_progress_[peer_id_].reachable = true;
+        peer_progress_[peer_id_].consecutive_failures = 0;
         return last_log_index_;
     }
 
@@ -435,6 +448,8 @@ namespace graft {
         if (role_ == Role::leader) {
             peer_progress_[peer_id_].match_index = last_log_index_;
             peer_progress_[peer_id_].next_index = last_log_index_ + 1;
+            peer_progress_[peer_id_].reachable = true;
+            peer_progress_[peer_id_].consecutive_failures = 0;
             for (auto &[peer_id, progress]: peer_progress_) {
                 if (peer_id != peer_id_) {
                     progress.next_index = std::max(progress.next_index, last_log_index_ + 1);
@@ -544,6 +559,8 @@ namespace graft {
         last_entry_data_ = data;
         peer_progress_[peer_id_].match_index = last_log_index_;
         peer_progress_[peer_id_].next_index = last_log_index_ + 1;
+        peer_progress_[peer_id_].reachable = true;
+        peer_progress_[peer_id_].consecutive_failures = 0;
         commit_index_ = last_log_index_;
         apply_committed_entries_locked();
         return CommandCommitResult{
@@ -1103,9 +1120,11 @@ namespace graft {
             peer_id_,
             self_found != peer_progress_.end()
                 ? self_found->second
-                : PeerProgress{.next_index = last_log_index_ + 1, .match_index = last_log_index_});
+                : PeerProgress{.next_index = last_log_index_ + 1, .match_index = last_log_index_, .reachable = true});
         next_progress[peer_id_].next_index = std::max(next_progress[peer_id_].next_index, last_log_index_ + 1);
         next_progress[peer_id_].match_index = std::max(next_progress[peer_id_].match_index, last_log_index_);
+        next_progress[peer_id_].reachable = true;
+        next_progress[peer_id_].consecutive_failures = 0;
 
         for (const auto &peer_id: voting_peers_) {
             const auto found = peer_progress_.find(peer_id);
@@ -1132,7 +1151,11 @@ namespace graft {
     void RaftNode::reset_peer_progress_locked() {
         std::unordered_map<std::string, PeerProgress> progress;
         progress.reserve(voting_peers_.size() + 1);
-        progress.emplace(peer_id_, PeerProgress{.next_index = last_log_index_ + 1, .match_index = last_log_index_});
+        progress.emplace(peer_id_, PeerProgress{
+                             .next_index = last_log_index_ + 1,
+                             .match_index = last_log_index_,
+                             .reachable = true,
+                         });
         for (const auto &peer_id: voting_peers_) {
             progress.emplace(peer_id, PeerProgress{.next_index = last_log_index_ + 1, .match_index = 0});
         }

@@ -24,6 +24,8 @@ else
   exit 1
 fi
 
+./prepare-java-probe.sh
+
 tmp_root="${TMPDIR:-/tmp}/graft-cpp-mixed-smoke"
 java_data_dir="${tmp_root}/java-data"
 cpp_state="${tmp_root}/cpp-node.state"

@@ -50,6 +50,8 @@ namespace graft {
         struct PeerProgress {
             std::int64_t next_index{1};
             std::int64_t match_index{0};
+            bool reachable{false};
+            std::int32_t consecutive_failures{0};
         };
 
         struct LogEntryRecord {
@@ -134,6 +136,8 @@ namespace graft {
 
         bool handle_install_snapshot_response(const std::string &peer_id,
                                               const raft::InstallSnapshotResponse &response);
+
+        void record_peer_failure(const std::string &peer_id);
 
         std::int64_t append_local_entry(std::string data);
 

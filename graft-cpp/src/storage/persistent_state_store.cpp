@@ -72,6 +72,7 @@ namespace graft {
         }
         for (const auto &[peer_id, progress]: state.peer_progress) {
             out << "peer_progress=" << escape(peer_id) << ',' << progress.next_index << ',' << progress.match_index <<
+                    ',' << (progress.reachable ? 1 : 0) << ',' << progress.consecutive_failures <<
                     '\n';
         }
     }
@@ -149,15 +150,29 @@ namespace graft {
             } else if (key == "peer_progress") {
                 const auto first = value.find(',');
                 const auto second = value.find(',', first == std::string::npos ? first : first + 1);
+                const auto third = value.find(',', second == std::string::npos ? second : second + 1);
+                const auto fourth = value.find(',', third == std::string::npos ? third : third + 1);
                 if (first == std::string::npos || second == std::string::npos) {
                     throw std::runtime_error("invalid peer_progress line in state file: " + path_.string());
                 }
                 const auto peer_id = value.substr(0, first);
                 const auto next_index = std::stoll(value.substr(first + 1, second - first - 1));
-                const auto match_index = std::stoll(value.substr(second + 1));
+                const auto match_index = std::stoll(value.substr(second + 1, third == std::string::npos
+                                                                              ? std::string::npos
+                                                                              : third - second - 1));
+                const auto reachable = third == std::string::npos
+                                           ? false
+                                           : (value.substr(third + 1, fourth == std::string::npos
+                                                                          ? std::string::npos
+                                                                          : fourth - third - 1) == "1");
+                const auto consecutive_failures = fourth == std::string::npos
+                                                      ? 0
+                                                      : static_cast<std::int32_t>(std::stol(value.substr(fourth + 1)));
                 state.peer_progress.emplace(peer_id, RaftNode::PeerProgress{
                                                 .next_index = next_index,
                                                 .match_index = match_index,
+                                                .reachable = reachable,
+                                                .consecutive_failures = consecutive_failures,
                                             });
             }
         }

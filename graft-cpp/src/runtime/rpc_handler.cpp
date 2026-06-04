@@ -219,14 +219,15 @@ namespace graft {
         response.set_last_heartbeat_millis(0);
         response.set_next_election_deadline_millis(0);
         response.set_joint_consensus(node_->joint_consensus());
-        response.set_cluster_health("HEALTHY");
-        response.set_quorum_available(true);
-        response.set_current_quorum_available(true);
-        response.set_next_quorum_available(true);
-        response.set_voting_members(static_cast<std::int32_t>(node_->voting_peers().size() + 1));
-        response.set_healthy_voting_members(response.voting_members());
-        response.set_reachable_voting_members(response.voting_members());
-        response.set_cluster_status_reason("ok");
+        const auto cluster = summarize_cluster_health();
+        response.set_cluster_health(cluster.health);
+        response.set_quorum_available(cluster.quorum_available);
+        response.set_current_quorum_available(cluster.current_quorum_available);
+        response.set_next_quorum_available(cluster.next_quorum_available);
+        response.set_voting_members(cluster.voting_members);
+        response.set_healthy_voting_members(cluster.healthy_voting_members);
+        response.set_reachable_voting_members(cluster.reachable_voting_members);
+        response.set_cluster_status_reason(cluster.reason);
         add_peer_specs(response);
         if (request.require_leader_summary() && node_->role() != RaftNode::Role::leader) {
             response.set_success(false);
@@ -263,14 +264,15 @@ namespace graft {
         response.set_state(role_to_string(node_->role()));
         response.set_leader_id(node_->leader_id().value_or(""));
         response.set_joint_consensus(node_->joint_consensus());
-        response.set_cluster_health("HEALTHY");
-        response.set_cluster_status_reason("ok");
-        response.set_quorum_available(true);
-        response.set_current_quorum_available(true);
-        response.set_next_quorum_available(true);
-        response.set_voting_members(static_cast<std::int32_t>(node_->voting_peers().size() + 1));
-        response.set_healthy_voting_members(response.voting_members());
-        response.set_reachable_voting_members(response.voting_members());
+        const auto cluster = summarize_cluster_health();
+        response.set_cluster_health(cluster.health);
+        response.set_cluster_status_reason(cluster.reason);
+        response.set_quorum_available(cluster.quorum_available);
+        response.set_current_quorum_available(cluster.current_quorum_available);
+        response.set_next_quorum_available(cluster.next_quorum_available);
+        response.set_voting_members(cluster.voting_members);
+        response.set_healthy_voting_members(cluster.healthy_voting_members);
+        response.set_reachable_voting_members(cluster.reachable_voting_members);
         if (node_->role() != RaftNode::Role::leader) {
             response.set_success(false);
             response.set_status(current_leader_endpoint().has_value() ? "REDIRECT" : "NO_LEADER");
@@ -739,11 +741,12 @@ namespace graft {
         response.set_reconfiguration_active(node_->joint_consensus());
         response.set_joint_consensus(node_->joint_consensus());
         response.set_reconfiguration_age_millis(0);
-        response.set_cluster_health("HEALTHY");
-        response.set_cluster_status_reason("ok");
-        response.set_quorum_available(true);
-        response.set_current_quorum_available(true);
-        response.set_next_quorum_available(true);
+        const auto cluster = summarize_cluster_health();
+        response.set_cluster_health(cluster.health);
+        response.set_cluster_status_reason(cluster.reason);
+        response.set_quorum_available(cluster.quorum_available);
+        response.set_current_quorum_available(cluster.current_quorum_available);
+        response.set_next_quorum_available(cluster.next_quorum_available);
 
         if (node_->role() != RaftNode::Role::leader) {
             response.set_success(false);
@@ -839,9 +842,9 @@ namespace graft {
             repl->set_peer_id(peer_id);
             repl->set_next_index(progress.next_index);
             repl->set_match_index(progress.match_index);
-            repl->set_reachable(true);
+            repl->set_reachable(peer_id == node_->peer_id() || progress.reachable);
             repl->set_last_successful_contact_millis(0);
-            repl->set_consecutive_failures(0);
+            repl->set_consecutive_failures(peer_id == node_->peer_id() ? 0 : progress.consecutive_failures);
             repl->set_last_failed_contact_millis(0);
         }
     }
@@ -854,9 +857,48 @@ namespace graft {
         return std::find(voting.begin(), voting.end(), peer_id) != voting.end();
     }
 
+    InMemoryRpcHandler::ClusterHealthSummary InMemoryRpcHandler::summarize_cluster_health() const {
+        const auto voting_peers = node_->voting_peers();
+        const auto progress_map = node_->peer_progress();
+        const auto quorum = node_->quorum_size();
+        const auto commit_index = node_->commit_index();
+
+        ClusterHealthSummary summary;
+        summary.voting_members = static_cast<std::int32_t>(voting_peers.size() + 1);
+        summary.reachable_voting_members = 1;
+        summary.healthy_voting_members = 1;
+
+        for (const auto &peer_id: voting_peers) {
+            const auto found = progress_map.find(peer_id);
+            const bool reachable = found != progress_map.end() && found->second.reachable;
+            const bool healthy = reachable && found->second.match_index >= commit_index;
+            summary.reachable_voting_members += reachable ? 1 : 0;
+            summary.healthy_voting_members += healthy ? 1 : 0;
+        }
+
+        summary.current_quorum_available = static_cast<std::size_t>(summary.healthy_voting_members) >= quorum;
+        summary.next_quorum_available = summary.current_quorum_available;
+        summary.quorum_available = summary.current_quorum_available;
+        if (!summary.quorum_available) {
+            summary.health = "at-risk";
+            summary.reason = "healthy voting members are below quorum";
+        } else if (summary.healthy_voting_members < summary.voting_members) {
+            summary.health = "degraded";
+            summary.reason = "one or more voting members are unreachable or lagging";
+        } else {
+            summary.health = "healthy";
+            summary.reason = "ok";
+        }
+        return summary;
+    }
+
     void InMemoryRpcHandler::populate_member(raft::ClusterMemberSummary &member, const std::string &peer_id, bool local,
-                                             std::int64_t next_index, std::int64_t match_index) const {
+                                             const RaftNode::PeerProgress &progress) const {
         const bool voting = is_voting_member(peer_id);
+        const bool reachable = local || progress.reachable;
+        const auto match_index = local ? node_->last_log_index() : progress.match_index;
+        const auto next_index = local ? node_->last_log_index() + 1 : progress.next_index;
+        const auto lag = std::max<std::int64_t>(0, node_->last_log_index() - match_index);
         member.set_peer_id(peer_id);
         member.set_local(local);
         member.set_current_member(true);
@@ -867,41 +909,64 @@ namespace graft {
         member.set_next_role(voting ? "VOTER" : "LEARNER");
         member.set_role_transition("steady");
         member.set_transition_age_millis(0);
-        member.set_reachable(true);
-        member.set_health("healthy");
-        member.set_freshness(local ? "current" : "unknown");
+        member.set_reachable(reachable);
+        member.set_health(local || (reachable && progress.match_index >= node_->commit_index())
+                              ? "healthy"
+                              : reachable
+                                    ? "lagging"
+                                    : "unreachable");
+        member.set_freshness(local
+                                 ? "current"
+                                 : reachable
+                                       ? "current"
+                                       : "unknown");
         member.set_next_index(next_index);
         member.set_match_index(match_index);
-        member.set_lag(std::max<std::int64_t>(0, node_->last_log_index() - match_index));
+        member.set_lag(lag);
+        member.set_consecutive_failures(local ? 0 : progress.consecutive_failures);
+        member.set_blocking_quorums(voting && !local && (!reachable || progress.match_index < node_->commit_index())
+                                        ? "current"
+                                        : "");
+        member.set_blocking_reason(member.blocking_quorums().empty()
+                                       ? ""
+                                       : !reachable
+                                             ? "unreachable"
+                                             : "lagging");
     }
 
     void InMemoryRpcHandler::add_telemetry_cluster_members(raft::TelemetryResponse &response) const {
         const auto local_lag = node_->last_log_index() - node_->commit_index();
         auto *local = response.add_cluster_members();
-        populate_member(*local, node_->peer_id(), true, node_->last_log_index() + 1, node_->last_log_index());
+        populate_member(*local, node_->peer_id(), true, RaftNode::PeerProgress{
+                            .next_index = node_->last_log_index() + 1,
+                            .match_index = node_->last_log_index(),
+                            .reachable = true,
+                        });
         local->set_lag(local_lag);
 
         const auto progress_map = node_->peer_progress();
         for (const auto &peer_id: recovered_peer_ids()) {
             const auto found = progress_map.find(peer_id);
-            const auto next_index = found != progress_map.end() ? found->second.next_index : 0;
-            const auto match_index = found != progress_map.end() ? found->second.match_index : 0;
+            const auto progress = found != progress_map.end() ? found->second : RaftNode::PeerProgress{};
             auto *peer = response.add_cluster_members();
-            populate_member(*peer, peer_id, false, next_index, match_index);
+            populate_member(*peer, peer_id, false, progress);
         }
     }
 
     void InMemoryRpcHandler::add_summary_members(raft::ClusterSummaryResponse &response) const {
         auto *local = response.add_members();
-        populate_member(*local, node_->peer_id(), true, node_->last_log_index() + 1, node_->last_log_index());
+        populate_member(*local, node_->peer_id(), true, RaftNode::PeerProgress{
+                            .next_index = node_->last_log_index() + 1,
+                            .match_index = node_->last_log_index(),
+                            .reachable = true,
+                        });
 
         const auto progress_map = node_->peer_progress();
         for (const auto &peer_id: recovered_peer_ids()) {
             const auto found = progress_map.find(peer_id);
-            const auto next_index = found != progress_map.end() ? found->second.next_index : 0;
-            const auto match_index = found != progress_map.end() ? found->second.match_index : 0;
+            const auto progress = found != progress_map.end() ? found->second : RaftNode::PeerProgress{};
             auto *peer = response.add_members();
-            populate_member(*peer, peer_id, false, next_index, match_index);
+            populate_member(*peer, peer_id, false, progress);
         }
     }
 

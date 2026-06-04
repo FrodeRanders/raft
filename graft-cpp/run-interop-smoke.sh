@@ -21,6 +21,8 @@ else
   exit 1
 fi
 
+./prepare-java-probe.sh
+
 server_log="${TMPDIR:-/tmp}/graft-cpp-interop-server.log"
 
 "${cpp_bin}" serve-stateful "${HOST}" "${PORT}" "${PEER_ID}" "${TERM}" "${LAST_LOG_INDEX}" "${LAST_LOG_TERM}" >"${server_log}" 2>&1 &

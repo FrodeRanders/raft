@@ -268,6 +268,8 @@ namespace graft {
                     << '\n';
             return advanced;
         } catch (const std::exception &e) {
+            node_->record_peer_failure(peer.peer_id);
+            persist();
             std::cout
                     << (needs_append ? "catchup-response peer=" : "heartbeat-response peer=") << peer.peer_id
                     << " error=" << e.what()
@@ -316,6 +318,8 @@ namespace graft {
                     continue;
                 }
             } catch (const std::exception &e) {
+                node_->record_peer_failure(peer.peer_id);
+                persist();
                 std::cout
                         << "replication-response peer=" << peer.peer_id
                         << " attempt=" << attempt
@@ -376,6 +380,8 @@ namespace graft {
                     return advanced;
                 }
             } catch (const std::exception &e) {
+                node_->record_peer_failure(peer.peer_id);
+                persist();
                 std::cout
                         << "snapshot-response peer=" << peer.peer_id
                         << " attempt=" << attempt

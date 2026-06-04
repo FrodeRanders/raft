@@ -212,3 +212,47 @@ TEST_CASE("Follower redirects operational summary RPCs to known leader", "[rpc][
     REQUIRE(reconfiguration_status_response->redirect_leader_port() == 10080);
     REQUIRE(reconfiguration_status_response->state() == "FOLLOWER");
 }
+
+TEST_CASE("Leader operational summaries report degraded and at-risk quorum health", "[rpc][operational]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {"n2", "n3"},
+    });
+    node->become_leader();
+
+    graft::InMemoryRpcHandler handler(node);
+
+    raft::ClusterSummaryRequest cluster_summary;
+    cluster_summary.set_peer_id("client");
+
+    const auto at_risk_response = handler.on_cluster_summary_request(cluster_summary);
+    REQUIRE(at_risk_response.has_value());
+    REQUIRE(at_risk_response->success());
+    REQUIRE(at_risk_response->status() == "OK");
+    REQUIRE(at_risk_response->cluster_health() == "at-risk");
+    REQUIRE_FALSE(at_risk_response->quorum_available());
+    REQUIRE(at_risk_response->healthy_voting_members() == 1);
+    REQUIRE(at_risk_response->reachable_voting_members() == 1);
+
+    raft::AppendEntriesResponse n2_response;
+    n2_response.set_term(1);
+    n2_response.set_peer_id("n2");
+    n2_response.set_success(true);
+    n2_response.set_match_index(0);
+    REQUIRE(node->handle_append_entries_response("n2", n2_response));
+
+    const auto degraded_response = handler.on_cluster_summary_request(cluster_summary);
+    REQUIRE(degraded_response.has_value());
+    REQUIRE(degraded_response->success());
+    REQUIRE(degraded_response->status() == "OK");
+    REQUIRE(degraded_response->cluster_health() == "degraded");
+    REQUIRE(degraded_response->quorum_available());
+    REQUIRE(degraded_response->healthy_voting_members() == 2);
+    REQUIRE(degraded_response->reachable_voting_members() == 2);
+}

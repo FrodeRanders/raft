@@ -28,6 +28,8 @@ else
   exit 1
 fi
 
+./prepare-java-probe.sh
+
 tmp_root="${TMPDIR:-/tmp}/graft-cpp-mixed-snapshot-smoke"
 cpp_state="${tmp_root}/cpp-node.state"
 java_voter_data_dir="${tmp_root}/java-voter-data"

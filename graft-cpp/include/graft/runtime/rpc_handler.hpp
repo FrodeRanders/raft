@@ -123,6 +123,17 @@ namespace graft {
         using JoinForwarder = std::function<bool(const Endpoint &, const raft::JoinClusterRequest &)>;
         using ReconfigureForwarder = std::function<bool(const Endpoint &, const raft::ReconfigureClusterRequest &)>;
 
+        struct ClusterHealthSummary {
+            std::string health;
+            std::string reason;
+            bool quorum_available{false};
+            bool current_quorum_available{false};
+            bool next_quorum_available{false};
+            std::int32_t voting_members{0};
+            std::int32_t healthy_voting_members{0};
+            std::int32_t reachable_voting_members{0};
+        };
+
         InMemoryRpcHandler(std::string peer_id, std::int64_t current_term, std::int64_t last_log_index,
                            std::int64_t last_log_term);
 
@@ -197,8 +208,10 @@ namespace graft {
 
         bool is_voting_member(const std::string &peer_id) const;
 
+        ClusterHealthSummary summarize_cluster_health() const;
+
         void populate_member(raft::ClusterMemberSummary &member, const std::string &peer_id, bool local,
-                             std::int64_t next_index, std::int64_t match_index) const;
+                             const RaftNode::PeerProgress &progress) const;
 
         void add_telemetry_cluster_members(raft::TelemetryResponse &response) const;
 

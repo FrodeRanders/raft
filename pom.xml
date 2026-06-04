@@ -25,6 +25,7 @@
         <module>raft-app-reference</module>
         <module>raft-dist</module>
         <module>raft-tests</module>
+        <module>graft-cpp/java-probe</module>
     </modules>
 
     <properties>
