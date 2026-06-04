@@ -416,6 +416,7 @@ namespace graft {
         progress.reachable = true;
         progress.consecutive_failures = 0;
         if (response.success()) {
+            progress.last_successful_contact_millis = current_time_millis();
             progress.match_index = std::max(progress.match_index, response.match_index());
             progress.next_index = std::max(progress.next_index, response.match_index() + 1);
             update_commit_index_locked();
@@ -425,6 +426,29 @@ namespace graft {
 
         progress.next_index = std::max<std::int64_t>(1, progress.next_index - 1);
         return false;
+    }
+
+    bool RaftNode::can_serve_linearizable_read(std::int64_t lease_millis) const {
+        std::scoped_lock lock(mu_);
+        if (role_ != Role::leader || decommissioned_) {
+            return false;
+        }
+        if (last_applied_ < commit_index_) {
+            return false;
+        }
+        if (quorum_size_locked() <= 1) {
+            return true;
+        }
+
+        const auto freshness_cutoff = std::max<std::int64_t>(0, current_time_millis() - std::max<std::int64_t>(1, lease_millis));
+        std::size_t fresh_voters = 1;
+        for (const auto &peer_id: voting_peers_) {
+            const auto found = peer_progress_.find(peer_id);
+            if (found != peer_progress_.end() && found->second.last_successful_contact_millis >= freshness_cutoff) {
+                fresh_voters += 1;
+            }
+        }
+        return fresh_voters >= quorum_size_locked();
     }
 
     raft::InstallSnapshotRequest RaftNode::make_install_snapshot_request_for(const std::string &peer_id) const {
@@ -461,6 +485,7 @@ namespace graft {
             return false;
         }
 
+        progress.last_successful_contact_millis = current_time_millis();
         progress.match_index = std::max(progress.match_index, response.last_included_index());
         progress.next_index = std::max(progress.next_index, response.last_included_index() + 1);
         return true;
@@ -471,6 +496,7 @@ namespace graft {
         auto &progress = peer_progress_[peer_id];
         progress.reachable = false;
         progress.consecutive_failures += 1;
+        progress.last_failed_contact_millis = current_time_millis();
     }
 
     std::int64_t RaftNode::append_local_entry(std::string data) {
@@ -612,6 +638,7 @@ namespace graft {
         peer_progress_[peer_id_].next_index = last_log_index_ + 1;
         peer_progress_[peer_id_].reachable = true;
         peer_progress_[peer_id_].consecutive_failures = 0;
+        peer_progress_[peer_id_].last_successful_contact_millis = current_time_millis();
         commit_index_ = last_log_index_;
         apply_committed_entries_locked();
         return CommandCommitResult{
@@ -727,7 +754,10 @@ namespace graft {
         normalize_voting_peers_locked();
         reset_peer_progress_locked();
         for (const auto &[peer_id, progress]: state.peer_progress) {
-            peer_progress_[peer_id] = progress;
+            auto restored = progress;
+            restored.last_successful_contact_millis = 0;
+            restored.last_failed_contact_millis = 0;
+            peer_progress_[peer_id] = restored;
         }
     }
 

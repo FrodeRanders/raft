@@ -186,6 +186,8 @@ namespace graft {
                 const auto second = value.find(',', first == std::string::npos ? first : first + 1);
                 const auto third = value.find(',', second == std::string::npos ? second : second + 1);
                 const auto fourth = value.find(',', third == std::string::npos ? third : third + 1);
+                const auto fifth = value.find(',', fourth == std::string::npos ? fourth : fourth + 1);
+                const auto sixth = value.find(',', fifth == std::string::npos ? fifth : fifth + 1);
                 if (first == std::string::npos || second == std::string::npos) {
                     throw std::runtime_error("invalid peer_progress line in state file: " + path_.string());
                 }
@@ -201,12 +203,24 @@ namespace graft {
                                                                           : fourth - third - 1) == "1");
                 const auto consecutive_failures = fourth == std::string::npos
                                                       ? 0
-                                                      : static_cast<std::int32_t>(std::stol(value.substr(fourth + 1)));
+                                                      : static_cast<std::int32_t>(std::stol(value.substr(
+                                                          fourth + 1,
+                                                          fifth == std::string::npos ? std::string::npos : fifth - fourth - 1)));
+                const auto last_successful_contact_millis = fifth == std::string::npos
+                                                                ? 0
+                                                                : std::stoll(value.substr(
+                                                                    fifth + 1,
+                                                                    sixth == std::string::npos ? std::string::npos : sixth - fifth - 1));
+                const auto last_failed_contact_millis = sixth == std::string::npos
+                                                            ? 0
+                                                            : std::stoll(value.substr(sixth + 1));
                 state.peer_progress.emplace(peer_id, RaftNode::PeerProgress{
                                                 .next_index = next_index,
                                                 .match_index = match_index,
                                                 .reachable = reachable,
                                                 .consecutive_failures = consecutive_failures,
+                                                .last_successful_contact_millis = last_successful_contact_millis,
+                                                .last_failed_contact_millis = last_failed_contact_millis,
                                             });
             }
         }

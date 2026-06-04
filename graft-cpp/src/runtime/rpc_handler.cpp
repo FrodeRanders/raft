@@ -204,6 +204,10 @@ namespace graft {
         read_barrier_ = std::move(read_barrier);
     }
 
+    void InMemoryRpcHandler::set_linearizable_read_lease_millis(std::int64_t lease_millis) {
+        linearizable_read_lease_millis_ = std::max<std::int64_t>(1, lease_millis);
+    }
+
     void InMemoryRpcHandler::set_authenticator(Authenticator authenticator) {
         authenticator_ = std::move(authenticator);
     }
@@ -506,11 +510,14 @@ namespace graft {
             return response;
         }
 
-        if (node_->quorum_size() > 1 && (!read_barrier_ || !read_barrier_())) {
-            response.set_status("RETRY");
-            response.set_message("Leader cannot currently guarantee a linearizable read");
-            populate_leader_endpoint(response);
-            return response;
+        if (node_->quorum_size() > 1 && !node_->can_serve_linearizable_read(linearizable_read_lease_millis_)) {
+            const bool barrier_completed = read_barrier_ && read_barrier_();
+            if (!barrier_completed || !node_->can_serve_linearizable_read(linearizable_read_lease_millis_)) {
+                response.set_status("RETRY");
+                response.set_message("Leader cannot currently guarantee a linearizable read");
+                populate_leader_endpoint(response);
+                return response;
+            }
         }
 
         raft::StateMachineQueryResult result;
@@ -1003,9 +1010,9 @@ namespace graft {
             repl->set_next_index(progress.next_index);
             repl->set_match_index(progress.match_index);
             repl->set_reachable(peer_id == node_->peer_id() || progress.reachable);
-            repl->set_last_successful_contact_millis(0);
+            repl->set_last_successful_contact_millis(progress.last_successful_contact_millis);
             repl->set_consecutive_failures(peer_id == node_->peer_id() ? 0 : progress.consecutive_failures);
-            repl->set_last_failed_contact_millis(0);
+            repl->set_last_failed_contact_millis(progress.last_failed_contact_millis);
         }
     }
 

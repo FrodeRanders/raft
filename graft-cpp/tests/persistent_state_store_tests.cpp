@@ -32,6 +32,12 @@ TEST_CASE("PersistentStateStore round-trips node state", "[raft-node][persistenc
     next.set_port(10082);
     next.set_role("LEARNER");
     persisted.next_members.push_back(next);
+    persisted.peer_progress["n2"] = graft::RaftNode::PeerProgress{
+        .next_index = 4,
+        .match_index = 3,
+        .reachable = true,
+        .consecutive_failures = 2,
+    };
 
     store.save(persisted);
     const auto loaded = store.load();
@@ -45,6 +51,12 @@ TEST_CASE("PersistentStateStore round-trips node state", "[raft-node][persistenc
     REQUIRE(loaded->next_members.size() == 1);
     REQUIRE(loaded->next_members.front().id() == "n2");
     REQUIRE(loaded->next_members.front().role() == "LEARNER");
+    REQUIRE(loaded->peer_progress.at("n2").next_index == 4);
+    REQUIRE(loaded->peer_progress.at("n2").match_index == 3);
+    REQUIRE(loaded->peer_progress.at("n2").reachable);
+    REQUIRE(loaded->peer_progress.at("n2").consecutive_failures == 2);
+    REQUIRE(loaded->peer_progress.at("n2").last_successful_contact_millis == 0);
+    REQUIRE(loaded->peer_progress.at("n2").last_failed_contact_millis == 0);
     REQUIRE(loaded->applied_kv.at("persisted") == "value");
 
     std::filesystem::remove(path);

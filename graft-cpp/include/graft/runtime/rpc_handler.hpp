@@ -157,6 +157,8 @@ namespace graft {
 
         void set_read_barrier(ReadBarrier read_barrier);
 
+        void set_linearizable_read_lease_millis(std::int64_t lease_millis);
+
         void set_authenticator(Authenticator authenticator);
 
         void set_command_authorizer(CommandAuthorizer authorizer);
@@ -267,6 +269,7 @@ namespace graft {
         Authenticator authenticator_;
         CommandAuthorizer command_authorizer_;
         bool reference_data_admission_{false};
+        std::int64_t linearizable_read_lease_millis_{750};
         std::int32_t telemetry_rate_limit_per_minute_{30};
         std::int64_t telemetry_reconfiguration_stuck_millis_{60'000};
         std::unordered_map<std::string, std::deque<std::int64_t>> operational_request_history_;

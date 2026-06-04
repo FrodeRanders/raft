@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace graft {
@@ -160,6 +161,7 @@ namespace graft {
             return false;
         }
 
+        const auto term_snapshot = node_->current_term();
         const auto quorum = node_->quorum_size();
         if (quorum <= 1) {
             return true;
@@ -170,7 +172,30 @@ namespace graft {
             acknowledgements += sync_peer_once(peer) ? 1 : 0;
         }
 
-        return node_->role() == RaftNode::Role::leader && acknowledgements >= quorum;
+        return node_->role() == RaftNode::Role::leader &&
+               node_->current_term() == term_snapshot &&
+               acknowledgements >= quorum;
+    }
+
+    bool RaftRuntime::await_linearizable_read(std::chrono::milliseconds lease, std::chrono::milliseconds timeout) {
+        if (node_->can_serve_linearizable_read(lease.count())) {
+            return true;
+        }
+        if (node_->role() != RaftNode::Role::leader) {
+            return false;
+        }
+
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        do {
+            if (refresh_read_barrier_once() && node_->can_serve_linearizable_read(lease.count())) {
+                return true;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        } while (std::chrono::steady_clock::now() <= deadline);
+        return refresh_read_barrier_once() && node_->can_serve_linearizable_read(lease.count());
     }
 
     std::size_t RaftRuntime::replicate_entry_once(const std::string &data) {

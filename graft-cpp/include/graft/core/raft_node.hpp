@@ -52,6 +52,8 @@ namespace graft {
             std::int64_t match_index{0};
             bool reachable{false};
             std::int32_t consecutive_failures{0};
+            std::int64_t last_successful_contact_millis{0};
+            std::int64_t last_failed_contact_millis{0};
         };
 
         struct LogEntryRecord {
@@ -144,6 +146,8 @@ namespace graft {
         std::vector<raft::AppendEntriesRequest> make_heartbeat_requests() const;
 
         bool handle_append_entries_response(const std::string &peer_id, const raft::AppendEntriesResponse &response);
+
+        bool can_serve_linearizable_read(std::int64_t lease_millis) const;
 
         raft::InstallSnapshotRequest make_install_snapshot_request_for(const std::string &peer_id) const;
 

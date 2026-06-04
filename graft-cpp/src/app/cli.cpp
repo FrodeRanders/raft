@@ -206,6 +206,16 @@ namespace {
         return static_cast<std::int64_t>(std::stoll(*value));
     }
 
+    std::chrono::milliseconds linearizable_read_lease_from_env() {
+        const auto value = parse_int64_env("RAFT_LINEARIZABLE_READ_LEASE_MILLIS").value_or(750);
+        return std::chrono::milliseconds(std::max<std::int64_t>(1, value));
+    }
+
+    std::chrono::milliseconds linearizable_read_timeout_from_env() {
+        const auto value = parse_int64_env("RAFT_LINEARIZABLE_READ_TIMEOUT_MILLIS").value_or(500);
+        return std::chrono::milliseconds(std::max<std::int64_t>(1, value));
+    }
+
     bool parse_bool(const std::string &text, const std::string &field_name) {
         if (text == "true" || text == "1") {
             return true;
@@ -325,10 +335,12 @@ namespace {
     void configure_handler_operational_policy(const HandlerPtr &handler) {
         const auto limit = parse_int32_env("RAFT_TELEMETRY_RATE_LIMIT_PER_MINUTE");
         const auto stuck_millis = parse_int64_env("RAFT_TELEMETRY_RECONFIGURATION_STUCK_MILLIS");
-        if (!limit.has_value() && !stuck_millis.has_value()) {
+        const auto read_lease_millis = linearizable_read_lease_from_env().count();
+        if (!limit.has_value() && !stuck_millis.has_value() && read_lease_millis == 750) {
             return;
         }
         auto configure = [&](graft::InMemoryRpcHandler &target) {
+            target.set_linearizable_read_lease_millis(read_lease_millis);
             if (limit.has_value()) {
                 target.set_telemetry_rate_limit_per_minute(*limit);
             }
@@ -1025,8 +1037,10 @@ namespace {
             in_memory->set_internal_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once(command) > 0;
             });
-            in_memory->set_read_barrier([&runtime]() {
-                return runtime.refresh_read_barrier_once();
+            const auto read_lease = linearizable_read_lease_from_env();
+            const auto read_timeout = linearizable_read_timeout_from_env();
+            in_memory->set_read_barrier([&runtime, read_lease, read_timeout]() {
+                return runtime.await_linearizable_read(read_lease, read_timeout);
             });
             in_memory->set_join_forwarder(forward_join_request);
             in_memory->set_reconfigure_forwarder(forward_reconfigure_request);
@@ -1065,8 +1079,10 @@ namespace {
             persistent->delegate().set_internal_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once(command) > 0;
             });
-            persistent->delegate().set_read_barrier([&runtime]() {
-                return runtime.refresh_read_barrier_once();
+            const auto read_lease = linearizable_read_lease_from_env();
+            const auto read_timeout = linearizable_read_timeout_from_env();
+            persistent->delegate().set_read_barrier([&runtime, read_lease, read_timeout]() {
+                return runtime.await_linearizable_read(read_lease, read_timeout);
             });
             persistent->delegate().set_join_forwarder(forward_join_request);
             persistent->delegate().set_reconfigure_forwarder(forward_reconfigure_request);

@@ -17,6 +17,7 @@
 #pragma once
 
 #include <boost/asio.hpp>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -69,6 +70,8 @@ namespace graft {
         std::size_t send_heartbeats_once();
 
         bool refresh_read_barrier_once();
+
+        bool await_linearizable_read(std::chrono::milliseconds lease, std::chrono::milliseconds timeout);
 
         std::size_t replicate_entry_once(const std::string &data);
 

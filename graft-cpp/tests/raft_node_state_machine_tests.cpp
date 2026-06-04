@@ -272,11 +272,50 @@ TEST_CASE("Client query RPC requires read barrier in multi-node leader mode", "[
     REQUIRE(no_barrier_response->status() == "RETRY");
     REQUIRE(no_barrier_response->message() == "Leader cannot currently guarantee a linearizable read");
 
-    handler.set_read_barrier([] {
-        return true;
+    raft::AppendEntriesResponse failed_response;
+    failed_response.set_term(1);
+    failed_response.set_peer_id("n2");
+    failed_response.set_success(false);
+    failed_response.set_match_index(0);
+    REQUIRE_FALSE(node->handle_append_entries_response("n2", failed_response));
+    REQUIRE_FALSE(node->can_serve_linearizable_read(750));
+
+    raft::AppendEntriesResponse successful_response;
+    successful_response.set_term(1);
+    successful_response.set_peer_id("n2");
+    successful_response.set_success(true);
+    successful_response.set_match_index(0);
+    REQUIRE(node->handle_append_entries_response("n2", successful_response));
+    REQUIRE(node->can_serve_linearizable_read(750));
+
+    const auto leased_response = handler.on_client_query_request(request);
+    REQUIRE(leased_response.has_value());
+    REQUIRE(leased_response->success());
+    REQUIRE(leased_response->status() == "OK");
+
+    auto fallback_node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {"n2"},
+    });
+    fallback_node->become_leader();
+    graft::InMemoryRpcHandler fallback_handler(fallback_node);
+    fallback_handler.set_local_endpoint("127.0.0.1", 10080);
+    fallback_handler.set_read_barrier([fallback_node] {
+        raft::AppendEntriesResponse response;
+        response.set_term(1);
+        response.set_peer_id("n2");
+        response.set_success(true);
+        response.set_match_index(0);
+        return fallback_node->handle_append_entries_response("n2", response);
     });
 
-    const auto barrier_response = handler.on_client_query_request(request);
+    const auto barrier_response = fallback_handler.on_client_query_request(request);
     REQUIRE(barrier_response.has_value());
     REQUIRE(barrier_response->success());
     REQUIRE(barrier_response->status() == "OK");
