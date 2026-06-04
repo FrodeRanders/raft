@@ -217,7 +217,7 @@ Optional peer id override:
 graft-cpp/build/graft_smoke cluster-summary 127.0.0.1 10080 cpp-cli
 ```
 
-The replication probes intentionally default to `term=0` unless you pass an explicit final argument. That makes them useful as transport-compatibility checks without assuming the C++ side is participating in the live cluster correctly yet.
+The replication probes intentionally default to `term=0` unless you pass an explicit final argument. They are direct protocol checks; the active server modes are the paths used for mixed Java/C++ cluster participation.
 
 The CLI `install-snapshot` command sends a single request with:
 
@@ -233,7 +233,7 @@ That is enough for direct probing, and the runtime now also supports chunked sna
 - recover that snapshot state after restart
 - stream snapshot payload to followers in multiple `InstallSnapshotRequest` chunks during catch-up
 
-The `serve` command starts a minimal inbound C++ endpoint that accepts:
+The `serve` command starts a minimal inbound C++ endpoint for transport compatibility checks. It accepts:
 
 - `VoteRequest`
 - `AppendEntriesRequest`
@@ -241,7 +241,7 @@ The `serve` command starts a minimal inbound C++ endpoint that accepts:
 
 and returns well-formed protobuf responses using the same `Envelope` framing as the Java transport.
 
-This server is intentionally a stub:
+This mode is intentionally non-participating:
 
 - it does not maintain real Raft state
 - it does not participate safely in a mixed cluster
@@ -250,7 +250,7 @@ This server is intentionally a stub:
   - append not accepted
   - snapshot not accepted
 
-Its purpose is transport compatibility testing only.
+Its purpose is transport compatibility testing only. Use `serve-active` or `serve-active-persistent` for a C++ process that participates in elections, replication, membership, snapshots, client commands, and operational summaries.
 
 The `serve-stateful` command wires in a simple in-memory handler with a little local Raft-like state:
 
@@ -259,13 +259,13 @@ The `serve-stateful` command wires in a simple in-memory handler with a little l
 - last log index/term
 - last installed snapshot index/term
 
-It is still not a real Raft node, but it behaves more plausibly:
+It provides a deterministic local handler for direct request/response probes:
 
 - grants votes only when the candidate term and log look acceptable
 - accepts append requests only when the previous log position matches its in-memory state
 - accepts snapshot installation and updates its local snapshot/log position
 
-This is useful for probing Java-to-C++ transport with responses that depend on request content instead of fixed stub answers.
+This is useful for probing Java-to-C++ transport with responses that depend on request content. The active server modes use the same core node type plus the runtime scheduler.
 
 The `serve-persistent` command uses the same basic state model, but persists node metadata and the synthetic entry list to a small local file. It can also be started with optional `peer-spec` arguments so follower-side client redirects can include concrete leader host/port metadata. It currently persists:
 
@@ -468,15 +468,15 @@ These can be overridden with:
 - `RAFT_CPP_INTEROP_LAST_LOG_INDEX`
 - `RAFT_CPP_INTEROP_LAST_LOG_TERM`
 
-Internally, the server now routes inbound RPCs through a small handler interface. The current CLI wires in a default `StubRpcHandler`, but that seam is intended to be replaced later by real C++ Raft logic.
+Internally, inbound RPCs route through a small handler interface. The CLI still keeps a minimal non-participating handler for transport checks, while the active modes wire the handler to the C++ Raft node and runtime.
 
-That transition has now started:
+The active implementation now includes:
 
 - `graft::RaftNode` holds term, role, leader, vote, log position, commit index, and snapshot position
 - it also tracks configured voting peers, quorum size, candidate vote accumulation, and per-peer replication progress
 - the stateful handler delegates into that node object instead of keeping Raft-ish state inline inside the handler
 
-This is still only a partial implementation, but it moves the C++ code from "transport stub with ad hoc state" toward a real consensus core.
+The C++ implementation now has a real consensus core for the shared behaviors listed above. The remaining limitations are called out explicitly in the boundary section below.
 
 ## Current Design
 
@@ -501,7 +501,7 @@ This is still only a partial implementation, but it moves the C++ code from "tra
 
 ## Next Steps
 
-The natural next steps are now convergence and hardening rather than first proof-of-concept work:
+The natural next steps are now convergence and hardening:
 
 1. move the inbound server from a blocking loop to the same async/event-driven model as the active scheduler
 2. split the C++ subtree into clearer wire/core/storage/state-machine/runtime/transport/app units as the code grows
