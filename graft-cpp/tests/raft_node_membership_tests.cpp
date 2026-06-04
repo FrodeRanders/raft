@@ -192,6 +192,54 @@ TEST_CASE("Membership RPCs report invalid request status", "[rpc][membership]") 
     REQUIRE(reconfigure_response->status() == "INVALID");
 }
 
+TEST_CASE("Membership RPCs report Java-compatible join lifecycle status", "[rpc][membership]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+    node->become_leader();
+
+    graft::InMemoryRpcHandler handler(node);
+    handler.set_internal_command_replicator([&node](const std::string &command) {
+        return node->append_and_commit_local_command(command).has_value();
+    });
+
+    raft::JoinClusterRequest join;
+    join.set_peer_id("client");
+    join.set_joining_peer_id("n2");
+    join.set_host("127.0.0.1");
+    join.set_port(10082);
+    join.set_role("VOTER");
+
+    const auto join_response = handler.on_join_cluster_request(join);
+    REQUIRE(join_response.has_value());
+    REQUIRE(join_response->success());
+    REQUIRE(join_response->status() == "PENDING");
+    REQUIRE(join_response->message() == "Join request accepted and awaiting joint configuration commit");
+
+    raft::JoinClusterStatusRequest status;
+    status.set_peer_id("client");
+    status.set_target_peer_id("n2");
+    const auto pending_response = handler.on_join_cluster_status_request(status);
+    REQUIRE(pending_response.has_value());
+    REQUIRE(pending_response->success());
+    REQUIRE(pending_response->status() == "PENDING");
+    REQUIRE(pending_response->message() == "Join request accepted and awaiting joint configuration commit");
+
+    status.set_target_peer_id("unknown-peer");
+    const auto unknown_response = handler.on_join_cluster_status_request(status);
+    REQUIRE(unknown_response.has_value());
+    REQUIRE_FALSE(unknown_response->success());
+    REQUIRE(unknown_response->status() == "UNKNOWN");
+    REQUIRE(unknown_response->message() == "No known join request or committed membership for peer");
+}
+
 TEST_CASE("Follower redirects operational summary RPCs to known leader", "[rpc][operational]") {
     auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
         .peer_id = "n1",

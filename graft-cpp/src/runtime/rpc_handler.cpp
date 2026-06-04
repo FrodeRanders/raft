@@ -561,16 +561,16 @@ namespace graft {
         if (!internal_command_replicator_ ||
             !internal_command_replicator_(RaftNode::encode_internal_command(internal))) {
             response.set_success(false);
-            response.set_status("RETRY");
-            response.set_message("join admission was not committed");
+            response.set_status("REJECTED");
+            response.set_message("Join request could not be applied");
             return response;
         }
         if (join_tracker_) {
             join_tracker_(request.joining_peer_id(), Endpoint{request.host(), request.port()});
         }
         response.set_success(true);
-        response.set_status("ACCEPTED");
-        response.set_message("join admission committed");
+        response.set_status("PENDING");
+        response.set_message("Join request accepted and awaiting joint configuration commit");
         response.set_leader_id(node_->peer_id());
         return response;
     }
@@ -599,7 +599,7 @@ namespace graft {
         if (node_->has_pending_join(request.target_peer_id())) {
             response.set_success(true);
             response.set_status("PENDING");
-            response.set_message("join request is recorded");
+            response.set_message("Join request accepted and awaiting joint configuration commit");
             return response;
         }
 
@@ -608,14 +608,14 @@ namespace graft {
             response.set_success(true);
             response.set_status(node_->joint_consensus() ? "IN_JOINT_CONSENSUS" : "COMPLETED");
             response.set_message(node_->joint_consensus()
-                                     ? "peer is part of a joint configuration"
-                                     : "peer is a configured member");
+                                     ? "Peer is present in the active joint configuration"
+                                     : "Peer is part of the finalized cluster configuration");
             return response;
         }
 
-        response.set_success(true);
+        response.set_success(false);
         response.set_status("UNKNOWN");
-        response.set_message("peer is not known");
+        response.set_message("No known join request or committed membership for peer");
         return response;
     }
 
@@ -758,8 +758,8 @@ namespace graft {
             if (!internal_command_replicator_ ||
                 !internal_command_replicator_(RaftNode::encode_internal_command(internal))) {
                 response.set_success(false);
-                response.set_status("RETRY");
-                response.set_message("joint configuration was not committed");
+                response.set_status("REJECTED");
+                response.set_message("Reconfiguration request could not be applied");
                 return response;
             }
             if (membership_updater_) {
@@ -772,8 +772,8 @@ namespace graft {
                 if (!internal_command_replicator_ ||
                     !internal_command_replicator_(RaftNode::encode_internal_command(finalize))) {
                     response.set_success(false);
-                    response.set_status("RETRY");
-                    response.set_message("role change was committed but finalize was not committed");
+                    response.set_status("REJECTED");
+                    response.set_message("Reconfiguration request could not be applied");
                     return response;
                 }
             }
@@ -781,10 +781,10 @@ namespace graft {
             response.set_success(true);
             response.set_status("ACCEPTED");
             response.set_message(action == "PROMOTE"
-                                     ? "learner promotion committed"
+                                     ? "Learner promotion accepted"
                                      : action == "DEMOTE"
-                                           ? "voter demotion committed"
-                                           : "joint configuration committed");
+                                           ? "Voter demotion accepted"
+                                           : "Joint configuration accepted");
             response.set_leader_id(node_->peer_id());
             return response;
         }
@@ -794,13 +794,13 @@ namespace graft {
         if (!internal_command_replicator_ ||
             !internal_command_replicator_(RaftNode::encode_internal_command(internal))) {
             response.set_success(false);
-            response.set_status("RETRY");
-            response.set_message("configuration finalize was not committed");
+            response.set_status("REJECTED");
+            response.set_message("Reconfiguration request could not be applied");
             return response;
         }
         response.set_success(true);
         response.set_status("ACCEPTED");
-        response.set_message("configuration finalize committed");
+        response.set_message("Finalize configuration accepted");
         response.set_leader_id(node_->peer_id());
         return response;
     }
