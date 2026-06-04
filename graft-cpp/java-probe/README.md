@@ -1,6 +1,6 @@
 # Java Probe
 
-This is a disconnected Java-side interoperability probe for the C++ implementation.
+This is a standalone Java-side interoperability probe for the C++ implementation.
 
 It reuses the existing Java transport/runtime stack in two ways:
 

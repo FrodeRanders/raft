@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package org.gautelis.raft.experiments.cpp;
+package org.gautelis.raft.cpp;
 
 import org.gautelis.raft.app.kv.KeyValueDemoAdapter;
 import org.gautelis.raft.protocol.Peer;

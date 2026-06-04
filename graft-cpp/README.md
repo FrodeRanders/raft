@@ -1,12 +1,13 @@
 # graft-cpp
 
-This directory contains the disconnected C++ implementation work. It does not participate in the Maven build and does not interfere with the Java implementation.
+This directory contains the C++ implementation. It is a peer implementation of the Java Raft functionality, built separately with CMake so it can be used in C++ deployments without making the Maven reactor responsible for native builds.
 
-The goal is not to rewrite the whole project immediately. The first goal is narrower:
+The goal is functional equivalence with the Java implementation at the shared protocol and behavior boundary:
 
 - reuse the existing protobuf contract from `raft-wire/src/main/proto/raft.proto`
 - reuse the existing `Envelope` framing used by the Java Netty transport
-- prove that a C++ process can talk to a running Java node over the same wire protocol
+- keep Java and C++ nodes interoperable in the same Raft cluster
+- converge the C++ runtime, persistence, membership, and application behavior with the Java implementation over time
 
 ## Scope
 
@@ -45,7 +46,7 @@ The current implementation provides:
 
 This establishes the wire-level interoperability path and now includes a bounded C++ Raft implementation using that path.
 
-There is also a disconnected Java-side probe under [java-probe/README.md](java-probe/README.md) which reuses the existing Netty transport client to send real Java-originated Raft RPCs into the C++ endpoint.
+There is also a standalone Java-side probe under [java-probe/README.md](java-probe/README.md) which reuses the existing Netty transport client to send real Java-originated Raft RPCs into the C++ endpoint.
 
 The implementation now also includes a bounded mixed Java/C++ replicated-node smoke:
 
@@ -64,13 +65,13 @@ The Java and C++ implementations are intentionally coupled at the protocol bound
 
 ```text
                  shared contract
-        ../../raft-wire/src/main/proto/raft.proto
+        ../raft-wire/src/main/proto/raft.proto
           Envelope + Raft RPCs + KV commands
                       |
         +-------------+-------------+
         |                           |
  Java implementation           C++ implementation
- Maven reactor                 experiments/graft-cpp
+ Maven reactor                 graft-cpp
         |                           |
  Netty transport               Boost.Asio transport
  Java RaftNode/runtime         C++ RaftNode/runtime
@@ -97,7 +98,7 @@ The Java implementation is currently the more mature layered design:
 - `raft-transport-netty`: concrete Netty transport
 - application modules such as `raft-app-kv`
 
-The C++ implementation mirrors the same conceptual layers, but in a smaller disconnected subtree:
+The C++ implementation mirrors the same conceptual layers, but in a smaller CMake subtree:
 
 - `graft_proto`: generated C++ protobuf types from the shared schema
 - `envelope_codec.hpp`: Java-compatible length framing and envelope encoding
@@ -134,8 +135,8 @@ Prerequisites:
 Build from the repository root:
 
 ```text
-cmake -S experiments/graft-cpp -B experiments/graft-cpp/build
-cmake --build experiments/graft-cpp/build
+cmake -S graft-cpp -B graft-cpp/build
+cmake --build graft-cpp/build
 ```
 
 On MacPorts, the optional unit-test dependency can be installed with:
@@ -147,7 +148,7 @@ sudo port install catch2
 That produces:
 
 ```text
-experiments/graft-cpp/build/graft_smoke
+graft-cpp/build/graft_smoke
 ```
 
 The build now also defines reusable CMake targets:
@@ -162,7 +163,7 @@ The build now also defines reusable CMake targets:
 Run the C++ unit tests with:
 
 ```text
-ctest --test-dir experiments/graft-cpp/build --output-on-failure
+ctest --test-dir graft-cpp/build --output-on-failure
 ```
 
 ## Run
@@ -172,48 +173,48 @@ First start a local Java node or cluster, for example with the existing jar/scri
 Then from the repository root:
 
 ```text
-experiments/graft-cpp/build/graft_smoke cluster-summary 127.0.0.1 10080
-experiments/graft-cpp/build/graft_smoke telemetry 127.0.0.1 10080
-experiments/graft-cpp/build/graft_smoke reconfiguration-status 127.0.0.1 10080
-experiments/graft-cpp/build/graft_smoke client-put 127.0.0.1 11082 k v1 cpp-node
-experiments/graft-cpp/build/graft_smoke client-cas 127.0.0.1 11082 k false "" v1 cpp-node
-experiments/graft-cpp/build/graft_smoke client-get 127.0.0.1 11082 k cpp-node
-experiments/graft-cpp/build/graft_smoke join-cluster 127.0.0.1 11083 peer-b 127.0.0.1 11084 voter cpp-node
-experiments/graft-cpp/build/graft_smoke join-status 127.0.0.1 11083 peer-b cpp-node
-experiments/graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 joint peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11084 peer-c@127.0.0.1:11085/learner
-experiments/graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 finalize peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11084
-experiments/graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 promote peer-c@127.0.0.1:11085/learner
-experiments/graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 demote peer-b@127.0.0.1:11084/voter
-experiments/graft-cpp/build/graft_smoke vote-request 127.0.0.1 10080 cpp-candidate 0 0
-experiments/graft-cpp/build/graft_smoke append-entries 127.0.0.1 10080 cpp-leader 0 0 0
-experiments/graft-cpp/build/graft_smoke install-snapshot 127.0.0.1 10080 cpp-leader 0 0
-experiments/graft-cpp/build/graft_smoke install-snapshot 127.0.0.1 10080 cpp-leader 6 3 3 snapshot-alpha
-experiments/graft-cpp/build/graft_smoke serve 127.0.0.1 11080 cpp-stub
-experiments/graft-cpp/build/graft_smoke serve-stateful 127.0.0.1 11081 cpp-node 3 7 3
-experiments/graft-cpp/build/graft_smoke serve-persistent 127.0.0.1 11082 cpp-node /tmp/cpp-node.state 3 7 3 peer-a@127.0.0.1:11081
-experiments/graft-cpp/build/graft_smoke serve-active 127.0.0.1 11082 cpp-node 3 7 3 peer-a@127.0.0.1:11081
-experiments/graft-cpp/build/graft_smoke serve-active-persistent 127.0.0.1 11083 cpp-node /tmp/cpp-node.state 3 7 3 peer-a@127.0.0.1:11081
-experiments/graft-cpp/build/graft_smoke serve-active-persistent-workload 127.0.0.1 11084 cpp-node /tmp/cpp-node.state 3 7 3 1500 peer-a@127.0.0.1:11081
-experiments/graft-cpp/build/graft_smoke serve-active-persistent-workload 127.0.0.1 11084 cpp-node /tmp/cpp-node.state 3 7 3 1500 4 peer-a@127.0.0.1:11081
-experiments/graft-cpp/build/graft_smoke election-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
-experiments/graft-cpp/build/graft_smoke heartbeat-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
-experiments/graft-cpp/build/graft_smoke replicate-once cpp-node 3 hello 7 3 peer-a@127.0.0.1:11081
-experiments/graft-cpp/build/graft_smoke replicate-once-persistent cpp-node /tmp/cpp-node.state 3 hello 7 3 peer-a@127.0.0.1:11081
-experiments/graft-cpp/build/graft_smoke replicate-put-persistent cpp-node /tmp/cpp-node.state 3 k v1 7 3 peer-a@127.0.0.1:11081
-experiments/graft-cpp/build/graft_smoke compact-snapshot cpp-node /tmp/cpp-node.state 8 compact-alpha 3 8 3
-experiments/graft-cpp/build/graft_smoke dump-state /tmp/cpp-node.state
-experiments/graft-cpp/run-interop-smoke.sh
-experiments/graft-cpp/run-mixed-smoke.sh
-experiments/graft-cpp/run-mixed-smoke-java-leader.sh
-experiments/graft-cpp/run-mixed-membership-smoke.sh
-experiments/graft-cpp/run-mixed-snapshot-smoke.sh
-experiments/graft-cpp/run-mixed-suite.sh
+graft-cpp/build/graft_smoke cluster-summary 127.0.0.1 10080
+graft-cpp/build/graft_smoke telemetry 127.0.0.1 10080
+graft-cpp/build/graft_smoke reconfiguration-status 127.0.0.1 10080
+graft-cpp/build/graft_smoke client-put 127.0.0.1 11082 k v1 cpp-node
+graft-cpp/build/graft_smoke client-cas 127.0.0.1 11082 k false "" v1 cpp-node
+graft-cpp/build/graft_smoke client-get 127.0.0.1 11082 k cpp-node
+graft-cpp/build/graft_smoke join-cluster 127.0.0.1 11083 peer-b 127.0.0.1 11084 voter cpp-node
+graft-cpp/build/graft_smoke join-status 127.0.0.1 11083 peer-b cpp-node
+graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 joint peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11084 peer-c@127.0.0.1:11085/learner
+graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 finalize peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11084
+graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 promote peer-c@127.0.0.1:11085/learner
+graft-cpp/build/graft_smoke reconfigure 127.0.0.1 11083 demote peer-b@127.0.0.1:11084/voter
+graft-cpp/build/graft_smoke vote-request 127.0.0.1 10080 cpp-candidate 0 0
+graft-cpp/build/graft_smoke append-entries 127.0.0.1 10080 cpp-leader 0 0 0
+graft-cpp/build/graft_smoke install-snapshot 127.0.0.1 10080 cpp-leader 0 0
+graft-cpp/build/graft_smoke install-snapshot 127.0.0.1 10080 cpp-leader 6 3 3 snapshot-alpha
+graft-cpp/build/graft_smoke serve 127.0.0.1 11080 cpp-stub
+graft-cpp/build/graft_smoke serve-stateful 127.0.0.1 11081 cpp-node 3 7 3
+graft-cpp/build/graft_smoke serve-persistent 127.0.0.1 11082 cpp-node /tmp/cpp-node.state 3 7 3 peer-a@127.0.0.1:11081
+graft-cpp/build/graft_smoke serve-active 127.0.0.1 11082 cpp-node 3 7 3 peer-a@127.0.0.1:11081
+graft-cpp/build/graft_smoke serve-active-persistent 127.0.0.1 11083 cpp-node /tmp/cpp-node.state 3 7 3 peer-a@127.0.0.1:11081
+graft-cpp/build/graft_smoke serve-active-persistent-workload 127.0.0.1 11084 cpp-node /tmp/cpp-node.state 3 7 3 1500 peer-a@127.0.0.1:11081
+graft-cpp/build/graft_smoke serve-active-persistent-workload 127.0.0.1 11084 cpp-node /tmp/cpp-node.state 3 7 3 1500 4 peer-a@127.0.0.1:11081
+graft-cpp/build/graft_smoke election-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
+graft-cpp/build/graft_smoke heartbeat-round cpp-node 3 7 3 peer-a@127.0.0.1:11081
+graft-cpp/build/graft_smoke replicate-once cpp-node 3 hello 7 3 peer-a@127.0.0.1:11081
+graft-cpp/build/graft_smoke replicate-once-persistent cpp-node /tmp/cpp-node.state 3 hello 7 3 peer-a@127.0.0.1:11081
+graft-cpp/build/graft_smoke replicate-put-persistent cpp-node /tmp/cpp-node.state 3 k v1 7 3 peer-a@127.0.0.1:11081
+graft-cpp/build/graft_smoke compact-snapshot cpp-node /tmp/cpp-node.state 8 compact-alpha 3 8 3
+graft-cpp/build/graft_smoke dump-state /tmp/cpp-node.state
+graft-cpp/run-interop-smoke.sh
+graft-cpp/run-mixed-smoke.sh
+graft-cpp/run-mixed-smoke-java-leader.sh
+graft-cpp/run-mixed-membership-smoke.sh
+graft-cpp/run-mixed-snapshot-smoke.sh
+graft-cpp/run-mixed-suite.sh
 ```
 
 Optional peer id override:
 
 ```text
-experiments/graft-cpp/build/graft_smoke cluster-summary 127.0.0.1 10080 cpp-cli
+graft-cpp/build/graft_smoke cluster-summary 127.0.0.1 10080 cpp-cli
 ```
 
 The replication probes intentionally default to `term=0` unless you pass an explicit final argument. That makes them useful as transport-compatibility checks without assuming the C++ side is participating in the live cluster correctly yet.
@@ -424,7 +425,7 @@ Peer lists for these commands use:
 For example:
 
 ```text
-experiments/graft-cpp/build/graft_smoke election-round cpp-node 3 7 3 peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11082
+graft-cpp/build/graft_smoke election-round cpp-node 3 7 3 peer-a@127.0.0.1:11081 peer-b@127.0.0.1:11082
 ```
 
 `run-interop-smoke.sh` automates the current mixed-language check:
@@ -480,7 +481,7 @@ This is still only a partial implementation, but it moves the C++ code from "tra
 - `graft_transport` CMake target
   - reusable implementation target containing the layered C++ sources for now
 - `java-probe/`
-  - disconnected Java interoperability probe using the existing Java transport stack
+  - standalone Java interoperability probe using the existing Java transport stack
 - `src/main.cpp`
   - small executable wrapper around the app-layer CLI
 
@@ -645,12 +646,12 @@ the responses were:
 
 ```text
 peer_id: cpp-node
-status: OK
+status: ACCEPTED
 success: true
 leader_id: cpp-node
 leader_host: 127.0.0.1
 leader_port: 11381
-message: command committed and applied
+message: Command committed and applied
 ```
 
 and:
@@ -662,7 +663,7 @@ success: true
 leader_id: cpp-node
 leader_host: 127.0.0.1
 leader_port: 11381
-message: query completed
+message: Query completed
 found: true
 value: v1
 ```
@@ -691,12 +692,12 @@ returned:
 
 ```text
 peer_id: cpp-node
-status: OK
+status: ACCEPTED
 success: true
 leader_id: cpp-node
 leader_host: 127.0.0.1
 leader_port: 11391
-message: command committed and applied
+message: Command committed and applied
 ```
 
 and:
@@ -708,7 +709,7 @@ success: true
 leader_id: cpp-node
 leader_host: 127.0.0.1
 leader_port: 11391
-message: query completed
+message: Query completed
 found: true
 value: v1
 ```
@@ -738,12 +739,12 @@ returned:
 
 ```text
 peer_id: cpp-node
-status: OK
+status: ACCEPTED
 success: true
 leader_id: cpp-node
 leader_host: 127.0.0.1
 leader_port: 11583
-message: command committed and applied
+message: Command committed and applied
 cas.key: k
 cas.matched: true
 cas.expected_present: false
@@ -757,12 +758,12 @@ and then:
 
 ```text
 peer_id: cpp-node
-status: OK
+status: ACCEPTED
 success: true
 leader_id: cpp-node
 leader_host: 127.0.0.1
 leader_port: 11583
-message: command committed and applied
+message: Command committed and applied
 cas.key: k
 cas.matched: false
 cas.expected_present: true
@@ -902,12 +903,12 @@ Follower-side query behavior is now also aligned with that model. In a two-node 
 
 ```text
 peer_id: peer-a
-status: NOT_LEADER
+status: REDIRECT
 success: false
 leader_id: cpp-node
 leader_host: 127.0.0.1
 leader_port: 11391
-message: query must target leader
+message: Node is not leader; send query to current leader
 ```
 
 So once a node has learned another leader, it no longer auto-promotes itself for client reads just because it lacks an explicit peer configuration file, and client redirects can now be actionable when the node was started with known peer endpoints.

@@ -16,7 +16,7 @@ Suites:
 Examples:
   ./run-suite.sh
   ./run-suite.sh smoke
-  ./run-suite.sh mixed --cpp-bin ../experiments/graft-cpp/build/graft_smoke
+  ./run-suite.sh mixed --cpp-bin ../graft-cpp/build/graft_smoke
   ./run-suite.sh extended --time-limit 30 --concurrency 12
 EOF
 }

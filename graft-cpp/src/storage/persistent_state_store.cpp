@@ -41,7 +41,7 @@ namespace graft {
             throw std::runtime_error("failed to open state file for write: " + path_.string());
         }
 
-        // This intentionally remains a simple line-oriented format for the disconnected implementation. It is not a
+        // This intentionally remains a simple line-oriented format for the current C++ implementation. It is not a
         // durable storage engine; it captures enough state for restart and mixed Java/C++ smoke validation.
         out << "peer_id=" << escape(state.peer_id) << '\n';
         out << "current_term=" << state.current_term << '\n';

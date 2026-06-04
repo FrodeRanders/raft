@@ -75,7 +75,7 @@
   ;; the client's perspective. :info means uncertain; Knossos may consider both
   ;; possibilities when checking the history.
   (let [status (:status response)
-        success? (and (zero? exit) (#{"ACCEPTED" "OK"} status) (:success response))]
+        success? (and (zero? exit) (= "ACCEPTED" status) (:success response))]
     (cond
       success? (assoc op :type :ok :value value)
       (#{"RETRY" "REDIRECT" "NOT_LEADER"} status) (assoc op :type :fail :error status)
@@ -102,7 +102,7 @@
   ;; the system. It tells the checker that the compare-and-set did not update
   ;; the register.
   (let [status (:status response)
-        success? (and (zero? exit) (#{"ACCEPTED" "OK"} status) (:success response))
+        success? (and (zero? exit) (= "ACCEPTED" status) (:success response))
         result (:result response)
         matched? (= true (:matched result))]
     (cond

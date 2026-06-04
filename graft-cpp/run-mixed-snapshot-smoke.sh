@@ -146,7 +146,7 @@ echo
 echo "==> Lagged Java follower redirects reads to the C++ leader"
 follower_query_output="$(./run-java-probe.sh client-get "${HOST}" "${JAVA_LAGGED_PORT}" pre1 mixed-java-client)"
 echo "${follower_query_output}"
-grep -Eq "status: (REDIRECT|NOT_LEADER)" <<<"${follower_query_output}"
+grep -q "status: REDIRECT" <<<"${follower_query_output}"
 grep -q "leaderId: ${CPP_PEER_ID}" <<<"${follower_query_output}"
 grep -q "leaderHost: ${HOST}" <<<"${follower_query_output}"
 grep -q "leaderPort: ${CPP_PORT}" <<<"${follower_query_output}"

@@ -61,7 +61,7 @@ echo "==> Java client-put -> Java leader"
 put_output="$(./run-java-probe.sh client-put "${HOST}" "${JAVA_PORT}" k v1 mixed-java-client)"
 echo "${put_output}"
 grep -q "success: true" <<<"${put_output}"
-grep -Eq "status: (OK|ACCEPTED)" <<<"${put_output}"
+grep -q "status: ACCEPTED" <<<"${put_output}"
 
 echo
 echo "==> Java client-get -> Java leader"
@@ -87,7 +87,7 @@ cpp_follower_query_status=$?
 set -e
 echo "${cpp_follower_query}"
 test "${cpp_follower_query_status}" -eq 0 -o "${cpp_follower_query_status}" -eq 2
-grep -Eq "status: (REDIRECT|NOT_LEADER)" <<<"${cpp_follower_query}"
+grep -q "status: REDIRECT" <<<"${cpp_follower_query}"
 grep -q "leader_id: ${JAVA_PEER_ID}" <<<"${cpp_follower_query}"
 grep -q "leader_host: ${HOST}" <<<"${cpp_follower_query}"
 grep -q "leader_port: ${JAVA_PORT}" <<<"${cpp_follower_query}"

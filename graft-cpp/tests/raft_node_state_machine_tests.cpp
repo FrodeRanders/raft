@@ -2,6 +2,7 @@
 
 #include "raft.pb.h"
 #include "graft/core/raft_node.hpp"
+#include "graft/runtime/rpc_handler.hpp"
 #include "test_commands.hpp"
 
 TEST_CASE("RaftNode applies key/value state machine commands", "[raft-node][state-machine]") {
@@ -40,4 +41,24 @@ TEST_CASE("RaftNode applies key/value state machine commands", "[raft-node][stat
     REQUIRE_FALSE(decoded.cas().matched());
     REQUIRE(decoded.cas().current_value() == "v2");
     REQUIRE(node.applied_kv().at("k") == "v2");
+}
+
+TEST_CASE("Client command RPC reports accepted after commit", "[rpc-handler][state-machine]") {
+    graft::InMemoryRpcHandler handler("n1", 1, 0, 0);
+    handler.set_local_endpoint("127.0.0.1", 10080);
+
+    const auto put = graft::test::put_command("k", "v1");
+    raft::ClientCommandRequest request;
+    request.set_term(1);
+    request.set_peer_id("client");
+    request.set_command(put.SerializeAsString());
+
+    const auto response = handler.on_client_command_request(request);
+    REQUIRE(response.has_value());
+    REQUIRE(response->success());
+    REQUIRE(response->status() == "ACCEPTED");
+    REQUIRE(response->message() == "Command committed and applied");
+    REQUIRE(response->leader_id() == "n1");
+    REQUIRE(response->leader_host() == "127.0.0.1");
+    REQUIRE(response->leader_port() == 10080);
 }

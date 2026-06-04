@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 
 cmd=(
   mvn -q -f java-probe/pom.xml exec:java
-  -Dexec.mainClass=org.gautelis.raft.experiments.cpp.JavaPeerMain
+  -Dexec.mainClass=org.gautelis.raft.cpp.JavaPeerMain
   "-Dexec.args=$*"
 )
 

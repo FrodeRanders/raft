@@ -18,8 +18,8 @@ That means the default Maven test path now depends on:
 Mixed Java/C++ Jepsen runs are not part of the default Maven path. They also require a built C++ smoke binary:
 
 ```text
-cmake -S experiments/graft-cpp -B experiments/graft-cpp/build
-cmake --build experiments/graft-cpp/build --target graft_smoke
+cmake -S graft-cpp -B graft-cpp/build
+cmake --build graft-cpp/build --target graft_smoke
 ```
 
 ### 1. Fast Java feedback

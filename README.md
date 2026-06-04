@@ -402,9 +402,11 @@ Those counters and age gauges are intended for alerting on long-running role cha
 ## Next Steps
 There are no committed follow-up items at the moment.
 
-## Java/C++ Interoperability
+## Java/C++ Implementations
 
-The Java implementation remains the primary implementation in the Maven reactor. The C++ implementation under `experiments/graft-cpp` is a separate CMake subtree, but it shares the same protobuf schema, envelope framing, client command/query messages, membership messages, telemetry messages, and snapshot messages.
+This repository is intended to carry two functionally equivalent Raft implementations: Java and C++. The Java implementation remains in the Maven reactor, while the C++ implementation under `graft-cpp` is a separate CMake subtree. Both implementations share the same protobuf schema, envelope framing, client command/query messages, membership messages, telemetry messages, and snapshot messages.
+
+The primary application is distributing governed reference data: writes are rare and centrally managed, while lookups are high-volume and latency-sensitive near consuming systems. Raft lets a slower management database remain the source of governed changes while replicated state machines distribute those changes to local, fast lookup structures. The same model also applies to selected master data, where individual records change infrequently but aggregate dataset churn still requires quality assurance and efficient distributed reads.
 
 Current mixed-language validation covers:
 
@@ -426,7 +428,7 @@ cd jepsen
 The C++ smoke suite remains useful for narrower protocol and runtime checks:
 
 ```text
-experiments/graft-cpp/run-mixed-suite.sh
+graft-cpp/run-mixed-suite.sh
 ```
 
 ### Other discovery mechanisms

@@ -16,7 +16,7 @@ This directory contains the first Jepsen harness for the repository: a local key
 - Java 21
 - Clojure CLI
 - built runnable jar
-- built `experiments/graft-cpp/build/graft_smoke` for mixed Java/C++ runs
+- built `graft-cpp/build/graft_smoke` for mixed Java/C++ runs
 - non-interactive `sudo` for partition tests
 
 Build the jar from the repository root:
@@ -121,7 +121,7 @@ The workload layer can also be varied:
 
 ## Mixed Java/C++ Runs
 
-The default Jepsen suites remain Java-only so normal validation does not depend on the experimental C++ build.
+The default Jepsen suites remain Java-only so normal validation does not depend on the C++ build.
 To run mixed Java/C++ validation, build the C++ smoke binary and pass node implementations explicitly:
 
 ```text
@@ -141,7 +141,7 @@ The mixed suite includes a C++-first membership case, which exercises C++ leader
 
 `--client-impl` controls the CLI used by Jepsen operations:
 
-- `java`: use the Java JSON CLI for every operation; this is the default and keeps the normal suites independent from the experimental C++ build
+- `java`: use the Java JSON CLI for every operation; this is the default and keeps the normal suites independent from the C++ build
 - `cpp`: use `graft_smoke client-put`, `client-get`, and `client-cas` for every operation
 - `mixed`: use the C++ CLI when the target node is configured as `cpp`, otherwise use the Java CLI
 

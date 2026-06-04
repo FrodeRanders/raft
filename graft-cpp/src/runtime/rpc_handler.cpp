@@ -280,8 +280,13 @@ namespace graft {
 
         if (node_->role() != RaftNode::Role::leader) {
             response.set_success(false);
-            response.set_status("NOT_LEADER");
-            response.set_message("command must target leader");
+            if (current_leader_endpoint().has_value()) {
+                response.set_status("REDIRECT");
+                response.set_message("Node is not leader; send request to current leader");
+            } else {
+                response.set_status("REJECTED");
+                response.set_message("Node is not leader or command could not be applied");
+            }
             return response;
         }
 
@@ -303,8 +308,8 @@ namespace graft {
         }
 
         response.set_success(true);
-        response.set_status("OK");
-        response.set_message("command committed and applied");
+        response.set_status("ACCEPTED");
+        response.set_message("Command committed and applied");
         populate_leader_endpoint(response);
         if (!command_result->empty()) {
             response.set_result(*command_result);
@@ -343,8 +348,13 @@ namespace graft {
         }
 
         if (node_->role() != RaftNode::Role::leader) {
-            response.set_status("NOT_LEADER");
-            response.set_message("query must target leader");
+            if (current_leader_endpoint().has_value()) {
+                response.set_status("REDIRECT");
+                response.set_message("Node is not leader; send query to current leader");
+            } else {
+                response.set_status("REJECTED");
+                response.set_message("Node is not leader or query could not be applied");
+            }
             return response;
         }
 
@@ -362,7 +372,7 @@ namespace graft {
 
         response.set_success(true);
         response.set_status("OK");
-        response.set_message("query completed");
+        response.set_message("Query completed");
         populate_leader_endpoint(response);
         if (!result.SerializeToString(response.mutable_result())) {
             throw std::runtime_error("failed to serialize StateMachineQueryResult");

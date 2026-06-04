@@ -170,7 +170,7 @@ echo
 echo "==> Java learner redirects reads to the C++ leader"
 learner_query_output="$(./run-java-probe.sh client-get "${HOST}" "${JAVA_LEARNER_PORT}" k mixed-java-client)"
 echo "${learner_query_output}"
-grep -Eq "status: (REDIRECT|NOT_LEADER)" <<<"${learner_query_output}"
+grep -q "status: REDIRECT" <<<"${learner_query_output}"
 grep -q "leaderId: ${CPP_PEER_ID}" <<<"${learner_query_output}"
 
 echo

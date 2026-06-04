@@ -160,15 +160,15 @@
 
 (defn resolved-cpp-bin [test]
   ;; C++ support is optional. Resolve the smoke binary lazily so Java-only runs
-  ;; do not depend on the experimental C++ build.
+  ;; do not depend on the C++ build.
   (if-let [configured (:cpp-bin test)]
     (.getAbsolutePath (io/file configured))
-    (let [candidates [(io/file (repo-root test) "experiments" "graft-cpp" "build" "graft_smoke")
+    (let [candidates [(io/file (repo-root test) "graft-cpp" "build" "graft_smoke")
                       (io/file "/tmp" "graft-cpp-build" "graft_smoke")]
           found (first (filter #(.canExecute ^File %) candidates))]
       (if found
         (.getAbsolutePath ^File found)
-        (throw (ex-info "No executable graft_smoke found; build experiments/graft-cpp or pass --cpp-bin"
+        (throw (ex-info "No executable graft_smoke found; build graft-cpp or pass --cpp-bin"
                         {:candidates (mapv #(.getAbsolutePath ^File %) candidates)}))))))
 
 (defn- java-props [test node]
