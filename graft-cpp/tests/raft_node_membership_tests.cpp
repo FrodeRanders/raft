@@ -269,6 +269,44 @@ TEST_CASE("Operational and membership RPCs enforce configured shared-secret auth
     REQUIRE(unauthenticated_join->message() == "Client command authentication failed");
 }
 
+TEST_CASE("Operational RPCs enforce per-requester rate limit", "[rpc][operational][rate-limit]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+    node->become_leader();
+
+    graft::InMemoryRpcHandler handler(node);
+    handler.set_telemetry_rate_limit_per_minute(1);
+
+    raft::ClusterSummaryRequest first;
+    first.set_peer_id("ops-client");
+    const auto first_response = handler.on_cluster_summary_request(first);
+    REQUIRE(first_response.has_value());
+    REQUIRE(first_response->success());
+    REQUIRE(first_response->status() == "OK");
+
+    raft::ReconfigurationStatusRequest second;
+    second.set_peer_id("ops-client");
+    const auto second_response = handler.on_reconfiguration_status_request(second);
+    REQUIRE(second_response.has_value());
+    REQUIRE_FALSE(second_response->success());
+    REQUIRE(second_response->status() == "RATE_LIMITED");
+
+    raft::TelemetryRequest other_requester;
+    other_requester.set_peer_id("other-ops-client");
+    const auto other_response = handler.on_telemetry_request(other_requester);
+    REQUIRE(other_response.has_value());
+    REQUIRE(other_response->success());
+    REQUIRE(other_response->status() == "OK");
+}
+
 TEST_CASE("Leader operational summaries report degraded and at-risk quorum health", "[rpc][operational]") {
     auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
         .peer_id = "n1",

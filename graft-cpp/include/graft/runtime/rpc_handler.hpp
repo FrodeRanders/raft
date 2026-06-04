@@ -16,6 +16,7 @@
  */
 #pragma once
 
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -159,6 +160,8 @@ namespace graft {
 
         void set_command_authorizer(CommandAuthorizer authorizer);
 
+        void set_telemetry_rate_limit_per_minute(std::int32_t limit);
+
         void set_join_forwarder(JoinForwarder forwarder);
 
         void set_reconfigure_forwarder(ReconfigureForwarder forwarder);
@@ -240,6 +243,8 @@ namespace graft {
         std::optional<AuthenticationFailure> authorize_command(const std::string &requester_id,
                                                                const std::string &command) const;
 
+        bool allow_operational_request(const std::string &requester_id);
+
         void populate_redirect_leader(raft::ClusterSummaryResponse &response) const;
 
         void populate_redirect_leader(raft::ReconfigurationStatusResponse &response) const;
@@ -252,6 +257,8 @@ namespace graft {
         ReadBarrier read_barrier_;
         Authenticator authenticator_;
         CommandAuthorizer command_authorizer_;
+        std::int32_t telemetry_rate_limit_per_minute_{30};
+        std::unordered_map<std::string, std::deque<std::int64_t>> operational_request_history_;
         JoinForwarder join_forwarder_;
         ReconfigureForwarder reconfigure_forwarder_;
         JoinTracker join_tracker_;

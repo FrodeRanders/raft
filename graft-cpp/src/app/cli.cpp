@@ -185,6 +185,14 @@ namespace {
         return static_cast<std::int64_t>(value);
     }
 
+    std::optional<std::int32_t> parse_int32_env(const char *name) {
+        const auto value = env_value(name);
+        if (!value.has_value()) {
+            return std::nullopt;
+        }
+        return static_cast<std::int32_t>(std::stol(*value));
+    }
+
     bool parse_bool(const std::string &text, const std::string &field_name) {
         if (text == "true" || text == "1") {
             return true;
@@ -287,6 +295,19 @@ namespace {
             handler->set_command_authorizer(*authorizer);
         } else if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::PersistentRpcHandler>) {
             handler->delegate().set_command_authorizer(*authorizer);
+        }
+    }
+
+    template<typename HandlerPtr>
+    void configure_handler_operational_policy(const HandlerPtr &handler) {
+        const auto limit = parse_int32_env("RAFT_TELEMETRY_RATE_LIMIT_PER_MINUTE");
+        if (!limit.has_value()) {
+            return;
+        }
+        if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::InMemoryRpcHandler>) {
+            handler->set_telemetry_rate_limit_per_minute(*limit);
+        } else if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::PersistentRpcHandler>) {
+            handler->delegate().set_telemetry_rate_limit_per_minute(*limit);
         }
     }
 
@@ -904,6 +925,7 @@ namespace {
         configure_handler_endpoints(handler, bind_host, port);
         configure_handler_auth(handler);
         configure_handler_authorization(handler);
+        configure_handler_operational_policy(handler);
         graft::RaftServer server(io_context, bind_host, port, std::move(handler));
         server.serve_forever();
     }
@@ -935,6 +957,7 @@ namespace {
         configure_handler_endpoints(handler, bind_host, port, peers);
         configure_handler_auth(handler);
         configure_handler_authorization(handler);
+        configure_handler_operational_policy(handler);
         graft::RaftServer server(io_context, bind_host, port, std::move(handler));
         server.serve_forever();
     }
@@ -960,6 +983,7 @@ namespace {
             configure_handler_endpoints(in_memory, bind_host, port, peer_endpoints);
             configure_handler_auth(in_memory);
             configure_handler_authorization(in_memory);
+            configure_handler_operational_policy(in_memory);
             in_memory->set_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once_with_result(command);
             });
@@ -998,6 +1022,7 @@ namespace {
             configure_handler_endpoints(persistent, bind_host, port, peer_endpoints);
             configure_handler_auth(persistent);
             configure_handler_authorization(persistent);
+            configure_handler_operational_policy(persistent);
             persistent->delegate().set_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once_with_result(command);
             });

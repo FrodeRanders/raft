@@ -174,6 +174,10 @@ namespace graft {
         command_authorizer_ = std::move(authorizer);
     }
 
+    void InMemoryRpcHandler::set_telemetry_rate_limit_per_minute(std::int32_t limit) {
+        telemetry_rate_limit_per_minute_ = limit;
+    }
+
     void InMemoryRpcHandler::set_join_forwarder(JoinForwarder forwarder) {
         join_forwarder_ = std::move(forwarder);
     }
@@ -242,6 +246,11 @@ namespace graft {
             response.set_status(auth->status);
             return response;
         }
+        if (!allow_operational_request(request.peer_id())) {
+            response.set_success(false);
+            response.set_status("RATE_LIMITED");
+            return response;
+        }
         if (request.require_leader_summary() && node_->role() != RaftNode::Role::leader) {
             response.set_success(false);
             response.set_status(current_leader_endpoint().has_value() ? "REDIRECT" : "NO_LEADER");
@@ -289,6 +298,11 @@ namespace graft {
         if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
             response.set_success(false);
             response.set_status(auth->status);
+            return response;
+        }
+        if (!allow_operational_request(request.peer_id())) {
+            response.set_success(false);
+            response.set_status("RATE_LIMITED");
             return response;
         }
         if (node_->role() != RaftNode::Role::leader) {
@@ -814,6 +828,12 @@ namespace graft {
             return response;
         }
 
+        if (!allow_operational_request(request.peer_id())) {
+            response.set_success(false);
+            response.set_status("RATE_LIMITED");
+            return response;
+        }
+
         if (node_->role() != RaftNode::Role::leader) {
             response.set_success(false);
             response.set_status(current_leader_endpoint().has_value() ? "REDIRECT" : "NO_LEADER");
@@ -1076,6 +1096,26 @@ namespace graft {
             return std::nullopt;
         }
         return command_authorizer_(requester_id, command);
+    }
+
+    bool InMemoryRpcHandler::allow_operational_request(const std::string &requester_id) {
+        if (telemetry_rate_limit_per_minute_ <= 0) {
+            return true;
+        }
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        const auto cutoff = now - 60'000;
+        const auto key = requester_id.empty() ? std::string{"anonymous"} : requester_id;
+        auto &timestamps = operational_request_history_[key];
+        while (!timestamps.empty() && timestamps.front() < cutoff) {
+            timestamps.pop_front();
+        }
+        if (timestamps.size() >= static_cast<std::size_t>(telemetry_rate_limit_per_minute_)) {
+            return false;
+        }
+        timestamps.push_back(now);
+        return true;
     }
 
     void InMemoryRpcHandler::populate_redirect_leader(raft::ClusterSummaryResponse &response) const {
