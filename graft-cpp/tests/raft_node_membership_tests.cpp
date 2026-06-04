@@ -40,13 +40,13 @@ TEST_CASE("RaftNode applies committed membership commands", "[raft-node][members
 
     raft::AppendEntriesRequest append;
     append.set_term(1);
-    append.set_leader_id("leader");
+    append.set_leader_id("n2");
     append.set_prev_log_index(0);
     append.set_prev_log_term(0);
     append.set_leader_commit(1);
     auto* join_entry = append.add_entries();
     join_entry->set_term(1);
-    join_entry->set_peer_id("leader");
+    join_entry->set_peer_id("n2");
     join_entry->set_data(graft::RaftNode::encode_internal_command(join));
 
     const auto join_response = node.handle_append_entries(append);
@@ -59,7 +59,7 @@ TEST_CASE("RaftNode applies committed membership commands", "[raft-node][members
     append.set_leader_commit(2);
     auto* joint_entry = append.add_entries();
     joint_entry->set_term(1);
-    joint_entry->set_peer_id("leader");
+    joint_entry->set_peer_id("n2");
     joint_entry->set_data(graft::RaftNode::encode_internal_command(joint));
 
     const auto joint_response = node.handle_append_entries(append);
@@ -74,7 +74,7 @@ TEST_CASE("RaftNode applies committed membership commands", "[raft-node][members
     append.set_leader_commit(3);
     auto* finalize_entry = append.add_entries();
     finalize_entry->set_term(1);
-    finalize_entry->set_peer_id("leader");
+    finalize_entry->set_peer_id("n2");
     finalize_entry->set_data(graft::RaftNode::encode_internal_command(finalize));
 
     const auto finalize_response = node.handle_append_entries(append);
@@ -255,4 +255,64 @@ TEST_CASE("Leader operational summaries report degraded and at-risk quorum healt
     REQUIRE(degraded_response->quorum_available());
     REQUIRE(degraded_response->healthy_voting_members() == 2);
     REQUIRE(degraded_response->reachable_voting_members() == 2);
+}
+
+TEST_CASE("RaftNode decommissions itself after committed finalized removal", "[raft-node][membership]") {
+    graft::RaftNode node(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {"n2", "n3"},
+    });
+
+    raft::InternalRaftCommand joint;
+    auto* n2 = joint.mutable_joint()->add_members();
+    n2->set_id("n2");
+    n2->set_role("VOTER");
+    auto* n3 = joint.mutable_joint()->add_members();
+    n3->set_id("n3");
+    n3->set_role("VOTER");
+
+    raft::AppendEntriesRequest append;
+    append.set_term(1);
+    append.set_leader_id("n2");
+    append.set_prev_log_index(0);
+    append.set_prev_log_term(0);
+    append.set_leader_commit(1);
+    auto* joint_entry = append.add_entries();
+    joint_entry->set_term(1);
+    joint_entry->set_peer_id("n2");
+    joint_entry->set_data(graft::RaftNode::encode_internal_command(joint));
+
+    REQUIRE(node.handle_append_entries(append).success());
+    REQUIRE(node.joint_consensus());
+    REQUIRE_FALSE(node.decommissioned());
+
+    raft::InternalRaftCommand finalize;
+    finalize.mutable_finalize();
+
+    append.clear_entries();
+    append.set_prev_log_index(1);
+    append.set_prev_log_term(1);
+    append.set_leader_commit(2);
+    auto* finalize_entry = append.add_entries();
+    finalize_entry->set_term(1);
+    finalize_entry->set_peer_id("n2");
+    finalize_entry->set_data(graft::RaftNode::encode_internal_command(finalize));
+
+    REQUIRE(node.handle_append_entries(append).success());
+    REQUIRE_FALSE(node.joint_consensus());
+    REQUIRE(node.decommissioned());
+    REQUIRE(node.role() == graft::RaftNode::Role::follower);
+
+    node.become_candidate();
+    REQUIRE(node.role() == graft::RaftNode::Role::follower);
+
+    const auto persisted = node.persistent_state();
+    REQUIRE(persisted.decommissioned);
+    REQUIRE_FALSE(persisted.pending_decommission);
 }

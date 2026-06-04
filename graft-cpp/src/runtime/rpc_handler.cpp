@@ -209,7 +209,7 @@ namespace graft {
         response.set_leader_id(node_->leader_id().value_or(""));
         response.set_voted_for(node_->voted_for().value_or(""));
         response.set_joining(false);
-        response.set_decommissioned(false);
+        response.set_decommissioned(node_->decommissioned());
         response.set_commit_index(node_->commit_index());
         response.set_last_applied(node_->last_applied());
         response.set_last_log_index(node_->last_log_index());

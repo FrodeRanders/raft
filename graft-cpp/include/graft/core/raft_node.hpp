@@ -71,6 +71,8 @@ namespace graft {
             std::optional<std::string> voted_for;
             std::optional<std::string> leader_id;
             bool joint_consensus{false};
+            bool pending_decommission{false};
+            bool decommissioned{false};
             std::vector<std::string> pending_join_ids;
             std::vector<std::string> voting_peers;
             std::int64_t last_log_index{0};
@@ -111,6 +113,8 @@ namespace graft {
         std::vector<std::string> voting_peers() const;
 
         bool joint_consensus() const;
+
+        bool decommissioned() const;
 
         bool has_pending_join(const std::string &peer_id) const;
 
@@ -235,6 +239,8 @@ namespace graft {
 
         bool prev_log_matches_locked(std::int64_t prev_log_index, std::int64_t prev_log_term) const;
 
+        bool is_known_voting_member_locked(const std::string &peer_id) const;
+
         std::int64_t log_term_at_locked(std::int64_t index) const;
 
         void truncate_log_from_locked(std::int64_t index);
@@ -252,6 +258,8 @@ namespace graft {
         std::optional<std::string> voted_for_;
         std::optional<std::string> leader_id_;
         bool joint_consensus_{false};
+        bool pending_decommission_{false};
+        bool decommissioned_{false};
         std::unordered_set<std::string> pending_join_ids_;
         std::int64_t last_log_index_;
         std::int64_t last_log_term_;
