@@ -117,6 +117,12 @@ namespace graft {
 
         std::vector<std::string> voting_peers() const;
 
+        std::vector<std::string> current_voting_members() const;
+
+        std::vector<std::string> next_voting_members() const;
+
+        bool has_joint_majority(const std::unordered_set<std::string> &peer_ids) const;
+
         std::vector<raft::PeerSpec> current_member_specs() const;
 
         std::vector<raft::PeerSpec> next_member_specs() const;
@@ -239,6 +245,16 @@ namespace graft {
         void seed_current_members_locked();
 
         void reconfigure_voting_peers_locked(std::vector<std::string> voting_peers);
+
+        std::vector<std::string> current_voting_members_locked() const;
+
+        std::vector<std::string> next_voting_members_locked() const;
+
+        std::vector<std::string> active_voting_members_locked() const;
+
+        void refresh_voting_peers_from_members_locked();
+
+        bool has_joint_majority_locked(const std::unordered_set<std::string> &peer_ids) const;
 
         std::size_t cluster_size_locked() const;
 

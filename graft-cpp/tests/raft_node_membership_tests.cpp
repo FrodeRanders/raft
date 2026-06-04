@@ -10,6 +10,24 @@
 #include "graft/core/raft_node.hpp"
 #include "graft/runtime/rpc_handler.hpp"
 
+namespace {
+    raft::PeerSpec voter(const std::string &id) {
+        raft::PeerSpec peer;
+        peer.set_id(id);
+        peer.set_role("VOTER");
+        return peer;
+    }
+
+    void apply_joint_configuration(graft::RaftNode &node) {
+        auto state = node.persistent_state();
+        state.joint_consensus = true;
+        state.current_members = {voter("n1"), voter("n2"), voter("n3")};
+        state.next_members = {voter("n1"), voter("n4"), voter("n5")};
+        state.voting_peers = {"n2", "n3", "n4", "n5"};
+        node.apply_persistent_state(state);
+    }
+}
+
 TEST_CASE("RaftNode applies committed membership commands", "[raft-node][membership]") {
     graft::RaftNode node(graft::RaftNode::Config{
         .peer_id = "n1",
@@ -19,7 +37,7 @@ TEST_CASE("RaftNode applies committed membership commands", "[raft-node][members
         .commit_index = 0,
         .snapshot_index = 0,
         .snapshot_term = 0,
-        .voting_peers = {},
+        .voting_peers = {"n2"},
     });
 
     raft::InternalRaftCommand join;
@@ -82,6 +100,78 @@ TEST_CASE("RaftNode applies committed membership commands", "[raft-node][members
     const auto finalize_response = node.handle_append_entries(append);
     REQUIRE(finalize_response.success());
     REQUIRE_FALSE(node.joint_consensus());
+}
+
+TEST_CASE("Joint consensus requires current and next majorities for elections", "[raft-node][membership]") {
+    graft::RaftNode node(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+    apply_joint_configuration(node);
+
+    REQUIRE(node.voting_peers() == std::vector<std::string>{"n2", "n3", "n4", "n5"});
+
+    const auto request = node.start_election();
+    REQUIRE(request.term() == 2);
+
+    raft::VoteResponse current_only;
+    current_only.set_term(2);
+    current_only.set_current_term(2);
+    current_only.set_peer_id("n2");
+    current_only.set_vote_granted(true);
+    REQUIRE_FALSE(node.handle_vote_response(current_only));
+    REQUIRE(node.role() == graft::RaftNode::Role::candidate);
+
+    raft::VoteResponse next_majority;
+    next_majority.set_term(2);
+    next_majority.set_current_term(2);
+    next_majority.set_peer_id("n4");
+    next_majority.set_vote_granted(true);
+    REQUIRE(node.handle_vote_response(next_majority));
+    REQUIRE(node.role() == graft::RaftNode::Role::leader);
+}
+
+TEST_CASE("Joint consensus requires current and next majorities for commit and read lease", "[raft-node][membership]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+    apply_joint_configuration(*node);
+    node->become_leader();
+
+    const auto index = node->append_local_entry("joint-command");
+    REQUIRE(index == 1);
+    REQUIRE(node->commit_index() == 0);
+
+    raft::AppendEntriesResponse current_only;
+    current_only.set_term(1);
+    current_only.set_peer_id("n2");
+    current_only.set_success(true);
+    current_only.set_match_index(1);
+    REQUIRE(node->handle_append_entries_response("n2", current_only));
+    REQUIRE(node->commit_index() == 0);
+    REQUIRE_FALSE(node->can_serve_linearizable_read(750));
+
+    raft::AppendEntriesResponse next_majority;
+    next_majority.set_term(1);
+    next_majority.set_peer_id("n4");
+    next_majority.set_success(true);
+    next_majority.set_match_index(1);
+    REQUIRE(node->handle_append_entries_response("n4", next_majority));
+    REQUIRE(node->commit_index() == 1);
+    REQUIRE(node->can_serve_linearizable_read(750));
 }
 
 TEST_CASE("Follower forwards membership RPCs to known leader", "[rpc][membership]") {

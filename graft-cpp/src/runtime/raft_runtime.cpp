@@ -21,6 +21,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 
 namespace graft {
@@ -162,19 +163,21 @@ namespace graft {
         }
 
         const auto term_snapshot = node_->current_term();
-        const auto quorum = node_->quorum_size();
-        if (quorum <= 1) {
+        std::unordered_set<std::string> acknowledgements;
+        acknowledgements.insert(node_->peer_id());
+        if (node_->has_joint_majority(acknowledgements)) {
             return true;
         }
 
-        std::size_t acknowledgements = 1;
         for (const auto &peer: voting_peers()) {
-            acknowledgements += sync_peer_once(peer) ? 1 : 0;
+            if (sync_peer_once(peer)) {
+                acknowledgements.insert(peer.peer_id);
+            }
         }
 
         return node_->role() == RaftNode::Role::leader &&
                node_->current_term() == term_snapshot &&
-               acknowledgements >= quorum;
+               node_->has_joint_majority(acknowledgements);
     }
 
     bool RaftRuntime::await_linearizable_read(std::chrono::milliseconds lease, std::chrono::milliseconds timeout) {

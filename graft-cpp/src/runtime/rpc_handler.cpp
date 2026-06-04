@@ -1017,23 +1017,24 @@ namespace graft {
     }
 
     bool InMemoryRpcHandler::is_voting_member(const std::string &peer_id) const {
-        if (peer_id == node_->peer_id()) {
-            return true;
-        }
         const auto voting = node_->voting_peers();
-        return std::find(voting.begin(), voting.end(), peer_id) != voting.end();
+        return peer_id == node_->peer_id() ||
+               std::find(voting.begin(), voting.end(), peer_id) != voting.end();
     }
 
     InMemoryRpcHandler::ClusterHealthSummary InMemoryRpcHandler::summarize_cluster_health() const {
         const auto voting_peers = node_->voting_peers();
         const auto progress_map = node_->peer_progress();
-        const auto quorum = node_->quorum_size();
         const auto commit_index = node_->commit_index();
+        const auto current_voters = node_->current_voting_members();
+        const auto next_voters = node_->next_voting_members();
 
         ClusterHealthSummary summary;
         summary.voting_members = static_cast<std::int32_t>(voting_peers.size() + 1);
         summary.reachable_voting_members = 1;
         summary.healthy_voting_members = 1;
+        std::unordered_set<std::string> healthy_voters;
+        healthy_voters.insert(node_->peer_id());
 
         for (const auto &peer_id: voting_peers) {
             const auto found = progress_map.find(peer_id);
@@ -1041,11 +1042,21 @@ namespace graft {
             const bool healthy = reachable && found->second.match_index >= commit_index;
             summary.reachable_voting_members += reachable ? 1 : 0;
             summary.healthy_voting_members += healthy ? 1 : 0;
+            if (healthy) {
+                healthy_voters.insert(peer_id);
+            }
         }
 
-        summary.current_quorum_available = static_cast<std::size_t>(summary.healthy_voting_members) >= quorum;
-        summary.next_quorum_available = summary.current_quorum_available;
-        summary.quorum_available = summary.current_quorum_available;
+        auto has_majority = [&healthy_voters](const std::vector<std::string> &voters) {
+            std::size_t present = 0;
+            for (const auto &voter: voters) {
+                present += healthy_voters.contains(voter) ? 1 : 0;
+            }
+            return !voters.empty() && present >= ((voters.size() / 2) + 1);
+        };
+        summary.current_quorum_available = has_majority(current_voters);
+        summary.next_quorum_available = node_->joint_consensus() ? has_majority(next_voters) : summary.current_quorum_available;
+        summary.quorum_available = summary.current_quorum_available && summary.next_quorum_available;
         summary.reconfiguration_age_millis = reconfiguration_age_millis();
         const bool reconfiguration_stuck = telemetry_reconfiguration_stuck_millis_ > 0 &&
                                            summary.reconfiguration_age_millis >=

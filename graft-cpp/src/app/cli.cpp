@@ -986,6 +986,11 @@ namespace {
         std::vector<graft::PeerEndpoint> peers
     ) {
         boost::asio::io_context io_context;
+        std::vector<std::string> peer_ids;
+        peer_ids.reserve(peers.size());
+        for (const auto &peer: peers) {
+            peer_ids.push_back(peer.peer_id);
+        }
         auto handler = std::make_shared<graft::PersistentRpcHandler>(
             state_file,
             graft::RaftNode::Config{
@@ -996,7 +1001,7 @@ namespace {
                 .commit_index = 0,
                 .snapshot_index = 0,
                 .snapshot_term = 0,
-                .voting_peers = {},
+                .voting_peers = std::move(peer_ids),
             }
         );
         configure_handler_endpoints(handler, bind_host, port, peers);
