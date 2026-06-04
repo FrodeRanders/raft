@@ -24,13 +24,16 @@ TEST_CASE("PersistentStateStore round-trips node state", "[raft-node][persistenc
     node.become_leader();
     const auto put = graft::test::put_command("persisted", "value");
     REQUIRE(node.append_and_commit_local_command(put.SerializeAsString()).has_value());
+    auto persisted = node.persistent_state();
+    persisted.reconfiguration_started_at_millis = 12345;
 
-    store.save(node.persistent_state());
+    store.save(persisted);
     const auto loaded = store.load();
 
     REQUIRE(loaded.has_value());
     REQUIRE(loaded->peer_id == "n1");
     REQUIRE(loaded->leader_id == "n1");
+    REQUIRE(loaded->reconfiguration_started_at_millis == 12345);
     REQUIRE(loaded->applied_kv.at("persisted") == "value");
 
     std::filesystem::remove(path);

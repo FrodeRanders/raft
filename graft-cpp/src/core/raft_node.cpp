@@ -24,6 +24,14 @@
 #include <utility>
 
 namespace graft {
+    namespace {
+        std::int64_t current_time_millis() {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                    .count();
+        }
+    }
+
     RaftNode::RaftNode(Config config)
         : peer_id_(std::move(config.peer_id)),
           role_(Role::follower),
@@ -237,6 +245,11 @@ namespace graft {
     bool RaftNode::joint_consensus() const {
         std::scoped_lock lock(mu_);
         return joint_consensus_;
+    }
+
+    std::int64_t RaftNode::reconfiguration_started_at_millis() const {
+        std::scoped_lock lock(mu_);
+        return reconfiguration_started_at_millis_;
     }
 
     bool RaftNode::decommissioned() const {
@@ -615,6 +628,7 @@ namespace graft {
             .joint_consensus = joint_consensus_,
             .pending_decommission = pending_decommission_,
             .decommissioned = decommissioned_,
+            .reconfiguration_started_at_millis = reconfiguration_started_at_millis_,
             .pending_join_ids = std::vector<std::string>(pending_join_ids_.begin(), pending_join_ids_.end()),
             .voting_peers = voting_peers_,
             .last_log_index = last_log_index_,
@@ -642,6 +656,13 @@ namespace graft {
         joint_consensus_ = state.joint_consensus;
         pending_decommission_ = state.pending_decommission;
         decommissioned_ = state.decommissioned;
+        reconfiguration_started_at_millis_ = state.reconfiguration_started_at_millis;
+        if (joint_consensus_ && reconfiguration_started_at_millis_ <= 0) {
+            reconfiguration_started_at_millis_ = current_time_millis();
+        }
+        if (!joint_consensus_) {
+            reconfiguration_started_at_millis_ = 0;
+        }
         pending_join_ids_ = std::unordered_set<std::string>(state.pending_join_ids.begin(),
                                                             state.pending_join_ids.end());
         voting_peers_ = state.voting_peers;
@@ -1066,12 +1087,16 @@ namespace graft {
                     }
                 }
                 reconfigure_voting_peers_locked(std::move(peer_ids));
+                if (!joint_consensus_ || reconfiguration_started_at_millis_ <= 0) {
+                    reconfiguration_started_at_millis_ = current_time_millis();
+                }
                 joint_consensus_ = true;
                 pending_decommission_ = !includes_self;
                 return true;
             }
             case raft::InternalRaftCommand::kFinalize:
                 joint_consensus_ = false;
+                reconfiguration_started_at_millis_ = 0;
                 if (pending_decommission_) {
                     decommissioned_ = true;
                     role_ = Role::follower;

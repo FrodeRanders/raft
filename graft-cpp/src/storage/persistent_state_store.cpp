@@ -50,6 +50,7 @@ namespace graft {
         out << "joint_consensus=" << (state.joint_consensus ? 1 : 0) << '\n';
         out << "pending_decommission=" << (state.pending_decommission ? 1 : 0) << '\n';
         out << "decommissioned=" << (state.decommissioned ? 1 : 0) << '\n';
+        out << "reconfiguration_started_at_millis=" << state.reconfiguration_started_at_millis << '\n';
         for (const auto &peer_id: state.pending_join_ids) {
             out << "pending_join=" << escape(peer_id) << '\n';
         }
@@ -112,6 +113,8 @@ namespace graft {
                 state.pending_decommission = (value == "1" || value == "true");
             } else if (key == "decommissioned") {
                 state.decommissioned = (value == "1" || value == "true");
+            } else if (key == "reconfiguration_started_at_millis") {
+                state.reconfiguration_started_at_millis = std::stoll(value);
             } else if (key == "pending_join") {
                 state.pending_join_ids.push_back(value);
             } else if (key == "voting_peer") {

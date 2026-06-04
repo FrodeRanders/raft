@@ -304,11 +304,13 @@ The C++ adapter boundary now also mirrors Java's default-off request policy hook
 - `RAFT_REQUEST_AUTH_CLIENT_TOKEN=top-secret`
 - `RAFT_COMMAND_AUTHORIZER_ALLOW_LIST=reference-admin,master-data-service`
 - `RAFT_TELEMETRY_RATE_LIMIT_PER_MINUTE=30`
+- `RAFT_TELEMETRY_RECONFIGURATION_STUCK_MILLIS=60000`
 
 Authentication applies to client and administrative requests. The allow-list applies to client write commands and returns `FORBIDDEN` before replication when the requester id is not listed. Internal Raft RPCs remain unauthenticated, matching the Java split between external adapter policy and Raft mechanics.
 Operational summary requests are rate-limited per requester id by default, matching Java's `30` requests/minute default; use `0` or a negative value to disable the C++ limiter.
+Joint reconfiguration age is tracked in persisted node state and reported in telemetry, cluster-summary, and reconfiguration-status responses. When the configured stuck threshold is exceeded, an otherwise healthy joint configuration is reported as `degraded` with `cluster_status_reason=reconfiguration-stuck`.
 
-The remaining client-side gap is production-grade behavior around retries, timeouts, reference-data-specific learner admission, and richer administrative workflows. The basic shared command/query path, redirect metadata, typed CAS result path, active-leader read barrier, request authentication, write authorization, and operational rate limiting are now covered.
+The remaining client-side gap is production-grade behavior around retries, timeouts, reference-data-specific learner admission, and richer administrative workflows. The basic shared command/query path, redirect metadata, typed CAS result path, active-leader read barrier, request authentication, write authorization, operational rate limiting, and reconfiguration-age telemetry are now covered.
 
 For a bounded mixed-language validation path, `run-mixed-smoke.sh` now proves:
 
@@ -515,7 +517,7 @@ This implementation reuses the existing protocol and framing and now exercises r
 - full storage implementation
 - richer membership-transition telemetry
 - reference-data application payloads and learner-specific admission policy
-- full Java-equivalent read lease tracking and transition-age/stuck reconfiguration telemetry
+- full Java-equivalent read lease tracking and complete current/next membership-role telemetry
 - the default Maven/JUnit/Jepsen validation path
 
 The C++ side is currently best understood as an interoperability and convergence track: it proves the shared wire protocol, selected replicated KV behavior, membership admission/promotion, persistence, snapshot catch-up, and mixed Java/C++ Jepsen scenarios.

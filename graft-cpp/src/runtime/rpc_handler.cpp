@@ -178,6 +178,10 @@ namespace graft {
         telemetry_rate_limit_per_minute_ = limit;
     }
 
+    void InMemoryRpcHandler::set_telemetry_reconfiguration_stuck_millis(std::int64_t threshold_millis) {
+        telemetry_reconfiguration_stuck_millis_ = threshold_millis;
+    }
+
     void InMemoryRpcHandler::set_join_forwarder(JoinForwarder forwarder) {
         join_forwarder_ = std::move(forwarder);
     }
@@ -240,6 +244,7 @@ namespace graft {
         response.set_healthy_voting_members(cluster.healthy_voting_members);
         response.set_reachable_voting_members(cluster.reachable_voting_members);
         response.set_cluster_status_reason(cluster.reason);
+        response.set_reconfiguration_age_millis(cluster.reconfiguration_age_millis);
         add_peer_specs(response);
         if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
             response.set_success(false);
@@ -295,6 +300,7 @@ namespace graft {
         response.set_voting_members(cluster.voting_members);
         response.set_healthy_voting_members(cluster.healthy_voting_members);
         response.set_reachable_voting_members(cluster.reachable_voting_members);
+        response.set_reconfiguration_age_millis(cluster.reconfiguration_age_millis);
         if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
             response.set_success(false);
             response.set_status(auth->status);
@@ -814,8 +820,8 @@ namespace graft {
         response.set_leader_id(node_->leader_id().value_or(""));
         response.set_reconfiguration_active(node_->joint_consensus());
         response.set_joint_consensus(node_->joint_consensus());
-        response.set_reconfiguration_age_millis(0);
         const auto cluster = summarize_cluster_health();
+        response.set_reconfiguration_age_millis(cluster.reconfiguration_age_millis);
         response.set_cluster_health(cluster.health);
         response.set_cluster_status_reason(cluster.reason);
         response.set_quorum_available(cluster.quorum_available);
@@ -965,17 +971,35 @@ namespace graft {
         summary.current_quorum_available = static_cast<std::size_t>(summary.healthy_voting_members) >= quorum;
         summary.next_quorum_available = summary.current_quorum_available;
         summary.quorum_available = summary.current_quorum_available;
+        summary.reconfiguration_age_millis = reconfiguration_age_millis();
+        const bool reconfiguration_stuck = telemetry_reconfiguration_stuck_millis_ > 0 &&
+                                           summary.reconfiguration_age_millis >=
+                                           telemetry_reconfiguration_stuck_millis_;
         if (!summary.quorum_available) {
             summary.health = "at-risk";
             summary.reason = "healthy voting members are below quorum";
         } else if (summary.healthy_voting_members < summary.voting_members) {
             summary.health = "degraded";
             summary.reason = "one or more voting members are unreachable or lagging";
+        } else if (reconfiguration_stuck) {
+            summary.health = "degraded";
+            summary.reason = "reconfiguration-stuck";
         } else {
             summary.health = "healthy";
             summary.reason = "ok";
         }
         return summary;
+    }
+
+    std::int64_t InMemoryRpcHandler::reconfiguration_age_millis() const {
+        const auto started_at = node_->reconfiguration_started_at_millis();
+        if (!node_->joint_consensus() || started_at <= 0) {
+            return 0;
+        }
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        return std::max<std::int64_t>(0, now - started_at);
     }
 
     void InMemoryRpcHandler::populate_member(raft::ClusterMemberSummary &member, const std::string &peer_id, bool local,
@@ -993,8 +1017,8 @@ namespace graft {
         member.set_role(voting ? "VOTER" : "LEARNER");
         member.set_current_role(voting ? "VOTER" : "LEARNER");
         member.set_next_role(voting ? "VOTER" : "LEARNER");
-        member.set_role_transition("steady");
-        member.set_transition_age_millis(0);
+        member.set_role_transition(node_->joint_consensus() ? "joint" : "steady");
+        member.set_transition_age_millis(reconfiguration_age_millis());
         member.set_reachable(reachable);
         member.set_health(local || (reachable && progress.match_index >= node_->commit_index())
                               ? "healthy"

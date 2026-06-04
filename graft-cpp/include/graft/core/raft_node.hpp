@@ -73,6 +73,7 @@ namespace graft {
             bool joint_consensus{false};
             bool pending_decommission{false};
             bool decommissioned{false};
+            std::int64_t reconfiguration_started_at_millis{0};
             std::vector<std::string> pending_join_ids;
             std::vector<std::string> voting_peers;
             std::int64_t last_log_index{0};
@@ -113,6 +114,8 @@ namespace graft {
         std::vector<std::string> voting_peers() const;
 
         bool joint_consensus() const;
+
+        std::int64_t reconfiguration_started_at_millis() const;
 
         bool decommissioned() const;
 
@@ -260,6 +263,7 @@ namespace graft {
         bool joint_consensus_{false};
         bool pending_decommission_{false};
         bool decommissioned_{false};
+        std::int64_t reconfiguration_started_at_millis_{0};
         std::unordered_set<std::string> pending_join_ids_;
         std::int64_t last_log_index_;
         std::int64_t last_log_term_;

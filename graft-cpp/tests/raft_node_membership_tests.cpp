@@ -307,6 +307,50 @@ TEST_CASE("Operational RPCs enforce per-requester rate limit", "[rpc][operationa
     REQUIRE(other_response->status() == "OK");
 }
 
+TEST_CASE("Operational summaries report stuck joint reconfiguration age", "[rpc][operational][membership]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+    node->become_leader();
+
+    raft::InternalRaftCommand joint;
+    auto* self = joint.mutable_joint()->add_members();
+    self->set_id("n1");
+    self->set_role("VOTER");
+    REQUIRE(node->append_and_commit_local_command(graft::RaftNode::encode_internal_command(joint)).has_value());
+    REQUIRE(node->joint_consensus());
+
+    auto persisted = node->persistent_state();
+    persisted.reconfiguration_started_at_millis = 1;
+    node->apply_persistent_state(persisted);
+    node->become_leader();
+
+    graft::InMemoryRpcHandler handler(node);
+    handler.set_telemetry_reconfiguration_stuck_millis(1);
+
+    raft::ReconfigurationStatusRequest request;
+    request.set_peer_id("ops-client");
+    const auto response = handler.on_reconfiguration_status_request(request);
+    REQUIRE(response.has_value());
+    REQUIRE(response->success());
+    REQUIRE(response->status() == "OK");
+    REQUIRE(response->reconfiguration_active());
+    REQUIRE(response->joint_consensus());
+    REQUIRE(response->reconfiguration_age_millis() > 0);
+    REQUIRE(response->cluster_health() == "degraded");
+    REQUIRE(response->cluster_status_reason() == "reconfiguration-stuck");
+    REQUIRE(response->members_size() == 1);
+    REQUIRE(response->members(0).role_transition() == "joint");
+    REQUIRE(response->members(0).transition_age_millis() > 0);
+}
+
 TEST_CASE("Leader operational summaries report degraded and at-risk quorum health", "[rpc][operational]") {
     auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
         .peer_id = "n1",

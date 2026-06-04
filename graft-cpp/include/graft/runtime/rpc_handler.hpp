@@ -143,6 +143,7 @@ namespace graft {
             std::int32_t voting_members{0};
             std::int32_t healthy_voting_members{0};
             std::int32_t reachable_voting_members{0};
+            std::int64_t reconfiguration_age_millis{0};
         };
 
         InMemoryRpcHandler(std::string peer_id, std::int64_t current_term, std::int64_t last_log_index,
@@ -161,6 +162,8 @@ namespace graft {
         void set_command_authorizer(CommandAuthorizer authorizer);
 
         void set_telemetry_rate_limit_per_minute(std::int32_t limit);
+
+        void set_telemetry_reconfiguration_stuck_millis(std::int64_t threshold_millis);
 
         void set_join_forwarder(JoinForwarder forwarder);
 
@@ -227,6 +230,8 @@ namespace graft {
 
         ClusterHealthSummary summarize_cluster_health() const;
 
+        std::int64_t reconfiguration_age_millis() const;
+
         void populate_member(raft::ClusterMemberSummary &member, const std::string &peer_id, bool local,
                              const RaftNode::PeerProgress &progress) const;
 
@@ -258,6 +263,7 @@ namespace graft {
         Authenticator authenticator_;
         CommandAuthorizer command_authorizer_;
         std::int32_t telemetry_rate_limit_per_minute_{30};
+        std::int64_t telemetry_reconfiguration_stuck_millis_{60'000};
         std::unordered_map<std::string, std::deque<std::int64_t>> operational_request_history_;
         JoinForwarder join_forwarder_;
         ReconfigureForwarder reconfigure_forwarder_;

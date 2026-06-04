@@ -193,6 +193,14 @@ namespace {
         return static_cast<std::int32_t>(std::stol(*value));
     }
 
+    std::optional<std::int64_t> parse_int64_env(const char *name) {
+        const auto value = env_value(name);
+        if (!value.has_value()) {
+            return std::nullopt;
+        }
+        return static_cast<std::int64_t>(std::stoll(*value));
+    }
+
     bool parse_bool(const std::string &text, const std::string &field_name) {
         if (text == "true" || text == "1") {
             return true;
@@ -301,13 +309,22 @@ namespace {
     template<typename HandlerPtr>
     void configure_handler_operational_policy(const HandlerPtr &handler) {
         const auto limit = parse_int32_env("RAFT_TELEMETRY_RATE_LIMIT_PER_MINUTE");
-        if (!limit.has_value()) {
+        const auto stuck_millis = parse_int64_env("RAFT_TELEMETRY_RECONFIGURATION_STUCK_MILLIS");
+        if (!limit.has_value() && !stuck_millis.has_value()) {
             return;
         }
+        auto configure = [&](graft::InMemoryRpcHandler &target) {
+            if (limit.has_value()) {
+                target.set_telemetry_rate_limit_per_minute(*limit);
+            }
+            if (stuck_millis.has_value()) {
+                target.set_telemetry_reconfiguration_stuck_millis(*stuck_millis);
+            }
+        };
         if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::InMemoryRpcHandler>) {
-            handler->set_telemetry_rate_limit_per_minute(*limit);
+            configure(*handler);
         } else if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::PersistentRpcHandler>) {
-            handler->delegate().set_telemetry_rate_limit_per_minute(*limit);
+            configure(handler->delegate());
         }
     }
 
