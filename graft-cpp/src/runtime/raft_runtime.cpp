@@ -106,6 +106,26 @@ namespace graft {
         peers_.push_back(std::move(peer));
     }
 
+    void RaftRuntime::refresh_configured_peers() {
+        auto add_member_endpoint = [this](const raft::PeerSpec &member) {
+            if (member.id().empty() || member.id() == node_->peer_id() || member.host().empty() || member.port() <= 0) {
+                return;
+            }
+            track_peer(PeerEndpoint{
+                .peer_id = member.id(),
+                .host = member.host(),
+                .port = static_cast<std::uint16_t>(member.port()),
+                .role = member.role(),
+            });
+        };
+        for (const auto &member: node_->current_member_specs()) {
+            add_member_endpoint(member);
+        }
+        for (const auto &member: node_->next_member_specs()) {
+            add_member_endpoint(member);
+        }
+    }
+
     bool RaftRuntime::run_election_round() {
         const auto request = node_->start_election();
         persist();
@@ -145,6 +165,7 @@ namespace graft {
     }
 
     std::size_t RaftRuntime::send_heartbeats_once() {
+        refresh_configured_peers();
         if (node_->role() != RaftNode::Role::leader) {
             return 0;
         }
@@ -158,6 +179,7 @@ namespace graft {
     }
 
     bool RaftRuntime::refresh_read_barrier_once() {
+        refresh_configured_peers();
         if (node_->role() != RaftNode::Role::leader) {
             return false;
         }
@@ -202,6 +224,7 @@ namespace graft {
     }
 
     std::size_t RaftRuntime::replicate_entry_once(const std::string &data) {
+        refresh_configured_peers();
         if (node_->role() != RaftNode::Role::leader) {
             return 0;
         }
@@ -223,6 +246,7 @@ namespace graft {
     }
 
     std::optional<std::string> RaftRuntime::replicate_entry_once_with_result(const std::string &data) {
+        refresh_configured_peers();
         if (node_->role() != RaftNode::Role::leader) {
             return std::nullopt;
         }

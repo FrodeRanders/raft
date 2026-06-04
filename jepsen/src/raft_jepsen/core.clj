@@ -211,6 +211,19 @@
         {:valid? valid?
          :results results}))))
 
+(defn- nemesis-error-checker []
+  ;; Linearizability ignores nemesis operations by design, but membership
+  ;; nemeses validate cluster progress. Treat their errors as test failures.
+  (reify
+    checker/Checker
+    (check [_ _ history _]
+      (let [errors (filterv #(and (= :nemesis (:process %))
+                                  (or (:error %)
+                                      (:exception %)))
+                            history)]
+        {:valid? (empty? errors)
+         :errors errors}))))
+
 (defn- workload [opts]
   ;; A Jepsen workload usually contributes two things: a generator that creates
   ;; client operations, and a checker that judges the completed history. This
@@ -223,6 +236,7 @@
                                 (filter-history-checker
                                  (checker/linearizable {:model (model/cas-register)})
                                  #(not= :nemesis (:process %))))
+                :nemesis-errors (nemesis-error-checker)
                 :timeline (timeline/html)})
      :generator (->> (gen/mix [(partial write-op opts)
                                (partial read-op opts)
@@ -353,6 +367,10 @@
         (let [opts (assoc opts :jar-path (raft-db/resolved-jar-path opts))]
           (println "Running local Jepsen harness with options:" (pr-str (dissoc opts :help)))
           (try
-            (jepsen/run! (raft-test opts))
+            (let [result (jepsen/run! (raft-test opts))
+                  valid? (or (:valid? result)
+                             (get-in result [:results :valid?]))]
+              (when-not valid?
+                (System/exit 1)))
             (finally
               (shutdown-agents))))))))

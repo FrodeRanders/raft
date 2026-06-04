@@ -209,7 +209,7 @@
 (defn- member-summary [summary node]
   (some #(when (= node (:peerId %)) %) (:members summary)))
 
-(defn- stable-learner-state [summary member]
+(defn- stable-learner-state [summary join-state member]
   ;; Membership nemeses wait for externally visible stable states instead of
   ;; assuming a reconfiguration command has taken effect when the CLI returns.
   ;; That keeps the generated fault event aligned with the cluster state the
@@ -219,8 +219,14 @@
                (not (:jointConsensus summary))
                member-state
                (= "LEARNER" (:role member-state))
-               (= "LEARNER" (:currentRole member-state))
-               (= "steady" (:roleTransition member-state)))
+               (:reachable member-state)
+               (= "healthy" (:health member-state))
+               (zero? (:lag member-state))
+               (or (and (= "LEARNER" (:currentRole member-state))
+                        (= "steady" (:roleTransition member-state)))
+                   (and (= "PENDING" (:status join-state))
+                        (= "" (:currentRole member-state))
+                        (= "known" (:roleTransition member-state)))))
       {:summary summary
        :member member-state})))
 
@@ -453,8 +459,8 @@
                                  #(when-let [leader (leader-node test)]
                                     (try
                                       (let [summary (cluster-summary test leader)
-                                            learner-state (stable-learner-state summary member)
-                                            join-state (join-status test leader member)]
+                                            join-state (join-status test leader member)
+                                            learner-state (stable-learner-state summary join-state member)]
                                         (when learner-state
                                           {:leader leader
                                            :summary summary

@@ -222,6 +222,7 @@
    ;; for the leader's explicit join request.
    (when-not (process-alive? (get @processes node))
      (let [seed (membership-seed-node test)
+           peer-specs (mapv #(peer-spec test %) (:nodes test))
            command (case (joining-node-impl test)
                      :java (vec (concat ["java"]
                                         (java-props test node)
@@ -230,16 +231,16 @@
                                          "join"
                                          (str (peer-spec test node) "/learner")
                                          (peer-spec test seed)]))
-                     :cpp [(resolved-cpp-bin test)
-                           "serve-persistent"
-                           "127.0.0.1"
-                           (str (node-port test node))
-                           (str node)
-                           (.getAbsolutePath (cpp-state-file test node))
-                           "0"
-                           "0"
-                           "0"
-                           (peer-spec test seed)])]
+                     :cpp (vec (concat [(resolved-cpp-bin test)
+                                        "serve-persistent"
+                                        "127.0.0.1"
+                                        (str (node-port test node))
+                                        (str node)
+                                        (.getAbsolutePath (cpp-state-file test node))
+                                        "0"
+                                        "0"
+                                        "0"]
+                                       peer-specs)))]
        (launch-node! test node command preserve-state?)))))
 
 (defn local-db []

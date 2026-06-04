@@ -86,6 +86,8 @@ namespace graft {
 
         bool send_snapshot_to_peer(const PeerEndpoint &peer, std::size_t attempt);
 
+        void refresh_configured_peers();
+
         void persist();
 
         RaftClient client_;
