@@ -161,6 +161,8 @@ namespace graft {
 
         void set_command_authorizer(CommandAuthorizer authorizer);
 
+        void set_reference_data_admission(bool enabled);
+
         void set_telemetry_rate_limit_per_minute(std::int32_t limit);
 
         void set_telemetry_reconfiguration_stuck_millis(std::int64_t threshold_millis);
@@ -248,6 +250,8 @@ namespace graft {
         std::optional<AuthenticationFailure> authorize_command(const std::string &requester_id,
                                                                const std::string &command) const;
 
+        bool local_member_is_learner() const;
+
         bool allow_operational_request(const std::string &requester_id);
 
         void populate_redirect_leader(raft::ClusterSummaryResponse &response) const;
@@ -262,6 +266,7 @@ namespace graft {
         ReadBarrier read_barrier_;
         Authenticator authenticator_;
         CommandAuthorizer command_authorizer_;
+        bool reference_data_admission_{false};
         std::int32_t telemetry_rate_limit_per_minute_{30};
         std::int64_t telemetry_reconfiguration_stuck_millis_{60'000};
         std::unordered_map<std::string, std::deque<std::int64_t>> operational_request_history_;

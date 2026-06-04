@@ -212,6 +212,10 @@ namespace graft {
         command_authorizer_ = std::move(authorizer);
     }
 
+    void InMemoryRpcHandler::set_reference_data_admission(bool enabled) {
+        reference_data_admission_ = enabled;
+    }
+
     void InMemoryRpcHandler::set_telemetry_rate_limit_per_minute(std::int32_t limit) {
         telemetry_rate_limit_per_minute_ = limit;
     }
@@ -405,6 +409,11 @@ namespace graft {
 
         if (node_->role() != RaftNode::Role::leader) {
             response.set_success(false);
+            if (reference_data_admission_ && local_member_is_learner()) {
+                response.set_status("REJECTED");
+                response.set_message("Learner nodes never accept or redirect reference-data writes");
+                return response;
+            }
             if (current_leader_endpoint().has_value()) {
                 response.set_status("REDIRECT");
                 response.set_message("Node is not leader; send request to current leader");
@@ -1190,6 +1199,15 @@ namespace graft {
             return std::nullopt;
         }
         return command_authorizer_(requester_id, command);
+    }
+
+    bool InMemoryRpcHandler::local_member_is_learner() const {
+        const auto current = find_member_spec(node_->current_member_specs(), node_->peer_id());
+        if (current.has_value()) {
+            return current->role() == "LEARNER";
+        }
+        const auto next = find_member_spec(node_->next_member_specs(), node_->peer_id());
+        return next.has_value() && next->role() == "LEARNER";
     }
 
     bool InMemoryRpcHandler::allow_operational_request(const std::string &requester_id) {

@@ -190,6 +190,58 @@ TEST_CASE("Client command RPC enforces configured requester allow-list", "[rpc-h
     REQUIRE(handler.node().applied_kv().at("k") == "v1");
 }
 
+TEST_CASE("Reference-data admission rejects learner writes without redirect", "[rpc-handler][admission]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "learner",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {"leader"},
+    });
+    auto persisted = node->persistent_state();
+    persisted.current_members.clear();
+    auto* self = &persisted.current_members.emplace_back();
+    self->set_id("learner");
+    self->set_role("LEARNER");
+    auto* leader = &persisted.current_members.emplace_back();
+    leader->set_id("leader");
+    leader->set_role("VOTER");
+    node->apply_persistent_state(persisted);
+
+    raft::AppendEntriesRequest heartbeat;
+    heartbeat.set_term(1);
+    heartbeat.set_leader_id("leader");
+    heartbeat.set_prev_log_index(0);
+    heartbeat.set_prev_log_term(0);
+    heartbeat.set_leader_commit(0);
+    REQUIRE(node->handle_append_entries(heartbeat).success());
+
+    const auto put = graft::test::put_command("k", "v1");
+    raft::ClientCommandRequest command;
+    command.set_term(1);
+    command.set_peer_id("reference-admin");
+    command.set_command(put.SerializeAsString());
+
+    graft::InMemoryRpcHandler default_handler(node);
+    default_handler.set_known_peer_endpoints({graft::InMemoryRpcHandler::Endpoint{"127.0.0.1", 10080}}, {"leader"});
+    const auto default_response = default_handler.on_client_command_request(command);
+    REQUIRE(default_response.has_value());
+    REQUIRE_FALSE(default_response->success());
+    REQUIRE(default_response->status() == "REDIRECT");
+
+    graft::InMemoryRpcHandler reference_handler(node);
+    reference_handler.set_reference_data_admission(true);
+    reference_handler.set_known_peer_endpoints({graft::InMemoryRpcHandler::Endpoint{"127.0.0.1", 10080}}, {"leader"});
+    const auto reference_response = reference_handler.on_client_command_request(command);
+    REQUIRE(reference_response.has_value());
+    REQUIRE_FALSE(reference_response->success());
+    REQUIRE(reference_response->status() == "REJECTED");
+    REQUIRE(reference_response->message() == "Learner nodes never accept or redirect reference-data writes");
+}
+
 TEST_CASE("Client query RPC requires read barrier in multi-node leader mode", "[rpc-handler][state-machine]") {
     auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
         .peer_id = "n1",

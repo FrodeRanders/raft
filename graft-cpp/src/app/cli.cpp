@@ -162,6 +162,11 @@ namespace {
         }};
     }
 
+    bool reference_data_admission_from_env() {
+        const auto mode = lower_ascii(env_value("RAFT_ADAPTER_MODE").value_or("basic"));
+        return mode == "reference-data" || mode == "reference" || mode == "refdata";
+    }
+
     template<typename Request>
     void apply_request_auth(Request &request) {
         if (const auto scheme = env_value("RAFT_REQUEST_AUTH_CLIENT_SCHEME"); scheme.has_value()) {
@@ -303,6 +308,16 @@ namespace {
             handler->set_command_authorizer(*authorizer);
         } else if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::PersistentRpcHandler>) {
             handler->delegate().set_command_authorizer(*authorizer);
+        }
+    }
+
+    template<typename HandlerPtr>
+    void configure_handler_admission(const HandlerPtr &handler) {
+        const bool reference_data_admission = reference_data_admission_from_env();
+        if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::InMemoryRpcHandler>) {
+            handler->set_reference_data_admission(reference_data_admission);
+        } else if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::PersistentRpcHandler>) {
+            handler->delegate().set_reference_data_admission(reference_data_admission);
         }
     }
 
@@ -942,6 +957,7 @@ namespace {
         configure_handler_endpoints(handler, bind_host, port);
         configure_handler_auth(handler);
         configure_handler_authorization(handler);
+        configure_handler_admission(handler);
         configure_handler_operational_policy(handler);
         graft::RaftServer server(io_context, bind_host, port, std::move(handler));
         server.serve_forever();
@@ -974,6 +990,7 @@ namespace {
         configure_handler_endpoints(handler, bind_host, port, peers);
         configure_handler_auth(handler);
         configure_handler_authorization(handler);
+        configure_handler_admission(handler);
         configure_handler_operational_policy(handler);
         graft::RaftServer server(io_context, bind_host, port, std::move(handler));
         server.serve_forever();
@@ -1000,6 +1017,7 @@ namespace {
             configure_handler_endpoints(in_memory, bind_host, port, peer_endpoints);
             configure_handler_auth(in_memory);
             configure_handler_authorization(in_memory);
+            configure_handler_admission(in_memory);
             configure_handler_operational_policy(in_memory);
             in_memory->set_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once_with_result(command);
@@ -1039,6 +1057,7 @@ namespace {
             configure_handler_endpoints(persistent, bind_host, port, peer_endpoints);
             configure_handler_auth(persistent);
             configure_handler_authorization(persistent);
+            configure_handler_admission(persistent);
             configure_handler_operational_policy(persistent);
             persistent->delegate().set_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once_with_result(command);
