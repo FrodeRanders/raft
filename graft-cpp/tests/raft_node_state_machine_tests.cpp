@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <memory>
+
 #include "raft.pb.h"
 #include "graft/core/raft_node.hpp"
 #include "graft/runtime/rpc_handler.hpp"
@@ -61,4 +63,45 @@ TEST_CASE("Client command RPC reports accepted after commit", "[rpc-handler][sta
     REQUIRE(response->leader_id() == "n1");
     REQUIRE(response->leader_host() == "127.0.0.1");
     REQUIRE(response->leader_port() == 10080);
+}
+
+TEST_CASE("Client query RPC requires read barrier in multi-node leader mode", "[rpc-handler][state-machine]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {"n2"},
+    });
+    node->become_leader();
+
+    graft::InMemoryRpcHandler handler(node);
+    handler.set_local_endpoint("127.0.0.1", 10080);
+
+    raft::StateMachineQuery query;
+    query.mutable_get()->set_key("k");
+
+    raft::ClientQueryRequest request;
+    request.set_term(1);
+    request.set_peer_id("client");
+    request.set_query(query.SerializeAsString());
+
+    const auto no_barrier_response = handler.on_client_query_request(request);
+    REQUIRE(no_barrier_response.has_value());
+    REQUIRE_FALSE(no_barrier_response->success());
+    REQUIRE(no_barrier_response->status() == "RETRY");
+    REQUIRE(no_barrier_response->message() == "Leader cannot currently guarantee a linearizable read");
+
+    handler.set_read_barrier([] {
+        return true;
+    });
+
+    const auto barrier_response = handler.on_client_query_request(request);
+    REQUIRE(barrier_response.has_value());
+    REQUIRE(barrier_response->success());
+    REQUIRE(barrier_response->status() == "OK");
+    REQUIRE(barrier_response->message() == "Query completed");
 }

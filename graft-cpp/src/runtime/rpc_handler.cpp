@@ -162,6 +162,18 @@ namespace graft {
         internal_command_replicator_ = std::move(replicator);
     }
 
+    void InMemoryRpcHandler::set_read_barrier(ReadBarrier read_barrier) {
+        read_barrier_ = std::move(read_barrier);
+    }
+
+    void InMemoryRpcHandler::set_join_forwarder(JoinForwarder forwarder) {
+        join_forwarder_ = std::move(forwarder);
+    }
+
+    void InMemoryRpcHandler::set_reconfigure_forwarder(ReconfigureForwarder forwarder) {
+        reconfigure_forwarder_ = std::move(forwarder);
+    }
+
     void InMemoryRpcHandler::set_join_tracker(JoinTracker tracker) {
         join_tracker_ = std::move(tracker);
     }
@@ -216,6 +228,20 @@ namespace graft {
         response.set_reachable_voting_members(response.voting_members());
         response.set_cluster_status_reason("ok");
         add_peer_specs(response);
+        if (request.require_leader_summary() && node_->role() != RaftNode::Role::leader) {
+            response.set_success(false);
+            response.set_status(current_leader_endpoint().has_value() ? "REDIRECT" : "NO_LEADER");
+            response.set_redirect_leader_id(node_->leader_id().value_or(""));
+            response.clear_cluster_health();
+            response.clear_cluster_status_reason();
+            response.set_quorum_available(false);
+            response.set_current_quorum_available(false);
+            response.set_next_quorum_available(false);
+            response.set_voting_members(0);
+            response.set_healthy_voting_members(0);
+            response.set_reachable_voting_members(0);
+            return response;
+        }
         if (request.include_peer_stats()) {
             add_replication_status(response);
         }
@@ -245,6 +271,20 @@ namespace graft {
         response.set_voting_members(static_cast<std::int32_t>(node_->voting_peers().size() + 1));
         response.set_healthy_voting_members(response.voting_members());
         response.set_reachable_voting_members(response.voting_members());
+        if (node_->role() != RaftNode::Role::leader) {
+            response.set_success(false);
+            response.set_status(current_leader_endpoint().has_value() ? "REDIRECT" : "NO_LEADER");
+            response.clear_cluster_health();
+            response.clear_cluster_status_reason();
+            response.set_quorum_available(false);
+            response.set_current_quorum_available(false);
+            response.set_next_quorum_available(false);
+            response.set_voting_members(0);
+            response.set_healthy_voting_members(0);
+            response.set_reachable_voting_members(0);
+            populate_redirect_leader(response);
+            return response;
+        }
         add_summary_members(response);
         return response;
     }
@@ -358,6 +398,13 @@ namespace graft {
             return response;
         }
 
+        if (node_->quorum_size() > 1 && (!read_barrier_ || !read_barrier_())) {
+            response.set_status("RETRY");
+            response.set_message("Leader cannot currently guarantee a linearizable read");
+            populate_leader_endpoint(response);
+            return response;
+        }
+
         raft::StateMachineQueryResult result;
         auto *get = result.mutable_get();
         get->set_key(query.get().key());
@@ -388,9 +435,22 @@ namespace graft {
         response.set_leader_id(node_->leader_id().value_or(""));
 
         if (node_->role() != RaftNode::Role::leader) {
+            if (const auto leader_endpoint = current_leader_endpoint(); leader_endpoint.has_value()) {
+                if (join_forwarder_ && join_forwarder_(*leader_endpoint, request)) {
+                    response.set_success(true);
+                    response.set_status("FORWARDED");
+                    response.set_message("Join request forwarded to leader");
+                    response.set_leader_id(node_->leader_id().value_or(""));
+                    return response;
+                }
+                response.set_success(false);
+                response.set_status("RETRY");
+                response.set_message("Join request could not be forwarded to leader");
+                return response;
+            }
             response.set_success(false);
-            response.set_status("NOT_LEADER");
-            response.set_message("join must target leader");
+            response.set_status("REJECTED");
+            response.set_message("Node is not leader or join request could not be applied");
             return response;
         }
 
@@ -492,9 +552,22 @@ namespace graft {
         response.set_leader_id(node_->leader_id().value_or(""));
 
         if (node_->role() != RaftNode::Role::leader) {
+            if (const auto leader_endpoint = current_leader_endpoint(); leader_endpoint.has_value()) {
+                if (reconfigure_forwarder_ && reconfigure_forwarder_(*leader_endpoint, request)) {
+                    response.set_success(true);
+                    response.set_status("FORWARDED");
+                    response.set_message("Reconfiguration request forwarded to leader");
+                    response.set_leader_id(node_->leader_id().value_or(""));
+                    return response;
+                }
+                response.set_success(false);
+                response.set_status("RETRY");
+                response.set_message("Reconfiguration request could not be forwarded to leader");
+                return response;
+            }
             response.set_success(false);
-            response.set_status("NOT_LEADER");
-            response.set_message("reconfigure must target leader");
+            response.set_status("REJECTED");
+            response.set_message("Node is not leader or reconfiguration could not be applied");
             return response;
         }
 
@@ -672,6 +745,18 @@ namespace graft {
         response.set_current_quorum_available(true);
         response.set_next_quorum_available(true);
 
+        if (node_->role() != RaftNode::Role::leader) {
+            response.set_success(false);
+            response.set_status(current_leader_endpoint().has_value() ? "REDIRECT" : "NO_LEADER");
+            response.clear_cluster_health();
+            response.clear_cluster_status_reason();
+            response.set_quorum_available(false);
+            response.set_current_quorum_available(false);
+            response.set_next_quorum_available(false);
+            populate_redirect_leader(response);
+            return response;
+        }
+
         raft::ClusterSummaryResponse summary;
         add_summary_members(summary);
         for (const auto &member: summary.members()) {
@@ -839,6 +924,28 @@ namespace graft {
         } else {
             response.clear_leader_host();
             response.clear_leader_port();
+        }
+    }
+
+    void InMemoryRpcHandler::populate_redirect_leader(raft::ClusterSummaryResponse &response) const {
+        response.set_redirect_leader_id(node_->leader_id().value_or(""));
+        if (const auto endpoint = current_leader_endpoint(); endpoint.has_value()) {
+            response.set_redirect_leader_host(endpoint->host);
+            response.set_redirect_leader_port(endpoint->port);
+        } else {
+            response.clear_redirect_leader_host();
+            response.clear_redirect_leader_port();
+        }
+    }
+
+    void InMemoryRpcHandler::populate_redirect_leader(raft::ReconfigurationStatusResponse &response) const {
+        response.set_redirect_leader_id(node_->leader_id().value_or(""));
+        if (const auto endpoint = current_leader_endpoint(); endpoint.has_value()) {
+            response.set_redirect_leader_host(endpoint->host);
+            response.set_redirect_leader_port(endpoint->port);
+        } else {
+            response.clear_redirect_leader_host();
+            response.clear_redirect_leader_port();
         }
     }
 

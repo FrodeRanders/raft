@@ -155,6 +155,24 @@ namespace graft {
         return successes;
     }
 
+    bool RaftRuntime::refresh_read_barrier_once() {
+        if (node_->role() != RaftNode::Role::leader) {
+            return false;
+        }
+
+        const auto quorum = node_->quorum_size();
+        if (quorum <= 1) {
+            return true;
+        }
+
+        std::size_t acknowledgements = 1;
+        for (const auto &peer: voting_peers()) {
+            acknowledgements += sync_peer_once(peer) ? 1 : 0;
+        }
+
+        return node_->role() == RaftNode::Role::leader && acknowledgements >= quorum;
+    }
+
     std::size_t RaftRuntime::replicate_entry_once(const std::string &data) {
         if (node_->role() != RaftNode::Role::leader) {
             return 0;

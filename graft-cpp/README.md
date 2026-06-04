@@ -291,12 +291,12 @@ The C++ server now also accepts the shared client envelopes:
 - `ClientCommandRequest`
 - `ClientQueryRequest`
 
-For the bounded implementation, queries operate on the applied KV state with leader-only semantics once a node is participating in a multi-node topology. Commands now work in two modes:
+For the bounded implementation, queries operate on the applied KV state. Single-node servers can answer locally, while active multi-node leaders first refresh a quorum heartbeat barrier before returning a successful `ClientQueryResponse`. Commands now work in two modes:
 
 - single-node persistent servers auto-commit locally
 - active leaders replicate them through the existing distributed runtime
 
-The remaining client-side gap is production-grade behavior around retries, timeouts, and richer administrative workflows. The basic shared command/query path, redirect metadata, and typed CAS result path are now covered.
+The remaining client-side gap is production-grade behavior around retries, timeouts, operational policy, and richer administrative workflows. The basic shared command/query path, redirect metadata, typed CAS result path, and active-leader read barrier are now covered.
 
 For a bounded mixed-language validation path, `run-mixed-smoke.sh` now proves:
 
@@ -503,6 +503,7 @@ This implementation reuses the existing protocol and framing and now exercises r
 - full storage implementation
 - richer membership-transition telemetry
 - operational policy and authentication integration
+- full Java-equivalent read lease tracking and operational telemetry
 - the default Maven/JUnit/Jepsen validation path
 
 The C++ side is currently best understood as an interoperability and convergence track: it proves the shared wire protocol, selected replicated KV behavior, membership admission/promotion, persistence, snapshot catch-up, and mixed Java/C++ Jepsen scenarios.
@@ -779,6 +780,7 @@ The implementation now also has a bounded membership-control path over the share
 
 - `join-cluster`
   - commits a bounded join-admission command through a replicated `InternalRaftCommand`
+  - followers forward the request to a known leader and report `FORWARDED` only after that RPC succeeds
 - `join-status`
   - reports `PENDING`, `IN_JOINT_CONSENSUS`, `COMPLETED`, or `UNKNOWN`
 - `reconfigure joint`
@@ -786,6 +788,7 @@ The implementation now also has a bounded membership-control path over the share
   - then updates the active runtime peer set after the command has committed
 - `reconfigure finalize`
   - commits a bounded finalize command through the same replicated internal-command path
+  - followers forward the request to a known leader and otherwise return `RETRY` or `REJECTED`
 
 This is not yet a full Java-parity membership implementation. In particular:
 
@@ -912,6 +915,8 @@ message: Node is not leader; send query to current leader
 ```
 
 So once a node has learned another leader, it no longer auto-promotes itself for client reads just because it lacks an explicit peer configuration file, and client redirects can now be actionable when the node was started with known peer endpoints.
+
+For active multi-node leaders, C++ query handling now also refreshes a quorum heartbeat barrier before serving a local state-machine read. If the barrier cannot be refreshed, the handler returns `RETRY` instead of serving a potentially stale read.
 
 That catch-up is no longer limited to the one-shot `replicate-once` path. In a local smoke run with a persistent leader started in `serve-active-persistent` and a follower behind the leader's snapshot boundary, the follower recovered during normal scheduled leader rounds and persisted:
 

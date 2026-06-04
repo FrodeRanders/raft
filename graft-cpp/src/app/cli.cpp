@@ -159,6 +159,46 @@ namespace {
         }
     }
 
+    bool forward_join_request(
+        const graft::InMemoryRpcHandler::Endpoint &endpoint,
+        const raft::JoinClusterRequest &request
+    ) {
+        try {
+            boost::asio::io_context io_context;
+            graft::RaftClient client(io_context);
+            (void) client.call<raft::JoinClusterRequest, raft::JoinClusterResponse>(
+                endpoint.host,
+                static_cast<std::uint16_t>(endpoint.port),
+                "JoinClusterRequest",
+                request,
+                "JoinClusterResponse"
+            );
+            return true;
+        } catch (const std::exception &) {
+            return false;
+        }
+    }
+
+    bool forward_reconfigure_request(
+        const graft::InMemoryRpcHandler::Endpoint &endpoint,
+        const raft::ReconfigureClusterRequest &request
+    ) {
+        try {
+            boost::asio::io_context io_context;
+            graft::RaftClient client(io_context);
+            (void) client.call<raft::ReconfigureClusterRequest, raft::ReconfigureClusterResponse>(
+                endpoint.host,
+                static_cast<std::uint16_t>(endpoint.port),
+                "ReconfigureClusterRequest",
+                request,
+                "ReconfigureClusterResponse"
+            );
+            return true;
+        } catch (const std::exception &) {
+            return false;
+        }
+    }
+
     std::string peer_id_or_default(int argc, char **argv, int index) {
         if (argc > index) {
             return argv[index];
@@ -780,6 +820,11 @@ namespace {
             in_memory->set_internal_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once(command) > 0;
             });
+            in_memory->set_read_barrier([&runtime]() {
+                return runtime.refresh_read_barrier_once();
+            });
+            in_memory->set_join_forwarder(forward_join_request);
+            in_memory->set_reconfigure_forwarder(forward_reconfigure_request);
             in_memory->set_join_tracker(
                 [&runtime](const std::string &peer_id, const graft::InMemoryRpcHandler::Endpoint &endpoint) {
                     runtime.track_peer(graft::PeerEndpoint{
@@ -811,6 +856,11 @@ namespace {
             persistent->delegate().set_internal_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once(command) > 0;
             });
+            persistent->delegate().set_read_barrier([&runtime]() {
+                return runtime.refresh_read_barrier_once();
+            });
+            persistent->delegate().set_join_forwarder(forward_join_request);
+            persistent->delegate().set_reconfigure_forwarder(forward_reconfigure_request);
             persistent->delegate().set_join_tracker(
                 [&runtime](const std::string &peer_id, const graft::InMemoryRpcHandler::Endpoint &endpoint) {
                     runtime.track_peer(graft::PeerEndpoint{

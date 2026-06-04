@@ -68,6 +68,8 @@ namespace graft {
 
         std::size_t send_heartbeats_once();
 
+        bool refresh_read_barrier_once();
+
         std::size_t replicate_entry_once(const std::string &data);
 
         std::optional<std::string> replicate_entry_once_with_result(const std::string &data);

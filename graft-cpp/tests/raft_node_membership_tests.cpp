@@ -1,10 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "raft.pb.h"
 #include "graft/core/raft_node.hpp"
+#include "graft/runtime/rpc_handler.hpp"
 
 TEST_CASE("RaftNode applies committed membership commands", "[raft-node][membership]") {
     graft::RaftNode node(graft::RaftNode::Config{
@@ -78,4 +80,135 @@ TEST_CASE("RaftNode applies committed membership commands", "[raft-node][members
     const auto finalize_response = node.handle_append_entries(append);
     REQUIRE(finalize_response.success());
     REQUIRE_FALSE(node.joint_consensus());
+}
+
+TEST_CASE("Follower forwards membership RPCs to known leader", "[rpc][membership]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {"leader"},
+    });
+
+    raft::AppendEntriesRequest heartbeat;
+    heartbeat.set_term(1);
+    heartbeat.set_leader_id("leader");
+    heartbeat.set_prev_log_index(0);
+    heartbeat.set_prev_log_term(0);
+    heartbeat.set_leader_commit(0);
+    REQUIRE(node->handle_append_entries(heartbeat).success());
+
+    graft::InMemoryRpcHandler handler(node);
+    handler.set_known_peer_endpoints({graft::InMemoryRpcHandler::Endpoint{"127.0.0.1", 10080}}, {"leader"});
+
+    bool join_forwarded = false;
+    handler.set_join_forwarder(
+        [&](const graft::InMemoryRpcHandler::Endpoint &endpoint, const raft::JoinClusterRequest &request) {
+            join_forwarded = true;
+            REQUIRE(endpoint.host == "127.0.0.1");
+            REQUIRE(endpoint.port == 10080);
+            REQUIRE(request.joining_peer_id() == "n2");
+            return true;
+        });
+
+    raft::JoinClusterRequest join;
+    join.set_term(1);
+    join.set_peer_id("client");
+    join.set_joining_peer_id("n2");
+    join.set_host("127.0.0.1");
+    join.set_port(10082);
+    join.set_role("VOTER");
+
+    const auto join_response = handler.on_join_cluster_request(join);
+    REQUIRE(join_response.has_value());
+    REQUIRE(join_response->success());
+    REQUIRE(join_response->status() == "FORWARDED");
+    REQUIRE(join_response->leader_id() == "leader");
+    REQUIRE(join_forwarded);
+
+    bool reconfigure_forwarded = false;
+    handler.set_reconfigure_forwarder(
+        [&](const graft::InMemoryRpcHandler::Endpoint &endpoint, const raft::ReconfigureClusterRequest &request) {
+            reconfigure_forwarded = true;
+            REQUIRE(endpoint.host == "127.0.0.1");
+            REQUIRE(endpoint.port == 10080);
+            REQUIRE(request.action() == "FINALIZE");
+            return true;
+        });
+
+    raft::ReconfigureClusterRequest reconfigure;
+    reconfigure.set_term(1);
+    reconfigure.set_peer_id("client");
+    reconfigure.set_action("FINALIZE");
+
+    const auto reconfigure_response = handler.on_reconfigure_cluster_request(reconfigure);
+    REQUIRE(reconfigure_response.has_value());
+    REQUIRE(reconfigure_response->success());
+    REQUIRE(reconfigure_response->status() == "FORWARDED");
+    REQUIRE(reconfigure_response->leader_id() == "leader");
+    REQUIRE(reconfigure_forwarded);
+}
+
+TEST_CASE("Follower redirects operational summary RPCs to known leader", "[rpc][operational]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {"leader"},
+    });
+
+    raft::AppendEntriesRequest heartbeat;
+    heartbeat.set_term(1);
+    heartbeat.set_leader_id("leader");
+    heartbeat.set_prev_log_index(0);
+    heartbeat.set_prev_log_term(0);
+    heartbeat.set_leader_commit(0);
+    REQUIRE(node->handle_append_entries(heartbeat).success());
+
+    graft::InMemoryRpcHandler handler(node);
+    handler.set_known_peer_endpoints({graft::InMemoryRpcHandler::Endpoint{"127.0.0.1", 10080}}, {"leader"});
+
+    raft::TelemetryRequest telemetry;
+    telemetry.set_peer_id("client");
+    telemetry.set_require_leader_summary(true);
+
+    const auto telemetry_response = handler.on_telemetry_request(telemetry);
+    REQUIRE(telemetry_response.has_value());
+    REQUIRE_FALSE(telemetry_response->success());
+    REQUIRE(telemetry_response->status() == "REDIRECT");
+    REQUIRE(telemetry_response->redirect_leader_id() == "leader");
+    REQUIRE(telemetry_response->state() == "FOLLOWER");
+
+    raft::ClusterSummaryRequest cluster_summary;
+    cluster_summary.set_peer_id("client");
+
+    const auto cluster_summary_response = handler.on_cluster_summary_request(cluster_summary);
+    REQUIRE(cluster_summary_response.has_value());
+    REQUIRE_FALSE(cluster_summary_response->success());
+    REQUIRE(cluster_summary_response->status() == "REDIRECT");
+    REQUIRE(cluster_summary_response->redirect_leader_id() == "leader");
+    REQUIRE(cluster_summary_response->redirect_leader_host() == "127.0.0.1");
+    REQUIRE(cluster_summary_response->redirect_leader_port() == 10080);
+    REQUIRE(cluster_summary_response->state() == "FOLLOWER");
+
+    raft::ReconfigurationStatusRequest reconfiguration_status;
+    reconfiguration_status.set_peer_id("client");
+
+    const auto reconfiguration_status_response =
+            handler.on_reconfiguration_status_request(reconfiguration_status);
+    REQUIRE(reconfiguration_status_response.has_value());
+    REQUIRE_FALSE(reconfiguration_status_response->success());
+    REQUIRE(reconfiguration_status_response->status() == "REDIRECT");
+    REQUIRE(reconfiguration_status_response->redirect_leader_id() == "leader");
+    REQUIRE(reconfiguration_status_response->redirect_leader_host() == "127.0.0.1");
+    REQUIRE(reconfiguration_status_response->redirect_leader_port() == 10080);
+    REQUIRE(reconfiguration_status_response->state() == "FOLLOWER");
 }

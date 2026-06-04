@@ -111,6 +111,7 @@ namespace graft {
     public:
         using CommandReplicator = std::function<std::optional<std::string>(const std::string &)>;
         using InternalCommandReplicator = std::function<bool(const std::string &)>;
+        using ReadBarrier = std::function<bool()>;
 
         struct Endpoint {
             std::string host;
@@ -119,6 +120,8 @@ namespace graft {
 
         using JoinTracker = std::function<void(const std::string &, const Endpoint &)>;
         using MembershipUpdater = std::function<void(const std::vector<std::string> &, const std::vector<Endpoint> &)>;
+        using JoinForwarder = std::function<bool(const Endpoint &, const raft::JoinClusterRequest &)>;
+        using ReconfigureForwarder = std::function<bool(const Endpoint &, const raft::ReconfigureClusterRequest &)>;
 
         InMemoryRpcHandler(std::string peer_id, std::int64_t current_term, std::int64_t last_log_index,
                            std::int64_t last_log_term);
@@ -128,6 +131,12 @@ namespace graft {
         void set_command_replicator(CommandReplicator replicator);
 
         void set_internal_command_replicator(InternalCommandReplicator replicator);
+
+        void set_read_barrier(ReadBarrier read_barrier);
+
+        void set_join_forwarder(JoinForwarder forwarder);
+
+        void set_reconfigure_forwarder(ReconfigureForwarder forwarder);
 
         void set_join_tracker(JoinTracker tracker);
 
@@ -199,11 +208,18 @@ namespace graft {
 
         void populate_leader_endpoint(raft::ClientQueryResponse &response) const;
 
+        void populate_redirect_leader(raft::ClusterSummaryResponse &response) const;
+
+        void populate_redirect_leader(raft::ReconfigurationStatusResponse &response) const;
+
         std::optional<Endpoint> current_leader_endpoint() const;
 
         std::shared_ptr<RaftNode> node_;
         CommandReplicator command_replicator_;
         InternalCommandReplicator internal_command_replicator_;
+        ReadBarrier read_barrier_;
+        JoinForwarder join_forwarder_;
+        ReconfigureForwarder reconfigure_forwarder_;
         JoinTracker join_tracker_;
         MembershipUpdater membership_updater_;
         std::optional<Endpoint> local_endpoint_;
