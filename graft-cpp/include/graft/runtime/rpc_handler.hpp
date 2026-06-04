@@ -120,6 +120,8 @@ namespace graft {
 
         using Authenticator = std::function<std::optional<AuthenticationFailure>(const std::string &,
                                                                                  const std::string &)>;
+        using CommandAuthorizer = std::function<std::optional<AuthenticationFailure>(const std::string &,
+                                                                                    const std::string &)>;
 
         struct Endpoint {
             std::string host;
@@ -154,6 +156,8 @@ namespace graft {
         void set_read_barrier(ReadBarrier read_barrier);
 
         void set_authenticator(Authenticator authenticator);
+
+        void set_command_authorizer(CommandAuthorizer authorizer);
 
         void set_join_forwarder(JoinForwarder forwarder);
 
@@ -233,6 +237,9 @@ namespace graft {
 
         std::optional<AuthenticationFailure> authenticate(const std::string &scheme, const std::string &token) const;
 
+        std::optional<AuthenticationFailure> authorize_command(const std::string &requester_id,
+                                                               const std::string &command) const;
+
         void populate_redirect_leader(raft::ClusterSummaryResponse &response) const;
 
         void populate_redirect_leader(raft::ReconfigurationStatusResponse &response) const;
@@ -244,6 +251,7 @@ namespace graft {
         InternalCommandReplicator internal_command_replicator_;
         ReadBarrier read_barrier_;
         Authenticator authenticator_;
+        CommandAuthorizer command_authorizer_;
         JoinForwarder join_forwarder_;
         ReconfigureForwarder reconfigure_forwarder_;
         JoinTracker join_tracker_;

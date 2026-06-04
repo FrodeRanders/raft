@@ -129,6 +129,43 @@ TEST_CASE("Client command and query RPCs enforce configured shared-secret auth",
     REQUIRE(authenticated_query->status() == "OK");
 }
 
+TEST_CASE("Client command RPC enforces configured requester allow-list", "[rpc-handler][authorization]") {
+    graft::InMemoryRpcHandler handler("n1", 1, 0, 0);
+    handler.set_command_authorizer([](const std::string &requester_id, const std::string &) {
+        if (requester_id == "reference-admin") {
+            return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{};
+        }
+        return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{
+            graft::InMemoryRpcHandler::AuthenticationFailure{
+                .status = "FORBIDDEN",
+                .message = "Requester '" + requester_id + "' is not authorized to modify cluster state",
+            }
+        };
+    });
+
+    const auto put = graft::test::put_command("k", "v1");
+    raft::ClientCommandRequest denied;
+    denied.set_term(1);
+    denied.set_peer_id("ordinary-client");
+    denied.set_command(put.SerializeAsString());
+
+    const auto denied_response = handler.on_client_command_request(denied);
+    REQUIRE(denied_response.has_value());
+    REQUIRE_FALSE(denied_response->success());
+    REQUIRE(denied_response->status() == "FORBIDDEN");
+    REQUIRE(denied_response->message() == "Requester 'ordinary-client' is not authorized to modify cluster state");
+    REQUIRE(handler.node().applied_kv().find("k") == handler.node().applied_kv().end());
+
+    raft::ClientCommandRequest allowed = denied;
+    allowed.set_peer_id("reference-admin");
+
+    const auto allowed_response = handler.on_client_command_request(allowed);
+    REQUIRE(allowed_response.has_value());
+    REQUIRE(allowed_response->success());
+    REQUIRE(allowed_response->status() == "ACCEPTED");
+    REQUIRE(handler.node().applied_kv().at("k") == "v1");
+}
+
 TEST_CASE("Client query RPC requires read barrier in multi-node leader mode", "[rpc-handler][state-machine]") {
     auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
         .peer_id = "n1",

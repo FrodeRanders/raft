@@ -170,6 +170,10 @@ namespace graft {
         authenticator_ = std::move(authenticator);
     }
 
+    void InMemoryRpcHandler::set_command_authorizer(CommandAuthorizer authorizer) {
+        command_authorizer_ = std::move(authorizer);
+    }
+
     void InMemoryRpcHandler::set_join_forwarder(JoinForwarder forwarder) {
         join_forwarder_ = std::move(forwarder);
     }
@@ -350,6 +354,14 @@ namespace graft {
                 response.set_status("REJECTED");
                 response.set_message("Node is not leader or command could not be applied");
             }
+            return response;
+        }
+
+        if (const auto authorization = authorize_command(request.peer_id(), request.command());
+            authorization.has_value()) {
+            response.set_success(false);
+            response.set_status(authorization->status);
+            response.set_message(authorization->message);
             return response;
         }
 
@@ -1054,6 +1066,16 @@ namespace graft {
             return std::nullopt;
         }
         return authenticator_(scheme, token);
+    }
+
+    std::optional<InMemoryRpcHandler::AuthenticationFailure> InMemoryRpcHandler::authorize_command(
+        const std::string &requester_id,
+        const std::string &command
+    ) const {
+        if (!command_authorizer_) {
+            return std::nullopt;
+        }
+        return command_authorizer_(requester_id, command);
     }
 
     void InMemoryRpcHandler::populate_redirect_leader(raft::ClusterSummaryResponse &response) const {

@@ -118,6 +118,50 @@ namespace {
         }};
     }
 
+    std::vector<std::string> parse_csv_env(const char *name) {
+        std::vector<std::string> values;
+        const auto csv = env_value(name);
+        if (!csv.has_value()) {
+            return values;
+        }
+        std::size_t start = 0;
+        while (start <= csv->size()) {
+            const auto comma = csv->find(',', start);
+            auto value = csv->substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+            const auto first = value.find_first_not_of(" \t\r\n");
+            if (first != std::string::npos) {
+                const auto last = value.find_last_not_of(" \t\r\n");
+                values.push_back(value.substr(first, last - first + 1));
+            }
+            if (comma == std::string::npos) {
+                break;
+            }
+            start = comma + 1;
+        }
+        return values;
+    }
+
+    std::optional<graft::InMemoryRpcHandler::CommandAuthorizer> command_authorizer_from_env() {
+        auto allowed = parse_csv_env("RAFT_COMMAND_AUTHORIZER_ALLOW_LIST");
+        if (allowed.empty()) {
+            return std::nullopt;
+        }
+        return graft::InMemoryRpcHandler::CommandAuthorizer{[allowed = std::move(allowed)](
+                                                                const std::string &requester_id,
+                                                                const std::string &) {
+            if (std::find(allowed.begin(), allowed.end(), requester_id) != allowed.end()) {
+                return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{};
+            }
+            const auto id = requester_id.empty() ? std::string{"unknown"} : requester_id;
+            return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{
+                graft::InMemoryRpcHandler::AuthenticationFailure{
+                    .status = "FORBIDDEN",
+                    .message = "Requester '" + id + "' is not authorized to modify cluster state",
+                }
+            };
+        }};
+    }
+
     template<typename Request>
     void apply_request_auth(Request &request) {
         if (const auto scheme = env_value("RAFT_REQUEST_AUTH_CLIENT_SCHEME"); scheme.has_value()) {
@@ -230,6 +274,19 @@ namespace {
             handler->set_authenticator(*authenticator);
         } else if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::PersistentRpcHandler>) {
             handler->delegate().set_authenticator(*authenticator);
+        }
+    }
+
+    template<typename HandlerPtr>
+    void configure_handler_authorization(const HandlerPtr &handler) {
+        const auto authorizer = command_authorizer_from_env();
+        if (!authorizer.has_value()) {
+            return;
+        }
+        if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::InMemoryRpcHandler>) {
+            handler->set_command_authorizer(*authorizer);
+        } else if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::PersistentRpcHandler>) {
+            handler->delegate().set_command_authorizer(*authorizer);
         }
     }
 
@@ -846,6 +903,7 @@ namespace {
                                                                      last_log_term);
         configure_handler_endpoints(handler, bind_host, port);
         configure_handler_auth(handler);
+        configure_handler_authorization(handler);
         graft::RaftServer server(io_context, bind_host, port, std::move(handler));
         server.serve_forever();
     }
@@ -876,6 +934,7 @@ namespace {
         );
         configure_handler_endpoints(handler, bind_host, port, peers);
         configure_handler_auth(handler);
+        configure_handler_authorization(handler);
         graft::RaftServer server(io_context, bind_host, port, std::move(handler));
         server.serve_forever();
     }
@@ -900,6 +959,7 @@ namespace {
         if (auto in_memory = std::dynamic_pointer_cast<graft::InMemoryRpcHandler>(handler)) {
             configure_handler_endpoints(in_memory, bind_host, port, peer_endpoints);
             configure_handler_auth(in_memory);
+            configure_handler_authorization(in_memory);
             in_memory->set_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once_with_result(command);
             });
@@ -937,6 +997,7 @@ namespace {
         if (auto persistent = std::dynamic_pointer_cast<graft::PersistentRpcHandler>(handler)) {
             configure_handler_endpoints(persistent, bind_host, port, peer_endpoints);
             configure_handler_auth(persistent);
+            configure_handler_authorization(persistent);
             persistent->delegate().set_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once_with_result(command);
             });
