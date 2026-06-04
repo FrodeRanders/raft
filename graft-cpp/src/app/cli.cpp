@@ -17,9 +17,11 @@
 
 #include <boost/asio.hpp>
 #include <chrono>
+#include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -65,6 +67,65 @@ namespace {
                 << "  graft_smoke dump-state <state-file>\n"
                 << "\n"
                 << "  peer-spec format: <peer-id>@<host>:<port>\n";
+    }
+
+    std::optional<std::string> env_value(const char *name) {
+        const char *value = std::getenv(name);
+        if (value == nullptr || *value == '\0') {
+            return std::nullopt;
+        }
+        return std::string(value);
+    }
+
+    std::string lower_ascii(std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        return value;
+    }
+
+    std::optional<graft::InMemoryRpcHandler::Authenticator> shared_secret_authenticator_from_env() {
+        const auto mode = lower_ascii(env_value("RAFT_REQUEST_AUTH_MODE").value_or("none"));
+        if (mode == "none") {
+            return std::nullopt;
+        }
+        if (mode != "shared-secret") {
+            throw std::runtime_error("unsupported RAFT_REQUEST_AUTH_MODE: " + mode);
+        }
+        const auto shared_secret = env_value("RAFT_REQUEST_AUTH_SHARED_SECRET");
+        if (!shared_secret.has_value()) {
+            throw std::runtime_error("RAFT_REQUEST_AUTH_SHARED_SECRET is required for shared-secret auth");
+        }
+        return graft::InMemoryRpcHandler::Authenticator{[shared_secret = *shared_secret](const std::string &scheme,
+                                                                                         const std::string &token) {
+            if (lower_ascii(scheme) != "shared-secret") {
+                return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{
+                    graft::InMemoryRpcHandler::AuthenticationFailure{
+                        .status = "UNAUTHENTICATED",
+                        .message = "Client command authentication requires scheme 'shared-secret'",
+                    }
+                };
+            }
+            if (token != shared_secret) {
+                return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{
+                    graft::InMemoryRpcHandler::AuthenticationFailure{
+                        .status = "UNAUTHENTICATED",
+                        .message = "Client command authentication failed",
+                    }
+                };
+            }
+            return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{};
+        }};
+    }
+
+    template<typename Request>
+    void apply_request_auth(Request &request) {
+        if (const auto scheme = env_value("RAFT_REQUEST_AUTH_CLIENT_SCHEME"); scheme.has_value()) {
+            request.set_auth_scheme(*scheme);
+        }
+        if (const auto token = env_value("RAFT_REQUEST_AUTH_CLIENT_TOKEN"); token.has_value()) {
+            request.set_auth_token(*token);
+        }
     }
 
     std::uint16_t parse_port(const std::string &text) {
@@ -159,6 +220,19 @@ namespace {
         }
     }
 
+    template<typename HandlerPtr>
+    void configure_handler_auth(const HandlerPtr &handler) {
+        const auto authenticator = shared_secret_authenticator_from_env();
+        if (!authenticator.has_value()) {
+            return;
+        }
+        if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::InMemoryRpcHandler>) {
+            handler->set_authenticator(*authenticator);
+        } else if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::PersistentRpcHandler>) {
+            handler->delegate().set_authenticator(*authenticator);
+        }
+    }
+
     bool forward_join_request(
         const graft::InMemoryRpcHandler::Endpoint &endpoint,
         const raft::JoinClusterRequest &request
@@ -213,6 +287,7 @@ namespace {
         raft::ClusterSummaryRequest request;
         request.set_term(0);
         request.set_peer_id(peer_id);
+        apply_request_auth(request);
 
         const auto response = client.call<raft::ClusterSummaryRequest, raft::ClusterSummaryResponse>(
             host,
@@ -257,6 +332,7 @@ namespace {
         request.set_peer_id(peer_id);
         request.set_include_peer_stats(true);
         request.set_require_leader_summary(true);
+        apply_request_auth(request);
 
         const auto response = client.call<raft::TelemetryRequest, raft::TelemetryResponse>(
             host,
@@ -311,6 +387,7 @@ namespace {
         raft::ReconfigurationStatusRequest request;
         request.set_term(0);
         request.set_peer_id(peer_id);
+        apply_request_auth(request);
 
         const auto response = client.call<raft::ReconfigurationStatusRequest, raft::ReconfigurationStatusResponse>(
             host,
@@ -371,6 +448,7 @@ namespace {
         request.set_term(0);
         request.set_peer_id(peer_id);
         request.set_command(command.SerializeAsString());
+        apply_request_auth(request);
 
         const auto response = client.call<raft::ClientCommandRequest, raft::ClientCommandResponse>(
             host,
@@ -432,6 +510,7 @@ namespace {
         request.set_term(0);
         request.set_peer_id(peer_id);
         request.set_command(command.SerializeAsString());
+        apply_request_auth(request);
 
         const auto response = client.call<raft::ClientCommandRequest, raft::ClientCommandResponse>(
             host,
@@ -486,6 +565,7 @@ namespace {
         request.set_term(0);
         request.set_peer_id(peer_id);
         request.set_query(query.SerializeAsString());
+        apply_request_auth(request);
 
         const auto response = client.call<raft::ClientQueryRequest, raft::ClientQueryResponse>(
             host,
@@ -538,6 +618,7 @@ namespace {
         request.set_host(join_host);
         request.set_port(join_port);
         request.set_role(normalize_peer_role(role));
+        apply_request_auth(request);
 
         const auto response = client.call<raft::JoinClusterRequest, raft::JoinClusterResponse>(
             host,
@@ -570,6 +651,7 @@ namespace {
         request.set_term(0);
         request.set_peer_id(peer_id);
         request.set_target_peer_id(target_peer_id);
+        apply_request_auth(request);
 
         const auto response = client.call<raft::JoinClusterStatusRequest, raft::JoinClusterStatusResponse>(
             host,
@@ -603,6 +685,7 @@ namespace {
         request.set_term(0);
         request.set_peer_id(peer_id);
         request.set_action(action);
+        apply_request_auth(request);
         for (const auto &member: members) {
             auto *spec = request.add_members();
             spec->set_id(member.peer_id);
@@ -762,6 +845,7 @@ namespace {
         auto handler = std::make_shared<graft::InMemoryRpcHandler>(peer_id, current_term, last_log_index,
                                                                      last_log_term);
         configure_handler_endpoints(handler, bind_host, port);
+        configure_handler_auth(handler);
         graft::RaftServer server(io_context, bind_host, port, std::move(handler));
         server.serve_forever();
     }
@@ -791,6 +875,7 @@ namespace {
             }
         );
         configure_handler_endpoints(handler, bind_host, port, peers);
+        configure_handler_auth(handler);
         graft::RaftServer server(io_context, bind_host, port, std::move(handler));
         server.serve_forever();
     }
@@ -814,6 +899,7 @@ namespace {
 
         if (auto in_memory = std::dynamic_pointer_cast<graft::InMemoryRpcHandler>(handler)) {
             configure_handler_endpoints(in_memory, bind_host, port, peer_endpoints);
+            configure_handler_auth(in_memory);
             in_memory->set_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once_with_result(command);
             });
@@ -850,6 +936,7 @@ namespace {
         }
         if (auto persistent = std::dynamic_pointer_cast<graft::PersistentRpcHandler>(handler)) {
             configure_handler_endpoints(persistent, bind_host, port, peer_endpoints);
+            configure_handler_auth(persistent);
             persistent->delegate().set_command_replicator([&runtime](const std::string &command) {
                 return runtime.replicate_entry_once_with_result(command);
             });

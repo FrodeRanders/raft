@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -211,6 +212,61 @@ TEST_CASE("Follower redirects operational summary RPCs to known leader", "[rpc][
     REQUIRE(reconfiguration_status_response->redirect_leader_host() == "127.0.0.1");
     REQUIRE(reconfiguration_status_response->redirect_leader_port() == 10080);
     REQUIRE(reconfiguration_status_response->state() == "FOLLOWER");
+}
+
+TEST_CASE("Operational and membership RPCs enforce configured shared-secret auth", "[rpc][membership][auth]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+    node->become_leader();
+
+    graft::InMemoryRpcHandler handler(node);
+    handler.set_authenticator([](const std::string &scheme, const std::string &token) {
+        if (scheme != "shared-secret" || token != "top-secret") {
+            return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{
+                graft::InMemoryRpcHandler::AuthenticationFailure{
+                    .status = "UNAUTHENTICATED",
+                    .message = "Client command authentication failed",
+                }
+            };
+        }
+        return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{};
+    });
+
+    raft::ClusterSummaryRequest cluster_summary;
+    cluster_summary.set_peer_id("client");
+
+    const auto unauthenticated_summary = handler.on_cluster_summary_request(cluster_summary);
+    REQUIRE(unauthenticated_summary.has_value());
+    REQUIRE_FALSE(unauthenticated_summary->success());
+    REQUIRE(unauthenticated_summary->status() == "UNAUTHENTICATED");
+
+    cluster_summary.set_auth_scheme("shared-secret");
+    cluster_summary.set_auth_token("top-secret");
+    const auto authenticated_summary = handler.on_cluster_summary_request(cluster_summary);
+    REQUIRE(authenticated_summary.has_value());
+    REQUIRE(authenticated_summary->success());
+    REQUIRE(authenticated_summary->status() == "OK");
+
+    raft::JoinClusterRequest join;
+    join.set_peer_id("client");
+    join.set_joining_peer_id("n2");
+    join.set_host("127.0.0.1");
+    join.set_port(10082);
+    join.set_role("VOTER");
+
+    const auto unauthenticated_join = handler.on_join_cluster_request(join);
+    REQUIRE(unauthenticated_join.has_value());
+    REQUIRE_FALSE(unauthenticated_join->success());
+    REQUIRE(unauthenticated_join->status() == "UNAUTHENTICATED");
+    REQUIRE(unauthenticated_join->message() == "Client command authentication failed");
 }
 
 TEST_CASE("Leader operational summaries report degraded and at-risk quorum health", "[rpc][operational]") {

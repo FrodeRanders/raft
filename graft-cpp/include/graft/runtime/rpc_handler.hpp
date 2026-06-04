@@ -113,6 +113,14 @@ namespace graft {
         using InternalCommandReplicator = std::function<bool(const std::string &)>;
         using ReadBarrier = std::function<bool()>;
 
+        struct AuthenticationFailure {
+            std::string status;
+            std::string message;
+        };
+
+        using Authenticator = std::function<std::optional<AuthenticationFailure>(const std::string &,
+                                                                                 const std::string &)>;
+
         struct Endpoint {
             std::string host;
             std::int32_t port;
@@ -144,6 +152,8 @@ namespace graft {
         void set_internal_command_replicator(InternalCommandReplicator replicator);
 
         void set_read_barrier(ReadBarrier read_barrier);
+
+        void set_authenticator(Authenticator authenticator);
 
         void set_join_forwarder(JoinForwarder forwarder);
 
@@ -221,6 +231,8 @@ namespace graft {
 
         void populate_leader_endpoint(raft::ClientQueryResponse &response) const;
 
+        std::optional<AuthenticationFailure> authenticate(const std::string &scheme, const std::string &token) const;
+
         void populate_redirect_leader(raft::ClusterSummaryResponse &response) const;
 
         void populate_redirect_leader(raft::ReconfigurationStatusResponse &response) const;
@@ -231,6 +243,7 @@ namespace graft {
         CommandReplicator command_replicator_;
         InternalCommandReplicator internal_command_replicator_;
         ReadBarrier read_barrier_;
+        Authenticator authenticator_;
         JoinForwarder join_forwarder_;
         ReconfigureForwarder reconfigure_forwarder_;
         JoinTracker join_tracker_;

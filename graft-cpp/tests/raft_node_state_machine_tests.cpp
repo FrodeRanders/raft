@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <memory>
+#include <optional>
+#include <string>
 
 #include "raft.pb.h"
 #include "graft/core/raft_node.hpp"
@@ -63,6 +65,68 @@ TEST_CASE("Client command RPC reports accepted after commit", "[rpc-handler][sta
     REQUIRE(response->leader_id() == "n1");
     REQUIRE(response->leader_host() == "127.0.0.1");
     REQUIRE(response->leader_port() == 10080);
+}
+
+TEST_CASE("Client command and query RPCs enforce configured shared-secret auth", "[rpc-handler][auth]") {
+    graft::InMemoryRpcHandler handler("n1", 1, 0, 0);
+    handler.set_local_endpoint("127.0.0.1", 10080);
+    handler.set_authenticator([](const std::string &scheme, const std::string &token) {
+        if (scheme != "shared-secret") {
+            return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{
+                graft::InMemoryRpcHandler::AuthenticationFailure{
+                    .status = "UNAUTHENTICATED",
+                    .message = "Client command authentication requires scheme 'shared-secret'",
+                }
+            };
+        }
+        if (token != "top-secret") {
+            return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{
+                graft::InMemoryRpcHandler::AuthenticationFailure{
+                    .status = "UNAUTHENTICATED",
+                    .message = "Client command authentication failed",
+                }
+            };
+        }
+        return std::optional<graft::InMemoryRpcHandler::AuthenticationFailure>{};
+    });
+
+    const auto put = graft::test::put_command("k", "v1");
+    raft::ClientCommandRequest command;
+    command.set_term(1);
+    command.set_peer_id("client");
+    command.set_command(put.SerializeAsString());
+
+    const auto unauthenticated_command = handler.on_client_command_request(command);
+    REQUIRE(unauthenticated_command.has_value());
+    REQUIRE_FALSE(unauthenticated_command->success());
+    REQUIRE(unauthenticated_command->status() == "UNAUTHENTICATED");
+    REQUIRE(unauthenticated_command->message() == "Client command authentication requires scheme 'shared-secret'");
+
+    command.set_auth_scheme("shared-secret");
+    command.set_auth_token("top-secret");
+    const auto authenticated_command = handler.on_client_command_request(command);
+    REQUIRE(authenticated_command.has_value());
+    REQUIRE(authenticated_command->success());
+    REQUIRE(authenticated_command->status() == "ACCEPTED");
+
+    raft::StateMachineQuery query;
+    query.mutable_get()->set_key("k");
+    raft::ClientQueryRequest query_request;
+    query_request.set_term(1);
+    query_request.set_peer_id("client");
+    query_request.set_query(query.SerializeAsString());
+
+    const auto unauthenticated_query = handler.on_client_query_request(query_request);
+    REQUIRE(unauthenticated_query.has_value());
+    REQUIRE_FALSE(unauthenticated_query->success());
+    REQUIRE(unauthenticated_query->status() == "UNAUTHENTICATED");
+
+    query_request.set_auth_scheme("shared-secret");
+    query_request.set_auth_token("top-secret");
+    const auto authenticated_query = handler.on_client_query_request(query_request);
+    REQUIRE(authenticated_query.has_value());
+    REQUIRE(authenticated_query->success());
+    REQUIRE(authenticated_query->status() == "OK");
 }
 
 TEST_CASE("Client query RPC requires read barrier in multi-node leader mode", "[rpc-handler][state-machine]") {

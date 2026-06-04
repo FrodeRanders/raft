@@ -166,6 +166,10 @@ namespace graft {
         read_barrier_ = std::move(read_barrier);
     }
 
+    void InMemoryRpcHandler::set_authenticator(Authenticator authenticator) {
+        authenticator_ = std::move(authenticator);
+    }
+
     void InMemoryRpcHandler::set_join_forwarder(JoinForwarder forwarder) {
         join_forwarder_ = std::move(forwarder);
     }
@@ -229,6 +233,11 @@ namespace graft {
         response.set_reachable_voting_members(cluster.reachable_voting_members);
         response.set_cluster_status_reason(cluster.reason);
         add_peer_specs(response);
+        if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
+            response.set_success(false);
+            response.set_status(auth->status);
+            return response;
+        }
         if (request.require_leader_summary() && node_->role() != RaftNode::Role::leader) {
             response.set_success(false);
             response.set_status(current_leader_endpoint().has_value() ? "REDIRECT" : "NO_LEADER");
@@ -251,7 +260,7 @@ namespace graft {
     }
 
     std::optional<raft::ClusterSummaryResponse> InMemoryRpcHandler::on_cluster_summary_request(
-        const raft::ClusterSummaryRequest &) {
+        const raft::ClusterSummaryRequest &request) {
         const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch())
                 .count();
@@ -273,6 +282,11 @@ namespace graft {
         response.set_voting_members(cluster.voting_members);
         response.set_healthy_voting_members(cluster.healthy_voting_members);
         response.set_reachable_voting_members(cluster.reachable_voting_members);
+        if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
+            response.set_success(false);
+            response.set_status(auth->status);
+            return response;
+        }
         if (node_->role() != RaftNode::Role::leader) {
             response.set_success(false);
             response.set_status(current_leader_endpoint().has_value() ? "REDIRECT" : "NO_LEADER");
@@ -301,6 +315,13 @@ namespace graft {
         response.set_term(node_->current_term());
         response.set_peer_id(node_->peer_id());
         populate_leader_endpoint(response);
+
+        if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
+            response.set_success(false);
+            response.set_status(auth->status);
+            response.set_message(auth->message);
+            return response;
+        }
 
         raft::StateMachineCommand command;
         if (!command.ParseFromString(request.command())) {
@@ -366,6 +387,12 @@ namespace graft {
         response.set_peer_id(node_->peer_id());
         populate_leader_endpoint(response);
         response.set_success(false);
+
+        if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
+            response.set_status(auth->status);
+            response.set_message(auth->message);
+            return response;
+        }
 
         raft::StateMachineQuery query;
         if (!query.ParseFromString(request.query())) {
@@ -435,6 +462,13 @@ namespace graft {
         response.set_term(node_->current_term());
         response.set_peer_id(node_->peer_id());
         response.set_leader_id(node_->leader_id().value_or(""));
+
+        if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
+            response.set_success(false);
+            response.set_status(auth->status);
+            response.set_message(auth->message);
+            return response;
+        }
 
         if (node_->role() != RaftNode::Role::leader) {
             if (const auto leader_endpoint = current_leader_endpoint(); leader_endpoint.has_value()) {
@@ -516,6 +550,13 @@ namespace graft {
         response.set_peer_id(node_->peer_id());
         response.set_leader_id(node_->leader_id().value_or(""));
 
+        if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
+            response.set_success(false);
+            response.set_status(auth->status);
+            response.set_message(auth->message);
+            return response;
+        }
+
         if (request.target_peer_id().empty()) {
             response.set_success(false);
             response.set_status("BAD_REQUEST");
@@ -552,6 +593,13 @@ namespace graft {
         response.set_term(node_->current_term());
         response.set_peer_id(node_->peer_id());
         response.set_leader_id(node_->leader_id().value_or(""));
+
+        if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
+            response.set_success(false);
+            response.set_status(auth->status);
+            response.set_message(auth->message);
+            return response;
+        }
 
         if (node_->role() != RaftNode::Role::leader) {
             if (const auto leader_endpoint = current_leader_endpoint(); leader_endpoint.has_value()) {
@@ -726,7 +774,7 @@ namespace graft {
     }
 
     std::optional<raft::ReconfigurationStatusResponse> InMemoryRpcHandler::on_reconfiguration_status_request(
-        const raft::ReconfigurationStatusRequest &) {
+        const raft::ReconfigurationStatusRequest &request) {
         const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch())
                 .count();
@@ -747,6 +795,12 @@ namespace graft {
         response.set_quorum_available(cluster.quorum_available);
         response.set_current_quorum_available(cluster.current_quorum_available);
         response.set_next_quorum_available(cluster.next_quorum_available);
+
+        if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
+            response.set_success(false);
+            response.set_status(auth->status);
+            return response;
+        }
 
         if (node_->role() != RaftNode::Role::leader) {
             response.set_success(false);
@@ -990,6 +1044,16 @@ namespace graft {
             response.clear_leader_host();
             response.clear_leader_port();
         }
+    }
+
+    std::optional<InMemoryRpcHandler::AuthenticationFailure> InMemoryRpcHandler::authenticate(
+        const std::string &scheme,
+        const std::string &token
+    ) const {
+        if (!authenticator_) {
+            return std::nullopt;
+        }
+        return authenticator_(scheme, token);
     }
 
     void InMemoryRpcHandler::populate_redirect_leader(raft::ClusterSummaryResponse &response) const {
