@@ -105,7 +105,7 @@ The C++ implementation mirrors the same conceptual layers, but in a smaller CMak
 - `raft_client.hpp` and `raft_server.hpp`: Boost.Asio transport
 - `raft_node.hpp/.cpp`: C++ Raft state core
 - `raft_runtime.hpp/.cpp`: outbound election, heartbeat, replication, and snapshot catch-up runtime
-- `rpc_handler.hpp/.cpp`: inbound protocol handlers and adapter boundary
+- `rpc_handler.hpp/.cpp`: inbound protocol handlers, request authentication, write authorization, and adapter boundary
 - `persistent_state_store.hpp/.cpp`: current file-backed persistence
 - `cli.cpp`: command-line surface for direct and mixed-language validation
 
@@ -296,7 +296,17 @@ For the bounded implementation, queries operate on the applied KV state. Single-
 - single-node persistent servers auto-commit locally
 - active leaders replicate them through the existing distributed runtime
 
-The remaining client-side gap is production-grade behavior around retries, timeouts, operational policy, and richer administrative workflows. The basic shared command/query path, redirect metadata, typed CAS result path, and active-leader read barrier are now covered.
+The C++ adapter boundary now also mirrors Java's default-off request policy hooks:
+
+- `RAFT_REQUEST_AUTH_MODE=shared-secret`
+- `RAFT_REQUEST_AUTH_SHARED_SECRET=top-secret`
+- `RAFT_REQUEST_AUTH_CLIENT_SCHEME=shared-secret`
+- `RAFT_REQUEST_AUTH_CLIENT_TOKEN=top-secret`
+- `RAFT_COMMAND_AUTHORIZER_ALLOW_LIST=reference-admin,master-data-service`
+
+Authentication applies to client and administrative requests. The allow-list applies to client write commands and returns `FORBIDDEN` before replication when the requester id is not listed. Internal Raft RPCs remain unauthenticated, matching the Java split between external adapter policy and Raft mechanics.
+
+The remaining client-side gap is production-grade behavior around retries, timeouts, reference-data-specific learner admission, and richer administrative workflows. The basic shared command/query path, redirect metadata, typed CAS result path, active-leader read barrier, request authentication, and write authorization are now covered.
 
 For a bounded mixed-language validation path, `run-mixed-smoke.sh` now proves:
 
@@ -502,7 +512,7 @@ This implementation reuses the existing protocol and framing and now exercises r
 - Java runtime wiring
 - full storage implementation
 - richer membership-transition telemetry
-- operational policy and authentication integration
+- reference-data application payloads and learner-specific admission policy
 - full Java-equivalent read lease tracking and operational telemetry
 - the default Maven/JUnit/Jepsen validation path
 
