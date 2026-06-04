@@ -350,7 +350,7 @@ namespace graft {
         raft::StateMachineCommand command;
         if (!command.ParseFromString(request.command())) {
             response.set_success(false);
-            response.set_status("BAD_REQUEST");
+            response.set_status("INVALID");
             response.set_message("failed to parse StateMachineCommand");
             return response;
         }
@@ -428,7 +428,7 @@ namespace graft {
 
         raft::StateMachineQuery query;
         if (!query.ParseFromString(request.query())) {
-            response.set_status("BAD_REQUEST");
+            response.set_status("INVALID");
             response.set_message("failed to parse StateMachineQuery");
             return response;
         }
@@ -524,7 +524,7 @@ namespace graft {
 
         if (request.joining_peer_id().empty() || request.host().empty() || request.port() <= 0) {
             response.set_success(false);
-            response.set_status("BAD_REQUEST");
+            response.set_status("INVALID");
             response.set_message("joining peer id, host, and port are required");
             return response;
         }
@@ -591,7 +591,7 @@ namespace graft {
 
         if (request.target_peer_id().empty()) {
             response.set_success(false);
-            response.set_status("BAD_REQUEST");
+            response.set_status("INVALID");
             response.set_message("target peer id is required");
             return response;
         }
@@ -656,7 +656,7 @@ namespace graft {
         const auto action = normalize_peer_role(request.action());
         if (action != "JOINT" && action != "FINALIZE" && action != "PROMOTE" && action != "DEMOTE") {
             response.set_success(false);
-            response.set_status("BAD_REQUEST");
+            response.set_status("INVALID");
             response.set_message("supported actions are joint, finalize, promote, and demote");
             return response;
         }
@@ -664,13 +664,13 @@ namespace graft {
         if (action == "JOINT" || action == "PROMOTE" || action == "DEMOTE") {
             if (request.members().empty()) {
                 response.set_success(false);
-                response.set_status("BAD_REQUEST");
+                response.set_status("INVALID");
                 response.set_message("reconfigure action requires members");
                 return response;
             }
             if ((action == "PROMOTE" || action == "DEMOTE") && request.members_size() != 1) {
                 response.set_success(false);
-                response.set_status("BAD_REQUEST");
+                response.set_status("INVALID");
                 response.set_message("promote and demote require exactly one member");
                 return response;
             }
@@ -685,7 +685,7 @@ namespace graft {
                 const auto &target = request.members(0);
                 if (target.id().empty()) {
                     response.set_success(false);
-                    response.set_status("BAD_REQUEST");
+                    response.set_status("INVALID");
                     response.set_message("target member id is required");
                     return response;
                 }

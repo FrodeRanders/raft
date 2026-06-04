@@ -67,6 +67,30 @@ TEST_CASE("Client command RPC reports accepted after commit", "[rpc-handler][sta
     REQUIRE(response->leader_port() == 10080);
 }
 
+TEST_CASE("Client command and query RPCs report invalid payload status", "[rpc-handler][state-machine]") {
+    graft::InMemoryRpcHandler handler("n1", 1, 0, 0);
+
+    raft::ClientCommandRequest command;
+    command.set_term(1);
+    command.set_peer_id("client");
+    command.set_command("not-a-state-machine-command");
+
+    const auto command_response = handler.on_client_command_request(command);
+    REQUIRE(command_response.has_value());
+    REQUIRE_FALSE(command_response->success());
+    REQUIRE(command_response->status() == "INVALID");
+
+    raft::ClientQueryRequest query;
+    query.set_term(1);
+    query.set_peer_id("client");
+    query.set_query("not-a-state-machine-query");
+
+    const auto query_response = handler.on_client_query_request(query);
+    REQUIRE(query_response.has_value());
+    REQUIRE_FALSE(query_response->success());
+    REQUIRE(query_response->status() == "INVALID");
+}
+
 TEST_CASE("Client command and query RPCs enforce configured shared-secret auth", "[rpc-handler][auth]") {
     graft::InMemoryRpcHandler handler("n1", 1, 0, 0);
     handler.set_local_endpoint("127.0.0.1", 10080);

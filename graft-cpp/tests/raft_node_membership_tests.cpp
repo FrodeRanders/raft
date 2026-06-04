@@ -154,6 +154,44 @@ TEST_CASE("Follower forwards membership RPCs to known leader", "[rpc][membership
     REQUIRE(reconfigure_forwarded);
 }
 
+TEST_CASE("Membership RPCs report invalid request status", "[rpc][membership]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+    node->become_leader();
+
+    graft::InMemoryRpcHandler handler(node);
+
+    raft::JoinClusterRequest join;
+    join.set_peer_id("client");
+    const auto join_response = handler.on_join_cluster_request(join);
+    REQUIRE(join_response.has_value());
+    REQUIRE_FALSE(join_response->success());
+    REQUIRE(join_response->status() == "INVALID");
+
+    raft::JoinClusterStatusRequest join_status;
+    join_status.set_peer_id("client");
+    const auto join_status_response = handler.on_join_cluster_status_request(join_status);
+    REQUIRE(join_status_response.has_value());
+    REQUIRE_FALSE(join_status_response->success());
+    REQUIRE(join_status_response->status() == "INVALID");
+
+    raft::ReconfigureClusterRequest reconfigure;
+    reconfigure.set_peer_id("client");
+    reconfigure.set_action("unsupported");
+    const auto reconfigure_response = handler.on_reconfigure_cluster_request(reconfigure);
+    REQUIRE(reconfigure_response.has_value());
+    REQUIRE_FALSE(reconfigure_response->success());
+    REQUIRE(reconfigure_response->status() == "INVALID");
+}
+
 TEST_CASE("Follower redirects operational summary RPCs to known leader", "[rpc][operational]") {
     auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
         .peer_id = "n1",
