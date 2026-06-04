@@ -57,6 +57,14 @@ namespace graft {
         for (const auto &peer_id: state.voting_peers) {
             out << "voting_peer=" << escape(peer_id) << '\n';
         }
+        for (const auto &member: state.current_members) {
+            out << "current_member=" << escape(member.id()) << ',' << escape(member.host()) << ',' << member.port() <<
+                    ',' << escape(member.role()) << '\n';
+        }
+        for (const auto &member: state.next_members) {
+            out << "next_member=" << escape(member.id()) << ',' << escape(member.host()) << ',' << member.port() <<
+                    ',' << escape(member.role()) << '\n';
+        }
         out << "last_log_index=" << state.last_log_index << '\n';
         out << "last_log_term=" << state.last_log_term << '\n';
         out << "commit_index=" << state.commit_index << '\n';
@@ -119,6 +127,23 @@ namespace graft {
                 state.pending_join_ids.push_back(value);
             } else if (key == "voting_peer") {
                 state.voting_peers.push_back(value);
+            } else if (key == "current_member" || key == "next_member") {
+                const auto first = value.find(',');
+                const auto second = value.find(',', first == std::string::npos ? first : first + 1);
+                const auto third = value.find(',', second == std::string::npos ? second : second + 1);
+                if (first == std::string::npos || second == std::string::npos || third == std::string::npos) {
+                    throw std::runtime_error("invalid " + key + " line in state file: " + path_.string());
+                }
+                raft::PeerSpec member;
+                member.set_id(value.substr(0, first));
+                member.set_host(value.substr(first + 1, second - first - 1));
+                member.set_port(static_cast<std::int32_t>(std::stol(value.substr(second + 1, third - second - 1))));
+                member.set_role(value.substr(third + 1));
+                if (key == "current_member") {
+                    state.current_members.push_back(std::move(member));
+                } else {
+                    state.next_members.push_back(std::move(member));
+                }
             } else if (key == "last_log_index") {
                 state.last_log_index = std::stoll(value);
             } else if (key == "last_log_term") {

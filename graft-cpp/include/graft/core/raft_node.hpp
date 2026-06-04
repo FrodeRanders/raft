@@ -76,6 +76,8 @@ namespace graft {
             std::int64_t reconfiguration_started_at_millis{0};
             std::vector<std::string> pending_join_ids;
             std::vector<std::string> voting_peers;
+            std::vector<raft::PeerSpec> current_members;
+            std::vector<raft::PeerSpec> next_members;
             std::int64_t last_log_index{0};
             std::int64_t last_log_term{0};
             std::int64_t commit_index{0};
@@ -112,6 +114,10 @@ namespace graft {
         void set_voting_peers(std::vector<std::string> voting_peers);
 
         std::vector<std::string> voting_peers() const;
+
+        std::vector<raft::PeerSpec> current_member_specs() const;
+
+        std::vector<raft::PeerSpec> next_member_specs() const;
 
         bool joint_consensus() const;
 
@@ -224,6 +230,10 @@ namespace graft {
 
         void normalize_voting_peers_locked();
 
+        static std::vector<raft::PeerSpec> normalize_member_specs(std::vector<raft::PeerSpec> members);
+
+        void seed_current_members_locked();
+
         void reconfigure_voting_peers_locked(std::vector<std::string> voting_peers);
 
         std::size_t cluster_size_locked() const;
@@ -283,6 +293,8 @@ namespace graft {
         std::vector<LogEntryRecord> log_entries_;
         std::chrono::steady_clock::time_point last_activity_;
         std::vector<std::string> voting_peers_;
+        std::vector<raft::PeerSpec> current_members_;
+        std::vector<raft::PeerSpec> next_members_;
         std::unordered_map<std::string, PeerProgress> peer_progress_;
         std::unordered_set<std::string> votes_granted_;
         std::unordered_set<std::string> votes_responded_;

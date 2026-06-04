@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
@@ -433,8 +434,69 @@ TEST_CASE("Operational summaries report stuck joint reconfiguration age", "[rpc]
     REQUIRE(response->cluster_health() == "degraded");
     REQUIRE(response->cluster_status_reason() == "reconfiguration-stuck");
     REQUIRE(response->members_size() == 1);
-    REQUIRE(response->members(0).role_transition() == "joint");
-    REQUIRE(response->members(0).transition_age_millis() > 0);
+    REQUIRE(response->members(0).role_transition() == "steady");
+    REQUIRE(response->members(0).transition_age_millis() == 0);
+}
+
+TEST_CASE("Operational summaries report current and next member roles during joint reconfiguration", "[rpc][operational][membership]") {
+    auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+    node->become_leader();
+
+    raft::InternalRaftCommand learner_joint;
+    auto* self = learner_joint.mutable_joint()->add_members();
+    self->set_id("n1");
+    self->set_role("VOTER");
+    auto* learner = learner_joint.mutable_joint()->add_members();
+    learner->set_id("n2");
+    learner->set_role("LEARNER");
+    REQUIRE(node->append_and_commit_local_command(graft::RaftNode::encode_internal_command(learner_joint)).has_value());
+
+    raft::InternalRaftCommand finalize;
+    finalize.mutable_finalize();
+    REQUIRE(node->append_and_commit_local_command(graft::RaftNode::encode_internal_command(finalize)).has_value());
+    REQUIRE_FALSE(node->joint_consensus());
+
+    raft::InternalRaftCommand promote_joint;
+    auto* next_self = promote_joint.mutable_joint()->add_members();
+    next_self->set_id("n1");
+    next_self->set_role("VOTER");
+    auto* promoted = promote_joint.mutable_joint()->add_members();
+    promoted->set_id("n2");
+    promoted->set_role("VOTER");
+    REQUIRE(node->append_and_commit_local_command(graft::RaftNode::encode_internal_command(promote_joint)).has_value());
+    REQUIRE(node->joint_consensus());
+
+    graft::InMemoryRpcHandler handler(node);
+    raft::ReconfigurationStatusRequest request;
+    request.set_peer_id("ops-client");
+    const auto response = handler.on_reconfiguration_status_request(request);
+    REQUIRE(response.has_value());
+    REQUIRE(response->success());
+
+    const auto n2 = std::find_if(response->members().begin(), response->members().end(), [](const auto& member) {
+        return member.peer_id() == "n2";
+    });
+    REQUIRE(n2 != response->members().end());
+    REQUIRE(n2->current_member());
+    REQUIRE(n2->next_member());
+    REQUIRE(n2->current_role() == "LEARNER");
+    REQUIRE(n2->next_role() == "VOTER");
+    REQUIRE(n2->role_transition() == "promoting");
+    REQUIRE(n2->transition_age_millis() >= 0);
+
+    const auto telemetry = handler.on_telemetry_request(raft::TelemetryRequest{});
+    REQUIRE(telemetry.has_value());
+    REQUIRE(telemetry->current_members_size() == 2);
+    REQUIRE(telemetry->next_members_size() == 2);
 }
 
 TEST_CASE("Leader operational summaries report degraded and at-risk quorum health", "[rpc][operational]") {

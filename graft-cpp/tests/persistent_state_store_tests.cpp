@@ -26,6 +26,12 @@ TEST_CASE("PersistentStateStore round-trips node state", "[raft-node][persistenc
     REQUIRE(node.append_and_commit_local_command(put.SerializeAsString()).has_value());
     auto persisted = node.persistent_state();
     persisted.reconfiguration_started_at_millis = 12345;
+    raft::PeerSpec next;
+    next.set_id("n2");
+    next.set_host("127.0.0.1");
+    next.set_port(10082);
+    next.set_role("LEARNER");
+    persisted.next_members.push_back(next);
 
     store.save(persisted);
     const auto loaded = store.load();
@@ -34,6 +40,11 @@ TEST_CASE("PersistentStateStore round-trips node state", "[raft-node][persistenc
     REQUIRE(loaded->peer_id == "n1");
     REQUIRE(loaded->leader_id == "n1");
     REQUIRE(loaded->reconfiguration_started_at_millis == 12345);
+    REQUIRE(loaded->current_members.size() == 1);
+    REQUIRE(loaded->current_members.front().id() == "n1");
+    REQUIRE(loaded->next_members.size() == 1);
+    REQUIRE(loaded->next_members.front().id() == "n2");
+    REQUIRE(loaded->next_members.front().role() == "LEARNER");
     REQUIRE(loaded->applied_kv.at("persisted") == "value");
 
     std::filesystem::remove(path);

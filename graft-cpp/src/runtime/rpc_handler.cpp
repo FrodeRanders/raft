@@ -8,6 +8,44 @@
 #include <utility>
 
 namespace graft {
+    namespace {
+        std::optional<raft::PeerSpec> find_member_spec(const std::vector<raft::PeerSpec> &members,
+                                                       const std::string &peer_id) {
+            const auto found = std::find_if(members.begin(), members.end(), [&](const raft::PeerSpec &member) {
+                return member.id() == peer_id;
+            });
+            if (found == members.end()) {
+                return std::nullopt;
+            }
+            return *found;
+        }
+
+        bool member_is_voter(const std::optional<raft::PeerSpec> &member) {
+            return member.has_value() && member->role() == "VOTER";
+        }
+
+        std::string member_role(const std::optional<raft::PeerSpec> &member) {
+            return member.has_value() ? member->role() : "";
+        }
+
+        std::string describe_role_transition(const std::optional<raft::PeerSpec> &current,
+                                             const std::optional<raft::PeerSpec> &next) {
+            if (!current.has_value() && !next.has_value()) {
+                return "known";
+            }
+            if (!current.has_value()) {
+                return "joining";
+            }
+            if (!next.has_value()) {
+                return "removing";
+            }
+            if (current->role() == next->role()) {
+                return "steady";
+            }
+            return next->role() == "VOTER" ? "promoting" : "demoting";
+        }
+    }
+
     StubRpcHandler::StubRpcHandler(std::string peer_id, std::int64_t current_term)
         : peer_id_(std::move(peer_id)), current_term_(current_term) {
     }
@@ -536,7 +574,7 @@ namespace graft {
             }
             response.set_success(true);
             response.set_status("PENDING");
-            response.set_message("join admission already recorded");
+            response.set_message("Join request accepted and awaiting joint configuration commit");
             response.set_leader_id(node_->peer_id());
             return response;
         }
@@ -893,6 +931,16 @@ namespace graft {
     std::vector<std::string> InMemoryRpcHandler::recovered_peer_ids() const {
         std::vector<std::string> peer_ids = node_->voting_peers();
         std::unordered_set<std::string> seen(peer_ids.begin(), peer_ids.end());
+        for (const auto &member: node_->current_member_specs()) {
+            if (member.id() != node_->peer_id() && seen.insert(member.id()).second) {
+                peer_ids.push_back(member.id());
+            }
+        }
+        for (const auto &member: node_->next_member_specs()) {
+            if (member.id() != node_->peer_id() && seen.insert(member.id()).second) {
+                peer_ids.push_back(member.id());
+            }
+        }
         for (const auto &[peer_id, _]: node_->peer_progress()) {
             if (peer_id != node_->peer_id() && seen.insert(peer_id).second) {
                 peer_ids.push_back(peer_id);
@@ -914,17 +962,28 @@ namespace graft {
     }
 
     void InMemoryRpcHandler::add_peer_specs(raft::TelemetryResponse &response) const {
-        auto *local = response.add_current_members();
-        local->set_id(node_->peer_id());
-        local->set_role("VOTER");
-        auto *local_known = response.add_known_peers();
-        *local_known = *local;
-        for (const auto &peer_id: recovered_peer_ids()) {
+        std::unordered_set<std::string> known;
+        for (const auto &member: node_->current_member_specs()) {
             auto *peer = response.add_current_members();
-            peer->set_id(peer_id);
-            peer->set_role("VOTER");
-            auto *known = response.add_known_peers();
-            *known = *peer;
+            *peer = member;
+            auto *known_peer = response.add_known_peers();
+            *known_peer = *peer;
+            known.insert(member.id());
+        }
+        for (const auto &member: node_->next_member_specs()) {
+            auto *peer = response.add_next_members();
+            *peer = member;
+            if (known.insert(member.id()).second) {
+                auto *known_peer = response.add_known_peers();
+                *known_peer = member;
+            }
+        }
+        for (const auto &peer_id: recovered_peer_ids()) {
+            if (known.insert(peer_id).second) {
+                auto *peer = response.add_known_peers();
+                peer->set_id(peer_id);
+                peer->set_role(is_voting_member(peer_id) ? "VOTER" : "LEARNER");
+            }
         }
     }
 
@@ -1004,21 +1063,27 @@ namespace graft {
 
     void InMemoryRpcHandler::populate_member(raft::ClusterMemberSummary &member, const std::string &peer_id, bool local,
                                              const RaftNode::PeerProgress &progress) const {
-        const bool voting = is_voting_member(peer_id);
+        const auto current = find_member_spec(node_->current_member_specs(), peer_id);
+        const auto next = find_member_spec(node_->next_member_specs(), peer_id);
+        const auto effective = node_->joint_consensus() && next.has_value() ? next : current;
+        const bool voting = member_is_voter(effective) || (!effective.has_value() && is_voting_member(peer_id));
+        const auto transition = describe_role_transition(current, node_->joint_consensus() ? next : current);
         const bool reachable = local || progress.reachable;
         const auto match_index = local ? node_->last_log_index() : progress.match_index;
         const auto next_index = local ? node_->last_log_index() + 1 : progress.next_index;
         const auto lag = std::max<std::int64_t>(0, node_->last_log_index() - match_index);
         member.set_peer_id(peer_id);
         member.set_local(local);
-        member.set_current_member(true);
-        member.set_next_member(true);
+        member.set_current_member(current.has_value());
+        member.set_next_member(node_->joint_consensus() ? next.has_value() : current.has_value());
         member.set_voting(voting);
-        member.set_role(voting ? "VOTER" : "LEARNER");
-        member.set_current_role(voting ? "VOTER" : "LEARNER");
-        member.set_next_role(voting ? "VOTER" : "LEARNER");
-        member.set_role_transition(node_->joint_consensus() ? "joint" : "steady");
-        member.set_transition_age_millis(reconfiguration_age_millis());
+        member.set_role(effective.has_value() ? effective->role() : (voting ? "VOTER" : "LEARNER"));
+        member.set_current_role(member_role(current));
+        member.set_next_role(node_->joint_consensus() ? member_role(next) : member_role(current));
+        member.set_role_transition(transition);
+        member.set_transition_age_millis((transition == "steady" || transition == "known")
+                                             ? 0
+                                             : reconfiguration_age_millis());
         member.set_reachable(reachable);
         member.set_health(local || (reachable && progress.match_index >= node_->commit_index())
                               ? "healthy"
@@ -1034,8 +1099,13 @@ namespace graft {
         member.set_match_index(match_index);
         member.set_lag(lag);
         member.set_consecutive_failures(local ? 0 : progress.consecutive_failures);
-        member.set_blocking_quorums(voting && !local && (!reachable || progress.match_index < node_->commit_index())
-                                        ? "current"
+        const bool blocking = voting && !local && (!reachable || progress.match_index < node_->commit_index());
+        member.set_blocking_quorums(blocking
+                                        ? (node_->joint_consensus() && current.has_value() && next.has_value()
+                                               ? "current,next"
+                                               : current.has_value()
+                                                     ? "current"
+                                                     : "next")
                                         : "");
         member.set_blocking_reason(member.blocking_quorums().empty()
                                        ? ""
