@@ -221,8 +221,6 @@ namespace graft {
 
         void normalize_voting_peers_locked();
 
-        static std::vector<raft::PeerSpec> normalize_member_specs(std::vector<raft::PeerSpec> members);
-
         void seed_current_members_locked();
 
         void reconfigure_voting_peers_locked(std::vector<std::string> voting_peers);

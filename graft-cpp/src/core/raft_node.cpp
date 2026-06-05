@@ -17,6 +17,7 @@
 
 #include "graft/core/raft_node.hpp"
 
+#include "graft/core/cluster_membership.hpp"
 #include "graft/core/key_value_state_machine.hpp"
 #include "graft/core/snapshot_codec.hpp"
 
@@ -723,8 +724,8 @@ namespace graft {
         pending_join_ids_ = std::unordered_set<std::string>(state.pending_join_ids.begin(),
                                                             state.pending_join_ids.end());
         voting_peers_ = state.voting_peers;
-        current_members_ = normalize_member_specs(state.current_members);
-        next_members_ = normalize_member_specs(state.next_members);
+        current_members_ = ClusterMembership::normalize_member_specs(state.current_members);
+        next_members_ = ClusterMembership::normalize_member_specs(state.next_members);
         last_log_index_ = state.last_log_index;
         last_log_term_ = state.last_log_term;
         commit_index_ = state.commit_index;
@@ -760,7 +761,7 @@ namespace graft {
                 member->set_id(peer_id);
                 member->set_role("VOTER");
             }
-            next_members_ = normalize_member_specs(std::move(members));
+            next_members_ = ClusterMembership::normalize_member_specs(std::move(members));
         }
         for (const auto &[peer_id, _]: state.peer_progress) {
             if (peer_id != peer_id_) {
@@ -874,7 +875,7 @@ namespace graft {
                         progress.next_index = std::max<std::int64_t>(1, progress.next_index);
                     }
                 }
-                next_members_ = normalize_member_specs(std::move(next_members));
+                next_members_ = ClusterMembership::normalize_member_specs(std::move(next_members));
                 if (!joint_consensus_ || reconfiguration_started_at_millis_ <= 0) {
                     reconfiguration_started_at_millis_ = current_time_millis();
                 }
@@ -971,30 +972,9 @@ namespace graft {
         voting_peers_ = std::move(normalized);
     }
 
-    std::vector<raft::PeerSpec> RaftNode::normalize_member_specs(std::vector<raft::PeerSpec> members) {
-        std::sort(members.begin(), members.end(), [](const raft::PeerSpec &left, const raft::PeerSpec &right) {
-            return left.id() < right.id();
-        });
-        std::vector<raft::PeerSpec> normalized;
-        normalized.reserve(members.size());
-        std::unordered_set<std::string> seen;
-        for (auto &member: members) {
-            if (member.id().empty()) {
-                continue;
-            }
-            if (member.role().empty()) {
-                member.set_role("VOTER");
-            }
-            if (seen.insert(member.id()).second) {
-                normalized.push_back(std::move(member));
-            }
-        }
-        return normalized;
-    }
-
     void RaftNode::seed_current_members_locked() {
         if (!current_members_.empty()) {
-            current_members_ = normalize_member_specs(std::move(current_members_));
+            current_members_ = ClusterMembership::normalize_member_specs(std::move(current_members_));
             return;
         }
         std::vector<raft::PeerSpec> members;
@@ -1007,7 +987,7 @@ namespace graft {
             member->set_id(peer_id);
             member->set_role("VOTER");
         }
-        current_members_ = normalize_member_specs(std::move(members));
+        current_members_ = ClusterMembership::normalize_member_specs(std::move(members));
     }
 
     void RaftNode::reconfigure_voting_peers_locked(std::vector<std::string> voting_peers) {
@@ -1024,56 +1004,22 @@ namespace graft {
                 member->set_id(peer_id);
                 member->set_role("VOTER");
             }
-            current_members_ = normalize_member_specs(std::move(members));
+            current_members_ = ClusterMembership::normalize_member_specs(std::move(members));
             next_members_.clear();
         }
         refresh_voting_peers_from_members_locked();
     }
 
     std::vector<std::string> RaftNode::current_voting_members_locked() const {
-        std::vector<std::string> voters;
-        if (current_members_.empty()) {
-            voters.reserve(voting_peers_.size() + 1);
-            if (!decommissioned_) {
-                voters.push_back(peer_id_);
-            }
-            voters.insert(voters.end(), voting_peers_.begin(), voting_peers_.end());
-        } else {
-            voters.reserve(current_members_.size());
-            for (const auto &member: current_members_) {
-                if (member.role() == "VOTER") {
-                    voters.push_back(member.id());
-                }
-            }
-        }
-        std::sort(voters.begin(), voters.end());
-        voters.erase(std::unique(voters.begin(), voters.end()), voters.end());
-        return voters;
+        return ClusterMembership::current_voting_members(peer_id_, decommissioned_, voting_peers_, current_members_);
     }
 
     std::vector<std::string> RaftNode::next_voting_members_locked() const {
-        if (!joint_consensus_ || next_members_.empty()) {
-            return current_voting_members_locked();
-        }
-        std::vector<std::string> voters;
-        voters.reserve(next_members_.size());
-        for (const auto &member: next_members_) {
-            if (member.role() == "VOTER") {
-                voters.push_back(member.id());
-            }
-        }
-        std::sort(voters.begin(), voters.end());
-        voters.erase(std::unique(voters.begin(), voters.end()), voters.end());
-        return voters;
+        return ClusterMembership::next_voting_members(joint_consensus_, current_voting_members_locked(), next_members_);
     }
 
     std::vector<std::string> RaftNode::active_voting_members_locked() const {
-        auto voters = current_voting_members_locked();
-        const auto next = next_voting_members_locked();
-        voters.insert(voters.end(), next.begin(), next.end());
-        std::sort(voters.begin(), voters.end());
-        voters.erase(std::unique(voters.begin(), voters.end()), voters.end());
-        return voters;
+        return ClusterMembership::active_voting_members(current_voting_members_locked(), next_voting_members_locked());
     }
 
     void RaftNode::refresh_voting_peers_from_members_locked() {
@@ -1114,20 +1060,11 @@ namespace graft {
     }
 
     bool RaftNode::has_joint_majority_locked(const std::unordered_set<std::string> &peer_ids) const {
-        auto has_majority = [&peer_ids](const std::vector<std::string> &voters) {
-            if (voters.empty()) {
-                return false;
-            }
-            std::size_t present = 0;
-            for (const auto &voter: voters) {
-                present += peer_ids.contains(voter) ? 1 : 0;
-            }
-            return present >= ((voters.size() / 2) + 1);
-        };
-        if (!has_majority(current_voting_members_locked())) {
-            return false;
-        }
-        return !joint_consensus_ || has_majority(next_voting_members_locked());
+        return ClusterMembership::has_joint_majority(
+            peer_ids,
+            current_voting_members_locked(),
+            next_voting_members_locked(),
+            joint_consensus_);
     }
 
     std::size_t RaftNode::cluster_size_locked() const {

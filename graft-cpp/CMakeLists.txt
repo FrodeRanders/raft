@@ -46,6 +46,7 @@ target_link_libraries(graft_proto PUBLIC
 
 add_library(graft_transport STATIC
     src/app/cli.cpp
+    src/core/cluster_membership.cpp
     src/core/key_value_state_machine.cpp
     src/core/raft_node.cpp
     src/core/snapshot_codec.cpp
@@ -83,6 +84,7 @@ if(Catch2_FOUND)
 
     add_executable(graft_unit_tests
         tests/persistent_state_store_tests.cpp
+        tests/cluster_membership_tests.cpp
         tests/key_value_state_machine_tests.cpp
         tests/raft_node_election_tests.cpp
         tests/raft_node_membership_tests.cpp
