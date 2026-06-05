@@ -4,6 +4,8 @@ This project is intended to provide Raft cluster capability as library functiona
 
 Reference data and key/value storage are examples of applications on top of Raft. They are not the boundary.
 
+If your background is XATMI, XA, two-phase commit, or service transactions, read [Raft And XATMI Transaction Thinking](raft-and-xatmi.md) as a companion note.
+
 ## Mental Model
 
 A Raft-enabled application has two parts:
