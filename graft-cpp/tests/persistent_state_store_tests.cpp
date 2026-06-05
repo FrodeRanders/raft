@@ -57,7 +57,18 @@ TEST_CASE("PersistentStateStore round-trips node state", "[raft-node][persistenc
     REQUIRE(loaded->peer_progress.at("n2").consecutive_failures == 2);
     REQUIRE(loaded->peer_progress.at("n2").last_successful_contact_millis == 0);
     REQUIRE(loaded->peer_progress.at("n2").last_failed_contact_millis == 0);
-    REQUIRE(loaded->applied_kv.at("persisted") == "value");
+    graft::RaftNode restored(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+    });
+    restored.apply_persistent_state(*loaded);
+    REQUIRE(restored.applied_kv().at("persisted") == "value");
 
     std::filesystem::remove(path);
 }

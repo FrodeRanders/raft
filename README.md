@@ -32,6 +32,8 @@ raft-dist/target/raft-1.0-SNAPSHOT.jar
 
 For a concise description of what each module contains, see [docs/module-overview.md](docs/module-overview.md).
 
+For guidance on building domain applications on top of the Java and C++ Raft libraries, see [docs/application-developer-guide.md](docs/application-developer-guide.md).
+
 ## Jepsen Validation
 
 The repository now includes a local Jepsen harness, documented in [jepsen/README.md](jepsen/README.md). It complements the classic JUnit/Maven suite by exercising the runnable `raft-dist` node processes under concurrent client load and injected failures.

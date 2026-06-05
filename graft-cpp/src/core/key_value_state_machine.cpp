@@ -17,9 +17,53 @@
 
 #include "graft/core/key_value_state_machine.hpp"
 
+#include "graft/core/snapshot_codec.hpp"
+
 #include <stdexcept>
+#include <utility>
 
 namespace graft {
+    std::string KeyValueStateMachine::apply(std::int64_t, std::int64_t, std::string_view data) {
+        raft::StateMachineCommand command;
+        if (!command.ParseFromArray(data.data(), static_cast<int>(data.size()))) {
+            return {};
+        }
+        return apply_command(store_, command);
+    }
+
+    std::string KeyValueStateMachine::query(std::string_view data) const {
+        raft::StateMachineQuery query;
+        if (!query.ParseFromArray(data.data(), static_cast<int>(data.size())) ||
+            query.query_case() != raft::StateMachineQuery::kGet) {
+            return {};
+        }
+
+        const auto result = get(store_, query.get().key());
+        std::string encoded;
+        if (!result.SerializeToString(&encoded)) {
+            throw std::runtime_error("failed to serialize StateMachineQueryResult");
+        }
+        return encoded;
+    }
+
+    std::string KeyValueStateMachine::snapshot() const {
+        return SnapshotCodec::serialize_key_value_snapshot(store_);
+    }
+
+    void KeyValueStateMachine::restore(std::string_view snapshot) {
+        if (auto restored = SnapshotCodec::deserialize_key_value_snapshot(std::string(snapshot)); restored.has_value()) {
+            store_ = std::move(*restored);
+        }
+    }
+
+    const KeyValueStateMachine::Store &KeyValueStateMachine::store() const {
+        return store_;
+    }
+
+    void KeyValueStateMachine::replace_store(Store store) {
+        store_ = std::move(store);
+    }
+
     std::string KeyValueStateMachine::apply_command(Store &store, const raft::StateMachineCommand &command) {
         switch (command.command_case()) {
             case raft::StateMachineCommand::kPut:

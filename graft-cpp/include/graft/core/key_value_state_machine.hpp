@@ -19,15 +19,31 @@
 #include <string>
 #include <unordered_map>
 
+#include "graft/core/application_state_machine.hpp"
 #include "raft.pb.h"
 
 namespace graft {
-    class KeyValueStateMachine {
+    class KeyValueStateMachine final : public ApplicationStateMachine {
     public:
         using Store = std::unordered_map<std::string, std::string>;
+
+        std::string apply(std::int64_t index, std::int64_t term, std::string_view command) override;
+
+        std::string query(std::string_view request) const override;
+
+        std::string snapshot() const override;
+
+        void restore(std::string_view snapshot) override;
+
+        const Store &store() const;
+
+        void replace_store(Store store);
 
         static std::string apply_command(Store &store, const raft::StateMachineCommand &command);
 
         static raft::StateMachineQueryResult get(const Store &store, const std::string &key);
+
+    private:
+        Store store_;
     };
 } // namespace graft

@@ -5,9 +5,34 @@
 #include <string>
 
 #include "raft.pb.h"
+#include "graft/core/application_state_machine.hpp"
 #include "graft/core/raft_node.hpp"
 #include "graft/runtime/rpc_handler.hpp"
 #include "test_commands.hpp"
+
+namespace {
+    class RecordingApplication final : public graft::ApplicationStateMachine {
+    public:
+        std::string apply(std::int64_t index, std::int64_t term, std::string_view command) override {
+            applied = std::to_string(index) + ":" + std::to_string(term) + ":" + std::string(command);
+            return "result:" + applied;
+        }
+
+        std::string query(std::string_view request) const override {
+            return "query:" + std::string(request) + ":" + applied;
+        }
+
+        std::string snapshot() const override {
+            return applied;
+        }
+
+        void restore(std::string_view snapshot) override {
+            applied = std::string(snapshot);
+        }
+
+        std::string applied;
+    };
+}
 
 TEST_CASE("RaftNode applies key/value state machine commands", "[raft-node][state-machine]") {
     graft::RaftNode node(graft::RaftNode::Config{
@@ -45,6 +70,32 @@ TEST_CASE("RaftNode applies key/value state machine commands", "[raft-node][stat
     REQUIRE_FALSE(decoded.cas().matched());
     REQUIRE(decoded.cas().current_value() == "v2");
     REQUIRE(node.applied_kv().at("k") == "v2");
+}
+
+TEST_CASE("RaftNode delegates committed entries to injected application state machine",
+          "[raft-node][state-machine][application]") {
+    auto application = std::make_shared<RecordingApplication>();
+    graft::RaftNode node(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 7,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {},
+        .application = application,
+    });
+    node.become_leader();
+
+    const auto committed = node.append_and_commit_local_command("domain-command");
+
+    REQUIRE(committed.has_value());
+    REQUIRE(committed->index == 1);
+    REQUIRE(committed->result == "result:1:7:domain-command");
+    REQUIRE(application->applied == "1:7:domain-command");
+    REQUIRE(node.query_application("domain-query") == "query:domain-query:1:7:domain-command");
+    REQUIRE(node.applied_kv().empty());
 }
 
 TEST_CASE("Client command RPC reports accepted after commit", "[rpc-handler][state-machine]") {

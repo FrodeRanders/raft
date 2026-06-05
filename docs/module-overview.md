@@ -39,6 +39,7 @@ This repository is organized as a Maven reactor with a small set of focused modu
 - `raft-core` stays small and reusable.
 - application-specific behavior lives in app modules, not in core.
 - concrete transport and persistence implementations sit behind separate module boundaries.
+- domain applications plug in through state-machine/application interfaces; Raft retains ownership of cluster configuration, membership, log, and snapshot wrapping.
 
 ### C++ implementation relationship
 - `graft-cpp` contains the C++ implementation. It is intentionally outside the Maven reactor, but it shares the same `raft-wire/src/main/proto/raft.proto` contract.

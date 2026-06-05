@@ -17,6 +17,7 @@
 #pragma once
 
 #include <chrono>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -25,6 +26,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "graft/core/application_state_machine.hpp"
 #include "raft.pb.h"
 
 namespace graft {
@@ -45,6 +47,7 @@ namespace graft {
             std::int64_t snapshot_index{0};
             std::int64_t snapshot_term{0};
             std::vector<std::string> voting_peers;
+            std::shared_ptr<ApplicationStateMachine> application;
         };
 
         struct PeerProgress {
@@ -87,7 +90,6 @@ namespace graft {
             std::int64_t snapshot_term{0};
             std::string snapshot_data;
             std::int64_t last_applied{0};
-            std::unordered_map<std::string, std::string> applied_kv;
             std::int64_t previous_log_index{0};
             std::int64_t previous_log_term{0};
             std::string last_entry_data;
@@ -96,8 +98,6 @@ namespace graft {
         };
 
         explicit RaftNode(Config config);
-
-        static constexpr std::string_view kInternalCommandPrefix = "raft-internal:";
 
         static std::string encode_internal_command(const raft::InternalRaftCommand &command);
 
@@ -188,6 +188,8 @@ namespace graft {
 
         std::unordered_map<std::string, std::string> applied_kv() const;
 
+        std::string query_application(const std::string &data) const;
+
         std::string applied_command_result(std::int64_t index) const;
 
         std::optional<CommandCommitResult> append_and_commit_local_command(const std::string &data);
@@ -207,13 +209,13 @@ namespace graft {
 
         void apply_snapshot_to_state_machine_locked();
 
-        std::string apply_state_machine_command_locked(const std::string &data);
+        std::string apply_state_machine_command_locked(const LogEntryRecord &entry);
 
         std::optional<raft::InternalRaftCommand> parse_internal_command_locked(const std::string &data) const;
 
         bool apply_internal_command_locked(const std::string &data);
 
-        std::string apply_log_entry_locked(const std::string &data);
+        std::string apply_log_entry_locked(const LogEntryRecord &entry);
 
         void apply_committed_entries_locked();
 
@@ -263,6 +265,8 @@ namespace graft {
 
         std::string applied_command_result_at_locked(std::int64_t index) const;
 
+        std::unordered_map<std::string, std::string> applied_kv_locked() const;
+
         mutable std::mutex mu_;
         std::string peer_id_;
         Role role_;
@@ -281,7 +285,7 @@ namespace graft {
         std::int64_t snapshot_term_;
         std::string snapshot_data_;
         std::int64_t last_applied_{0};
-        std::unordered_map<std::string, std::string> applied_kv_;
+        std::shared_ptr<ApplicationStateMachine> application_;
         std::unordered_map<std::int64_t, std::string> applied_command_results_;
         std::int64_t pending_snapshot_index_{0};
         std::int64_t pending_snapshot_term_{0};

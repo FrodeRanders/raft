@@ -43,10 +43,14 @@ namespace graft {
           commit_index_(config.commit_index),
           snapshot_index_(config.snapshot_index),
           snapshot_term_(config.snapshot_term),
+          application_(std::move(config.application)),
           previous_log_index_(config.last_log_index),
           previous_log_term_(config.last_log_term),
           last_activity_(std::chrono::steady_clock::now()),
           voting_peers_(std::move(config.voting_peers)) {
+        if (!application_) {
+            application_ = std::make_shared<KeyValueStateMachine>();
+        }
         seed_bootstrap_log_locked();
         normalize_voting_peers_locked();
         seed_current_members_locked();
@@ -212,7 +216,7 @@ namespace graft {
 
         snapshot_index_ = index;
         snapshot_term_ = term;
-        snapshot_data_ = wrap_snapshot_payload_locked(SnapshotCodec::serialize_key_value_snapshot(applied_kv_));
+        snapshot_data_ = wrap_snapshot_payload_locked(application_->snapshot());
         truncate_prefix_up_to_locked(snapshot_index_);
         commit_index_ = std::max(commit_index_, snapshot_index_);
         apply_committed_entries_locked();
@@ -627,7 +631,19 @@ namespace graft {
 
     std::unordered_map<std::string, std::string> RaftNode::applied_kv() const {
         std::scoped_lock lock(mu_);
-        return applied_kv_;
+        return applied_kv_locked();
+    }
+
+    std::unordered_map<std::string, std::string> RaftNode::applied_kv_locked() const {
+        if (const auto kv = std::dynamic_pointer_cast<KeyValueStateMachine>(application_); kv) {
+            return kv->store();
+        }
+        return {};
+    }
+
+    std::string RaftNode::query_application(const std::string &data) const {
+        std::scoped_lock lock(mu_);
+        return application_->query(data);
     }
 
     std::string RaftNode::applied_command_result(std::int64_t index) const {
@@ -696,7 +712,6 @@ namespace graft {
             .snapshot_term = snapshot_term_,
             .snapshot_data = snapshot_data_,
             .last_applied = last_applied_,
-            .applied_kv = applied_kv_,
             .previous_log_index = previous_log_index_,
             .previous_log_term = previous_log_term_,
             .last_entry_data = last_entry_data_,
@@ -732,8 +747,10 @@ namespace graft {
         snapshot_index_ = state.snapshot_index;
         snapshot_term_ = state.snapshot_term;
         snapshot_data_ = state.snapshot_data;
-        last_applied_ = state.last_applied;
-        applied_kv_ = state.applied_kv;
+        last_applied_ = snapshot_index_;
+        if (!snapshot_data_.empty()) {
+            application_->restore(SnapshotCodec::unwrap_payload(snapshot_data_));
+        }
         applied_command_results_.clear();
         previous_log_index_ = state.previous_log_index;
         previous_log_term_ = state.previous_log_term;
@@ -779,6 +796,7 @@ namespace graft {
             restored.last_failed_contact_millis = 0;
             peer_progress_[peer_id] = restored;
         }
+        apply_committed_entries_locked();
     }
 
     RaftNode::Role RaftNode::role() const {
@@ -808,35 +826,18 @@ namespace graft {
             return;
         }
 
-        const auto state_machine_snapshot = SnapshotCodec::unwrap_payload(snapshot_data_);
-        if (auto restored = SnapshotCodec::deserialize_key_value_snapshot(state_machine_snapshot); restored.has_value()) {
-            applied_kv_ = std::move(*restored);
-        }
+        application_->restore(SnapshotCodec::unwrap_payload(snapshot_data_));
     }
 
-    std::string RaftNode::apply_state_machine_command_locked(const std::string &data) {
-        raft::StateMachineCommand command;
-        if (!command.ParseFromString(data)) {
-            return {};
-        }
-        return KeyValueStateMachine::apply_command(applied_kv_, command);
+    std::string RaftNode::apply_state_machine_command_locked(const LogEntryRecord &entry) {
+        return application_->apply(entry.index, entry.term, entry.data);
     }
 
     std::optional<raft::InternalRaftCommand> RaftNode::parse_internal_command_locked(const std::string &data) const {
         raft::InternalRaftCommand command;
-        if (data.starts_with(kInternalCommandPrefix)) {
-            const auto payload = data.substr(kInternalCommandPrefix.size());
-            if (!command.ParseFromString(payload)) {
-                return std::nullopt;
-            }
-            return command;
-        }
-
         if (!command.ParseFromString(data)) {
             return std::nullopt;
         }
-        // Newer Java/C++ paths write the protobuf directly. The older prefix is still accepted so persisted
-        // persisted state and mixed-version smoke runs do not become unreadable during this migration.
         if (command.command_case() == raft::InternalRaftCommand::COMMAND_NOT_SET) {
             return std::nullopt;
         }
@@ -908,11 +909,11 @@ namespace graft {
         return false;
     }
 
-    std::string RaftNode::apply_log_entry_locked(const std::string &data) {
-        if (apply_internal_command_locked(data)) {
+    std::string RaftNode::apply_log_entry_locked(const LogEntryRecord &entry) {
+        if (apply_internal_command_locked(entry.data)) {
             return {};
         }
-        return apply_state_machine_command_locked(data);
+        return apply_state_machine_command_locked(entry);
     }
 
     void RaftNode::apply_committed_entries_locked() {
@@ -926,7 +927,7 @@ namespace graft {
                 continue;
             }
             applied_command_results_.erase(entry.index);
-            applied_command_results_[entry.index] = apply_log_entry_locked(entry.data);
+            applied_command_results_[entry.index] = apply_log_entry_locked(entry);
             last_applied_ = entry.index;
         }
     }

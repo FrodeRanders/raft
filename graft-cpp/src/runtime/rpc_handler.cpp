@@ -1,7 +1,5 @@
 #include "graft/runtime/rpc_handler.hpp"
 
-#include "graft/core/key_value_state_machine.hpp"
-
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -522,15 +520,18 @@ namespace graft {
             }
         }
 
-        const auto result = KeyValueStateMachine::get(node_->applied_kv(), query.get().key());
+        const auto result = node_->query_application(request.query());
+        if (result.empty()) {
+            response.set_status("UNSUPPORTED");
+            response.set_message("query could not be applied");
+            return response;
+        }
 
         response.set_success(true);
         response.set_status("OK");
         response.set_message("Query completed");
         populate_leader_endpoint(response);
-        if (!result.SerializeToString(response.mutable_result())) {
-            throw std::runtime_error("failed to serialize StateMachineQueryResult");
-        }
+        response.set_result(result);
         return response;
     }
 

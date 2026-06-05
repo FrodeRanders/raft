@@ -1558,10 +1558,8 @@ namespace {
                 << "commit_index: " << persisted->commit_index << '\n'
                 << "last_applied: " << persisted->last_applied << '\n'
                 << "snapshot_index: " << persisted->snapshot_index << '\n'
-                << "snapshot_term: " << persisted->snapshot_term << '\n';
-        for (const auto &[key, value]: persisted->applied_kv) {
-            std::cout << "kv[" << key << "]=" << value << '\n';
-        }
+                << "snapshot_term: " << persisted->snapshot_term << '\n'
+                << "snapshot_data_size: " << persisted->snapshot_data.size() << '\n';
         return 0;
     }
 } // namespace
