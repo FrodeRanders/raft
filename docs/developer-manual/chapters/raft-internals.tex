@@ -1,0 +1,97 @@
+\section{Raft Internals}
+\label{sec:RaftInternals}
+
+This section is for developers changing the Raft machinery itself.
+
+\subsection{Core state}
+
+A Raft node maintains:
+
+\begin{itemize}
+\item current term,
+\item voted-for candidate,
+\item local role: follower, candidate or leader,
+\item replicated log,
+\item commit index and last-applied index,
+\item known leader,
+\item cluster membership configuration,
+\item leader-side replication progress for followers,
+\item read-lease and heartbeat timing state.
+\end{itemize}
+
+The safety rules are the usual Raft rules: terms are monotonic, a node votes at
+most once per term, candidates must have sufficiently up-to-date logs, leaders
+append entries in order, and committed entries must not be lost across leader
+changes.
+
+\subsection{Elections}
+
+Election behavior is driven by timeout and vote responses:
+
+\begin{enumerate}
+\item A follower whose election deadline expires becomes a candidate.
+\item The candidate increments term, votes for itself and sends vote requests.
+\item A candidate becomes leader only after satisfying the configured majority rule.
+\item Any node that observes a higher term steps down.
+\end{enumerate}
+
+Membership matters. In stable configuration, election success requires a
+majority of current voters. In joint consensus, election success requires a
+majority of current voters and a majority of next voters.
+
+\subsection{AppendEntries and commit}
+
+Leaders replicate log entries using AppendEntries. Followers reject requests
+whose previous index/term does not match their log. Leaders backtrack until the
+matching prefix is found, then append missing entries.
+
+Commit advancement must respect both term and membership:
+
+\begin{itemize}
+\item The leader should only commit entries known replicated on a required majority.
+\item Joint consensus requires both current and next majorities.
+\item Entries from older terms require the normal Raft care: leadership should be
+established through an entry in the current term before relying on older entries
+for commitment.
+\end{itemize}
+
+\subsection{Read lease and read barrier}
+
+Linearizable reads require proof that the leader is still authoritative. The
+library uses a read-lease/read-barrier model:
+
+\begin{itemize}
+\item A leader records successful quorum contact through heartbeat/append responses.
+\item While that evidence is fresh, it may serve local queries.
+\item If evidence is stale, it must refresh a quorum heartbeat barrier.
+\item If the barrier fails, the query returns retry/redirect behavior rather than
+serving stale state.
+\end{itemize}
+
+The same membership rules apply here: joint consensus requires current and next
+majorities for the barrier to be safe.
+
+\subsection{Joint consensus}
+
+Membership changes are replicated through internal log entries. A safe transition
+uses two phases:
+
+\begin{enumerate}
+\item Enter joint consensus with current and next configurations active.
+\item Finalize into the next stable configuration after the joint entry is committed.
+\end{enumerate}
+
+During joint consensus, majority calculations must be split, not flattened. A
+single large majority across the union is not sufficient. The implementation must
+evaluate current voters and next voters independently.
+
+\subsection{Internal commands}
+
+Internal Raft commands are log entries whose meaning is Raft-owned rather than
+domain-owned. Membership changes are the main example. Internal commands must be
+decoded and applied before or alongside domain state updates so that effective
+configuration by log index remains correct.
+
+Application developers should not create internal commands directly. Machinery
+developers should keep internal command encoding versioned and compatible across
+Java and C++.

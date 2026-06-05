@@ -1,0 +1,132 @@
+\section{Application Developer Guide}
+\label{sec:ApplicationDeveloper}
+
+This section is for developers who want to use the library to give an
+application Raft cluster behavior.
+
+\subsection{What an application must provide}
+
+An application supplies four things:
+
+\begin{enumerate}
+\item A command encoding for writes.
+\item A deterministic state machine that applies committed commands.
+\item A snapshot encoding for the application state.
+\item Optional query handling for local reads after Raft has established read safety.
+\end{enumerate}
+
+The application does not implement leader election, quorum calculation, log
+replication or membership transitions.
+
+\subsection{Command design}
+
+Commands are opaque byte payloads to Raft. They should be designed as a stable
+application protocol:
+
+\begin{itemize}
+\item Use explicit command types rather than positional assumptions.
+\item Include stable command identifiers when client retries must be idempotent.
+\item Keep commands deterministic: all replicas must produce the same state from
+the same ordered log.
+\item Avoid embedding local time, random values or local host state unless those
+values are part of the command chosen before replication.
+\item Treat command formats as versioned public contracts once multiple deployed
+nodes may run different software versions.
+\end{itemize}
+
+For reference-data style applications, typical commands are
+\texttt{UPSERT\_PRODUCT}, \texttt{REMOVE\_PRODUCT},
+\texttt{UPSERT\_VARIANT} and \texttt{REMOVE\_VARIANT}. For a key-value
+application, commands may be \texttt{PUT}, \texttt{CAS}, \texttt{DELETE} and
+\texttt{CLEAR}.
+
+\subsection{State-machine contract}
+
+The state machine is called only for committed entries. It should therefore be
+written as pure replicated state mutation, not as a client-facing validation
+service. Validation that decides whether a write is accepted before entering
+Raft belongs in admission, authentication or authorization policy. Validation
+that is part of deterministic domain semantics may happen inside the state
+machine.
+
+\begin{lstlisting}[language=Java,caption={Java state-machine shape}]
+public interface SnapshotStateMachine {
+    void apply(long term, byte[] command);
+    byte[] snapshot();
+    void restore(byte[] snapshotData);
+}
+
+public interface QueryableStateMachine extends SnapshotStateMachine {
+    byte[] query(byte[] request);
+}
+\end{lstlisting}
+
+The C++ interface carries the same idea using C++ types:
+
+\begin{lstlisting}[language=C++,caption={C++ state-machine shape}]
+class ApplicationStateMachine {
+public:
+    virtual std::string apply(std::int64_t index,
+                              std::int64_t term,
+                              std::string_view command) = 0;
+    virtual std::string snapshot() const = 0;
+    virtual std::string query(std::string_view request) const = 0;
+    virtual void restore(std::string_view snapshot) = 0;
+};
+\end{lstlisting}
+
+\subsection{Snapshots}
+
+Application snapshots contain application state only. Raft wraps that payload
+with Raft metadata, including the cluster configuration at the snapshot boundary.
+This distinction matters because a snapshot restore must restore both:
+
+\begin{itemize}
+\item the application's lookup state,
+\item the Raft membership and log boundary that make the snapshot safe.
+\end{itemize}
+
+Application developers should not store cluster configuration inside their
+domain snapshot unless the domain itself has a reason to display or audit it.
+Cluster configuration is Raft machinery state.
+
+\subsection{Reads and read leases}
+
+Applications may expose read queries through a queryable state machine. The
+application should treat such reads as local state inspection. It should not try
+to contact peers or decide whether the local node is a safe reader.
+
+The runtime decides whether a read may be served:
+
+\begin{itemize}
+\item Followers redirect ordinary linearizable reads to the known leader.
+\item A leader may serve a read if its quorum-backed read lease is fresh.
+\item If the lease is stale, the leader must refresh a quorum barrier before serving.
+\item If the barrier cannot be refreshed, the response should ask the client to retry.
+\end{itemize}
+
+\subsection{Client-facing policies}
+
+The runtime has policy hooks around client commands:
+
+\begin{description}
+\item[Admission] Should this local node admit the write at all?
+\item[Authentication] Who is making the request?
+\item[Authorization] Is the authenticated principal allowed to perform this write?
+\end{description}
+
+These hooks are application-facing. They are not Raft safety hooks. A policy may
+reject a write for domain or security reasons, but it must not claim a command is
+committed. Only Raft commit and state-machine application can do that.
+
+\subsection{Cluster configuration storage}
+
+Applications do not need a separate domain table or object for cluster
+configuration. Configuration is replicated through Raft internal log entries and
+is captured in Raft snapshot metadata. The library persists it through the same
+Raft persistence path as terms, votes and log state.
+
+The important application responsibility is operational: the deployment must
+provide durable storage for the Raft node. If the node loses its Raft storage it
+may lose its term, vote, log and membership history. That is a cluster
+operational failure, not a domain state-machine feature.

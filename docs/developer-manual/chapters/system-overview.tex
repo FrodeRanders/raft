@@ -1,0 +1,88 @@
+\section{System Overview}
+\label{sec:SystemOverview}
+
+The repository contains one shared protocol and two implementation tracks:
+
+\begin{description}
+\item[Java] Maven modules implementing the main Raft runtime, storage, transport,
+state-machine contracts, example applications, telemetry and tests.
+\item[C++] A CMake subtree under \filepath{graft-cpp} implementing the same wire
+protocol and a bounded but growing Raft runtime using Boost.Asio.
+\item[Shared wire schema] Protobuf messages under \filepath{raft-wire/src/main/proto}
+used by Java and C++.
+\item[Jepsen] Workload and fault-injection tests under \filepath{jepsen}, including
+mixed Java/C++ scenarios.
+\end{description}
+
+\subsection{Java module map}
+
+\begin{longtable}{p{42mm}p{112mm}}
+\toprule
+Module & Responsibility \\
+\midrule
+\filepath{raft-wire} & Protocol model, protobuf mapping and shared wire messages. \\
+\filepath{raft-core} & Raft node state machine: terms, votes, log matching, commit,
+snapshot handling, read safety and membership application. \\
+\filepath{raft-membership} & Cluster configuration model and joint-consensus
+majority calculations. \\
+\filepath{raft-state-machine} & Application state-machine interfaces:
+\texttt{SnapshotStateMachine}, \texttt{QueryableStateMachine} and result-returning variants. \\
+\filepath{raft-storage} & In-memory and file-backed persistent state and log stores. \\
+\filepath{raft-transport-netty} & Netty transport client/server for Raft and client RPCs. \\
+\filepath{raft-runtime} & Application bootstrap, adapter, operational handlers and
+policy hooks. \\
+\filepath{raft-app-kv} & Basic key-value demo application. \\
+\filepath{raft-app-reference} & Reference-data application example and policy behavior. \\
+\filepath{raft-telemetry} & Telemetry exporter support. \\
+\filepath{raft-dist} & Runnable distribution entry point. \\
+\filepath{raft-tests} & Unit, integration and cross-module tests. \\
+\bottomrule
+\end{longtable}
+
+\subsection{C++ layout}
+
+The C++ subtree is intentionally smaller but follows the same conceptual layers:
+
+\begin{description}
+\item[\filepath{include/graft/core}] Raft node, application state-machine and snapshot codec.
+\item[\filepath{include/graft/runtime}] Runtime and RPC handler abstractions.
+\item[\filepath{include/graft/storage}] Persistent state store.
+\item[\filepath{include/graft/transport}] Boost.Asio client/server transport.
+\item[\filepath{src}] Implementations of the core, runtime, storage, transport and CLI.
+\item[\filepath{tests}] Catch2 tests for the C++ core and runtime behaviors.
+\end{description}
+
+\subsection{Boundary principle}
+
+The central design rule is:
+
+\begin{quote}
+Raft owns replication safety. The application owns command meaning.
+\end{quote}
+
+That has practical consequences:
+
+\begin{itemize}
+\item Raft persists terms, votes, log entries, commit index, membership and snapshot metadata.
+\item The application persists its own state only through deterministic command application and application snapshot bytes.
+\item Cluster configuration is part of Raft state, not part of the domain model, although it is persisted beside the replicated application data path.
+\item Application code should not decide majorities, refresh read leases, send vote requests or mutate the Raft log directly.
+\end{itemize}
+
+\subsection{Shared protocol}
+
+Java and C++ interoperate because they share:
+
+\begin{itemize}
+\item protobuf message definitions,
+\item envelope framing,
+\item client command and query request/response shapes,
+\item membership and join/reconfiguration messages,
+\item telemetry and cluster-summary messages,
+\item snapshot install messages.
+\end{itemize}
+
+Cross-language compatibility should be tested at the protocol boundary. If Java
+and C++ disagree about status strings, read-safety conditions, membership
+majorities or snapshot metadata, that is a library bug unless the difference is
+explicitly documented as domain-specific.

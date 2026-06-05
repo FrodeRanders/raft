@@ -1,0 +1,92 @@
+\section{C++ Library}
+\label{sec:CppLibrary}
+
+The C++ implementation lives under \filepath{graft-cpp}. It is built separately
+with CMake so C++ deployments do not depend on the Maven reactor. It shares the
+protobuf schema and envelope protocol with Java.
+
+\subsection{Build model}
+
+The C++ build creates:
+
+\begin{itemize}
+\item \texttt{graft\_proto}: generated protobuf types,
+\item \texttt{graft\_transport}: reusable library target for core/runtime/storage/transport,
+\item \texttt{graft\_smoke}: command-line probe and runnable modes,
+\item \texttt{graft\_unit\_tests}: Catch2 tests when Catch2 v3 is available.
+\end{itemize}
+
+Basic workflow:
+
+\begin{lstlisting}[language=bash,caption={C++ build workflow}]
+cmake -S graft-cpp -B graft-cpp/build
+cmake --build graft-cpp/build
+ctest --test-dir graft-cpp/build --output-on-failure
+\end{lstlisting}
+
+The code requires C++20. Older Boost.Asio installations may still reference
+\texttt{std::result\_of}; the CMake target defines
+\texttt{BOOST\_ASIO\_DISABLE\_STD\_RESULT\_OF} to remain compatible with such
+headers in C++20 mode.
+
+\subsection{Application boundary}
+
+The C++ application boundary mirrors the Java state-machine boundary:
+
+\begin{itemize}
+\item commands are opaque bytes or strings at the Raft layer,
+\item application state machines apply committed commands,
+\item snapshots are application bytes wrapped by Raft metadata,
+\item queries are served only after the runtime establishes read safety.
+\end{itemize}
+
+The current C++ example state machine is key-value oriented. Reference-data mode
+behavior exists at the policy boundary, but the Java implementation remains the
+fuller reference-data domain implementation.
+
+\subsection{Runtime and transport}
+
+Boost.Asio provides client and server transport over the shared envelope
+protocol. The active server modes wire a local C++ \texttt{RaftNode} to an RPC
+handler and transport server. The smoke CLI can also act as a client for Java or
+C++ peers.
+
+Use C++ smoke commands to validate boundary behavior:
+
+\begin{lstlisting}[language=bash,caption={Selected C++ probe commands}]
+graft-cpp/build/graft_smoke client-put 127.0.0.1 11082 k v1 cpp-node
+graft-cpp/build/graft_smoke client-get 127.0.0.1 11082 k cpp-node
+graft-cpp/build/graft_smoke cluster-summary 127.0.0.1 11082 cpp-cli
+graft-cpp/build/graft_smoke reconfiguration-status 127.0.0.1 11082 cpp-cli
+\end{lstlisting}
+
+\subsection{Protobuf toolchain}
+
+The C++ build uses \texttt{protoc} and \texttt{libprotobuf}. They should come
+from the same package manager prefix. A warning such as compiler version
+\texttt{33.x} versus library version \texttt{6.33.x} is usually a CMake
+version-comparison artifact, but mixed prefixes can cause real compile or link
+problems. Pin the compiler explicitly when needed:
+
+\begin{lstlisting}[language=bash,caption={Pinning protoc}]
+cmake -S graft-cpp -B graft-cpp/build \
+  -DProtobuf_PROTOC_EXECUTABLE=/opt/local/bin/protoc
+\end{lstlisting}
+
+\subsection{Parity expectations}
+
+C++ should be judged against Java at the Raft behavior boundary:
+
+\begin{itemize}
+\item status values such as \texttt{ACCEPTED}, \texttt{REDIRECT}, \texttt{RETRY}
+and \texttt{INVALID},
+\item vote and append semantics,
+\item snapshot install and restore semantics,
+\item read barrier and read-lease behavior,
+\item joint-consensus majority rules,
+\item membership admission and finalization,
+\item mixed Java/C++ cluster behavior.
+\end{itemize}
+
+Differences in domain examples can be tolerated temporarily. Differences in
+Raft safety semantics should be treated as defects.

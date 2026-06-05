@@ -1,0 +1,80 @@
+\documentclass{techdoc}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{nameref}
+\usepackage{url}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{HTML}{C42043}
+\definecolor{backcolour}{HTML}{F2F2F2}
+
+\lstset{upquote=true}
+\lstdefinestyle{manualstyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{codepurple},
+    numberstyle=\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\footnotesize\ttfamily,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false
+}
+\lstset{style=manualstyle}
+
+\date{\today}
+\title{Raft Library}
+\subtitle{Developer manual}
+\editors{Frode Randers}
+\author{Frode Randers}
+
+\begin{document}
+
+    \rhead{}
+
+    \maketitle
+
+    \vfill
+
+    \newpage
+    \renewcommand\contentsname{Contents}
+    \tableofcontents
+    \newpage
+
+    \input{chapters/introduction.tex}
+    \newpage
+
+    \input{chapters/system-overview.tex}
+    \newpage
+
+    \input{chapters/application-developer.tex}
+    \newpage
+
+    \input{chapters/java-library.tex}
+    \newpage
+
+    \input{chapters/cpp-library.tex}
+    \newpage
+
+    \input{chapters/raft-internals.tex}
+    \newpage
+
+    \input{chapters/wire-storage-snapshots.tex}
+    \newpage
+
+    \input{chapters/testing-and-operations.tex}
+    \newpage
+
+    \input{chapters/appendix-commands.tex}
+    \newpage
+
+\end{document}

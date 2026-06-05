@@ -1,0 +1,67 @@
+\section{Introduction}
+\label{sec:Introduction}
+
+This manual describes the Raft library from two developer viewpoints.
+
+The first viewpoint is the application developer who wants to add cluster
+capability to a domain application. In that role the developer should not need
+to understand every election rule or replication edge case. The important
+questions are where application state enters the replicated log, how reads are
+made safe, how commands and snapshots are encoded, and what the Java and C++
+integration surfaces expect.
+
+The second viewpoint is the Raft machinery developer who maintains the library
+itself. In that role the developer must reason about terms, voting, leader
+state, log matching, snapshots, read leases, joint consensus, wire compatibility
+and cross-language parity. The Java and C++ implementations are intended to be
+functionally equivalent at the Raft boundary even though the language idioms,
+runtime frameworks and internal structure differ.
+
+The library exists to let applications run in a Raft cluster without embedding
+domain knowledge in the consensus machinery. Reference-data distribution is an
+important example: writes are relatively rare and governed, while lookups are
+high-volume and need to happen close to consumers. The same library shape can
+also support other master-data or configuration-data applications where a
+central management path must feed fast replicated lookup state.
+
+\subsection{What this manual covers}
+
+The manual is organized around the boundary between domain application code and
+Raft internals:
+
+\begin{itemize}
+\item Section~\ref{sec:SystemOverview} summarizes the architecture and module layout.
+\item Section~\ref{sec:ApplicationDeveloper} explains how an application uses the library.
+\item Sections~\ref{sec:JavaLibrary} and~\ref{sec:CppLibrary} describe the Java and C++ integration surfaces.
+\item Section~\ref{sec:RaftInternals} explains the consensus machinery for maintainers.
+\item Section~\ref{sec:WireStorageSnapshots} covers protocol, persistence and snapshots.
+\item Section~\ref{sec:TestingAndOperations} explains test strategy and operational checks.
+\end{itemize}
+
+\subsection{Terminology}
+
+This manual uses \emph{application} for the domain-specific code that owns
+business state and command encoding. It uses \emph{Raft machinery} for elections,
+log replication, membership, snapshot metadata, read-safety decisions and
+transport handling. The boundary is deliberate: applications define what a
+command means; Raft decides when that command is committed and safe to apply.
+
+\section{Design intent}
+\label{sec:DesignIntent}
+
+The project should be read as a library project, not as a single reference-data
+product. Reference data is a useful and important application, but the reusable
+asset is the cluster capability:
+
+\begin{itemize}
+\item replicate a deterministic state machine,
+\item preserve safety across leadership changes,
+\item expose typed client command and query requests,
+\item handle cluster membership through replicated configuration entries,
+\item support Java and C++ applications through equivalent protocol behavior.
+\end{itemize}
+
+The Java implementation is the broader implementation surface. The C++
+implementation is developed as a peer implementation and should be brought up to
+the same behavioral maturity where differences affect Raft semantics. Domain
+examples may differ temporarily, but the Raft machinery should not.

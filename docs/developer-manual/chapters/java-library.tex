@@ -1,0 +1,102 @@
+\section{Java Library}
+\label{sec:JavaLibrary}
+
+The Java implementation is a Maven reactor. Application developers normally
+interact with the runtime and state-machine modules rather than constructing
+\texttt{RaftNode} directly.
+
+\subsection{Application integration path}
+
+A Java application should start from:
+
+\begin{itemize}
+\item \texttt{SnapshotStateMachine} or \texttt{QueryableStateMachine} in
+\filepath{raft-state-machine},
+\item \texttt{BasicAdapter} and application module hooks in \filepath{raft-runtime},
+\item a transport factory, normally Netty through \filepath{raft-transport-netty},
+\item storage from \filepath{raft-storage}.
+\end{itemize}
+
+The normal shape is:
+
+\begin{enumerate}
+\item Define application command and query payloads.
+\item Implement the state machine.
+\item Create an adapter or module that supplies that state machine to the runtime.
+\item Configure peers, local identity, storage and transport.
+\item Let the runtime expose client command/query and operational endpoints.
+\end{enumerate}
+
+\subsection{State machine interfaces}
+
+\literalbreak{SnapshotStateMachine} is the minimal contract. It receives committed
+commands and can produce/restore application snapshots. \literalbreak{QueryableStateMachine}
+adds local query support. The result-returning state-machine variant is useful
+when a committed command should return a typed application result, for example
+CAS.
+
+State-machine implementations should be thread-conscious. Raft calls are
+synchronized at the node level where necessary, but application state should
+still avoid exposing mutable internal collections directly.
+
+\subsection{Runtime modules}
+
+\texttt{RaftApplicationModule} separates application packaging from the shared
+runtime. It lets an application declare supported runtime modes, CLI commands
+and an adapter factory. This is where reference-data or other domain packages
+plug into the generic executable.
+
+\texttt{RaftApplicationFactory} creates a runnable adapter for a local peer. It
+receives:
+
+\begin{itemize}
+\item local peer identity,
+\item initially known peers,
+\item optional join seed,
+\item runtime configuration,
+\item timeout settings.
+\end{itemize}
+
+An application should prefer these runtime hooks over direct construction of
+transport and node internals.
+
+\subsection{Policy hooks}
+
+The Java runtime exposes:
+
+\begin{itemize}
+\item \texttt{ClientWriteAdmissionPolicy},
+\item \texttt{ClientCommandAuthenticator},
+\item \texttt{ClientCommandAuthorizer}.
+\end{itemize}
+
+Use these for domain and security decisions before a command enters Raft. Keep
+the policy decisions explicit and testable. Do not hide domain rejection inside a
+state-machine no-op unless that no-op is itself the deterministic domain
+behavior.
+
+\subsection{Storage}
+
+The Java storage layer separates persistent term/vote state from the log store.
+Production deployments should use durable stores. Tests may use the in-memory
+stores, but those stores are not a recovery mechanism.
+
+Cluster configuration is applied from internal replicated entries and is also
+carried in snapshot metadata. Application code should treat configuration as
+Raft-owned state.
+
+\subsection{Javadocs and Maven publishing}
+
+The reactor is configured to attach source and Javadoc jars. The public API
+should therefore keep class and method Javadocs useful for application
+developers. In particular, boundary interfaces should document whether a method
+is application-owned or Raft-owned.
+
+The usual publishing readiness checks are:
+
+\begin{itemize}
+\item \shellcmd{mvn -q test}
+\item \shellcmd{mvn -q -DskipTests package}
+\item verify source and Javadoc jars under module \filepath{target} directories
+\item ensure publishing metadata and signing are configured before Maven Central upload
+\end{itemize}

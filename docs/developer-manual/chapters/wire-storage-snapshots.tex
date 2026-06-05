@@ -1,0 +1,87 @@
+\section{Wire, Storage and Snapshots}
+\label{sec:WireStorageSnapshots}
+
+\subsection{Wire protocol}
+
+All cross-node and client-facing transport uses a shared protobuf schema. The
+transport envelope carries:
+
+\begin{itemize}
+\item correlation id,
+\item term,
+\item message type,
+\item protobuf payload.
+\end{itemize}
+
+Java maps protobuf messages through the \texttt{ProtoMapper}. C++ generates
+protobuf classes from the same schema and uses the same envelope framing. When a
+new message is added, both languages must be updated and mixed smoke coverage
+should be considered.
+
+\subsection{Status vocabulary}
+
+Status strings are part of the cross-language contract. Examples include:
+
+\begin{description}
+\item[\texttt{ACCEPTED}] A client command was accepted after commit/apply.
+\item[\texttt{REDIRECT}] The contacted node is not the leader and can identify a leader.
+\item[\texttt{RETRY}] The request may be retried, commonly after read-barrier failure.
+\item[\texttt{INVALID}] The request payload or operation is invalid.
+\item[\texttt{UNAUTHORIZED}] Authentication or authorization failed.
+\end{description}
+
+Avoid introducing language-specific synonyms. If Java says \texttt{ACCEPTED},
+C++ should not say \texttt{OK} for the same behavior.
+
+\subsection{Persistent state}
+
+Raft persistence includes:
+
+\begin{itemize}
+\item current term,
+\item voted-for candidate,
+\item known leader where applicable,
+\item log entries,
+\item snapshot boundary and metadata,
+\item cluster configuration.
+\end{itemize}
+
+Application state is persisted indirectly by applying committed entries and by
+snapshotting application state. If a node restarts, it must reconstruct both Raft
+metadata and application state consistently.
+
+\subsection{Snapshot wrapping}
+
+Snapshots have two layers:
+
+\begin{description}
+\item[Application payload] Bytes produced by the state machine.
+\item[Raft wrapper] Metadata such as last included index, last included term and
+cluster configuration at that boundary.
+\end{description}
+
+This wrapper is essential for restart and catch-up. A follower receiving a
+snapshot must restore application state and update Raft membership/log boundary
+state consistently.
+
+\subsection{Configuration storage}
+
+Cluster configuration is not an external domain object. It is part of the Raft
+log and snapshot metadata. The application may expose cluster configuration
+through operational APIs, but it should not duplicate configuration as domain
+state unless it is doing so for audit or display.
+
+\subsection{Protocol evolution}
+
+When changing the shared protocol:
+
+\begin{enumerate}
+\item Update the protobuf schema.
+\item Regenerate Java and C++ bindings.
+\item Update Java mapping and C++ mapping/handling.
+\item Add unit tests in both languages where behavior changes.
+\item Add mixed smoke or Jepsen coverage when the change affects cross-language behavior.
+\end{enumerate}
+
+Prefer additive schema changes. If a field meaning changes, document the version
+expectations and test mixed-version behavior before relying on it operationally.

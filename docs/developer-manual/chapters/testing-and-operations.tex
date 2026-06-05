@@ -1,0 +1,106 @@
+\section{Testing and Operations}
+\label{sec:TestingAndOperations}
+
+\subsection{Test layers}
+
+The project uses several layers of verification:
+
+\begin{description}
+\item[Java unit tests] Core election, append, snapshot, membership, read-lease,
+adapter and storage behavior.
+\item[Java transport tests] Netty client/server behavior and response handling.
+\item[C++ unit tests] C++ core, membership, state-machine, snapshot and RPC behavior.
+\item[Mixed smoke tests] Java/C++ interoperability at the shared wire boundary.
+\item[Jepsen] Fault-injection and workload checks for stronger system-level confidence.
+\end{description}
+
+Use the smallest test layer that can prove a change, then add broader tests when
+the change crosses module, language or safety boundaries.
+
+\subsection{Java test workflow}
+
+\begin{lstlisting}[language=bash,caption={Java test workflow}]
+mvn -q test
+mvn -q -DskipJepsenTests=true test
+mvn -q -DskipTests package
+\end{lstlisting}
+
+Unit tests should avoid real Netty resources unless the test is explicitly about
+transport behavior. Use no-op or in-memory transport fakes for Raft core tests so
+older platforms with lower file-descriptor limits do not fail while constructing
+test nodes.
+
+\subsection{C++ test workflow}
+
+\begin{lstlisting}[language=bash,caption={C++ test workflow}]
+cmake -S graft-cpp -B graft-cpp/build
+cmake --build graft-cpp/build
+ctest --test-dir graft-cpp/build --output-on-failure
+\end{lstlisting}
+
+When CMake finds the wrong protobuf tools, pin \texttt{protoc}. If Boost.Asio
+fails around removed standard-library traits, check the C++ compatibility macro
+described in Section~\ref{sec:CppLibrary}.
+
+\subsection{Mixed Java/C++ checks}
+
+The mixed smoke scripts validate that both implementations agree on the shared
+protocol:
+
+\begin{lstlisting}[language=bash,caption={Mixed implementation checks}]
+graft-cpp/run-mixed-smoke.sh
+graft-cpp/run-mixed-smoke-java-leader.sh
+graft-cpp/run-mixed-membership-smoke.sh
+graft-cpp/run-mixed-membership-cpp-leader-smoke.sh
+graft-cpp/run-mixed-snapshot-smoke.sh
+graft-cpp/run-mixed-suite.sh
+\end{lstlisting}
+
+Run these after changing:
+
+\begin{itemize}
+\item protobuf messages,
+\item status strings,
+\item client command/query behavior,
+\item membership behavior,
+\item read-barrier behavior,
+\item snapshot install or snapshot metadata.
+\end{itemize}
+
+\subsection{Jepsen}
+
+Jepsen should be used when a change affects safety under concurrency, failure or
+network partitions. In particular, run or update Jepsen scenarios for:
+
+\begin{itemize}
+\item leader election changes,
+\item commit-index changes,
+\item read-lease/read-barrier changes,
+\item membership changes,
+\item mixed Java/C++ cluster behavior,
+\item client workload semantics such as CAS.
+\end{itemize}
+
+The Jepsen suite is not a replacement for unit tests. It is the system-level
+check that the library still behaves correctly when timing and partitions are
+hostile.
+
+\subsection{Operational notes}
+
+A Raft deployment needs durable per-node storage. Losing local Raft storage can
+lose votes, terms, log entries and membership state. For application developers,
+this means the storage path is part of the cluster deployment contract, even if
+the domain state itself looks like an in-memory hashtable.
+
+Operators should monitor:
+
+\begin{itemize}
+\item current leader,
+\item term,
+\item commit index and last applied index,
+\item follower replication lag,
+\item quorum health,
+\item current and next quorum health during joint consensus,
+\item stuck reconfiguration age,
+\item snapshot install events.
+\end{itemize}

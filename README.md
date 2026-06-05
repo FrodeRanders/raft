@@ -34,6 +34,8 @@ For a concise description of what each module contains, see [docs/module-overvie
 
 For guidance on building domain applications on top of the Java and C++ Raft libraries, see [docs/application-developer-guide.md](docs/application-developer-guide.md).
 
+For a fuller developer manual covering both application integration and internal Raft machinery development, see [docs/developer-manual/raft-developer-manual.tex](docs/developer-manual/raft-developer-manual.tex). A generated PDF is available at [docs/developer-manual/raft-developer-manual.pdf](docs/developer-manual/raft-developer-manual.pdf).
+
 ## Jepsen Validation
 
 The repository now includes a local Jepsen harness, documented in [jepsen/README.md](jepsen/README.md). It complements the classic JUnit/Maven suite by exercising the runnable `raft-dist` node processes under concurrent client load and injected failures.

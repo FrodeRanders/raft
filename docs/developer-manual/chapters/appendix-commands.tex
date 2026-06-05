@@ -1,0 +1,61 @@
+\section{Appendix: Commands and Checklists}
+\label{sec:AppendixCommands}
+
+\subsection{Repository build commands}
+
+\begin{longtable}{p{58mm}p{96mm}}
+\toprule
+Command & Purpose \\
+\midrule
+\shellcmd{mvn -q test} & Run Java tests in the Maven reactor. \\
+\shellcmd{mvn -q -DskipJepsenTests=true test} & Run Java tests while skipping Jepsen integration. \\
+\shellcmd{mvn -q -DskipTests package} & Build packages, source jars and Javadoc jars. \\
+\shellcmd{cmake -S graft-cpp -B graft-cpp/build} & Configure the C++ build. \\
+\shellcmd{cmake --build graft-cpp/build} & Build C++ targets. \\
+\shellcmd{ctest --test-dir graft-cpp/build --output-on-failure} & Run C++ tests. \\
+\shellcmd{graft-cpp/run-mixed-suite.sh} & Run mixed Java/C++ smoke checks. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Application developer checklist}
+
+\begin{enumerate}
+\item Define command and query payload formats.
+\item Implement deterministic command application.
+\item Implement application snapshot and restore.
+\item Decide whether command results are needed.
+\item Decide whether local queries are needed.
+\item Add admission/authentication/authorization policy where appropriate.
+\item Configure durable Raft storage.
+\item Test leader, follower redirect, retry and invalid-payload behavior.
+\item Test restart from log and snapshot.
+\item Test membership changes if the application will operate dynamic clusters.
+\end{enumerate}
+
+\subsection{Raft machinery developer checklist}
+
+\begin{enumerate}
+\item Identify whether the change affects safety, liveness, protocol or packaging only.
+\item Add focused Java and/or C++ unit tests for the affected rule.
+\item Check Java/C++ status vocabulary and response shapes.
+\item Check stable and joint-consensus majority behavior.
+\item Check read-barrier behavior if reads are involved.
+\item Check snapshot metadata and restore behavior if compaction or install is involved.
+\item Run mixed smoke tests for cross-language protocol changes.
+\item Run Jepsen when failures, partitions, membership or linearizable reads are involved.
+\end{enumerate}
+
+\subsection{Common failure interpretations}
+
+\begin{description}
+\item[Leader rejects write] The contacted node may be follower, learner,
+decommissioned or unable to commit.
+\item[Query returns retry] The leader could not refresh a quorum-backed read barrier.
+\item[C++ Boost.Asio result\_of error] Older Boost.Asio was compiled as C++20
+without the compatibility macro.
+\item[Protobuf compiler/library warning] CMake found \texttt{protoc} and
+\texttt{libprotobuf} with version strings that do not compare cleanly, often
+because package manager prefixes differ.
+\item[Mixed smoke status mismatch] Java and C++ disagree at the protocol
+contract. Treat this as a parity defect unless explicitly domain-specific.
+\end{description}
