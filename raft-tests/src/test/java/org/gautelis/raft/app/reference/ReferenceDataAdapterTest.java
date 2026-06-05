@@ -28,7 +28,6 @@ import org.gautelis.raft.protocol.ClientQueryResponse;
 import org.gautelis.raft.protocol.Peer;
 import org.gautelis.raft.storage.InMemoryLogStore;
 import org.gautelis.raft.storage.InMemoryPersistentStateStore;
-import org.gautelis.raft.transport.netty.RaftClient;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -53,16 +52,6 @@ class ReferenceDataAdapterTest {
 
         void set(long now) {
             this.now = now;
-        }
-    }
-
-    static final class NoopRaftClient extends RaftClient {
-        NoopRaftClient() {
-            super("reference-test", null);
-        }
-
-        @Override
-        public void shutdown() {
         }
     }
 
@@ -92,7 +81,7 @@ class ReferenceDataAdapterTest {
         return TestRaftNodeBuilder.forPeer(me)
                 .withPeers(List.of())
                 .withStateMachine(stateMachine)
-                .withClient(new NoopRaftClient())
+                .withClient(new NoopRaftTransportClient())
                 .withLogStore(new InMemoryLogStore())
                 .withPersistentStateStore(new InMemoryPersistentStateStore())
                 .withTimeSource(timeSource)

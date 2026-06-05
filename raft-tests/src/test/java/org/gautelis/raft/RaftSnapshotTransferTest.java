@@ -18,7 +18,6 @@ package org.gautelis.raft;
 
 import org.gautelis.raft.storage.*;
 import org.gautelis.raft.statemachine.*;
-import org.gautelis.raft.transport.netty.*;
 import org.gautelis.raft.serialization.ProtoMapper;
 
 import org.gautelis.raft.protocol.AppendEntriesRequest;
@@ -58,15 +57,11 @@ class RaftSnapshotTransferTest {
         void set(long now) { this.now = now; }
     }
 
-    static final class SnapshotAwareClient extends RaftClient {
+    static final class SnapshotAwareClient extends NoopRaftTransportClient {
         private final AtomicInteger appendCalls = new AtomicInteger();
         private final AtomicInteger snapshotCalls = new AtomicInteger();
         private final AtomicReference<InstallSnapshotRequest> lastSnapshotRequest = new AtomicReference<>();
         private final List<InstallSnapshotRequest> snapshotRequests = new ArrayList<>();
-
-        SnapshotAwareClient() {
-            super("test", null);
-        }
 
         @Override
         public java.util.concurrent.CompletableFuture<List<VoteResponse>> requestVoteFromAll(java.util.Collection<Peer> peers, VoteRequest req) {
@@ -94,10 +89,6 @@ class RaftSnapshotTransferTest {
             return CompletableFuture.completedFuture(new InstallSnapshotResponse(req.getTerm(), peer.getId(), true, req.getLastIncludedIndex()));
         }
 
-        @Override
-        public void shutdown() {
-            // no-op for test
-        }
     }
 
     private static RaftNode newLeaderNode(

@@ -20,7 +20,7 @@ import org.gautelis.raft.protocol.Peer;
 import org.gautelis.raft.protocol.VoteRequest;
 import org.gautelis.raft.protocol.VoteResponse;
 import org.gautelis.raft.storage.InMemoryLogStore;
-import org.gautelis.raft.transport.netty.RaftClient;
+import org.gautelis.raft.transport.RaftTransportClient;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -44,7 +44,7 @@ class RaftConfigurationReplicationTest {
     private static RaftNode newTestNode(
             Peer me,
             List<Peer> peers,
-            RaftClient raftClient,
+            RaftTransportClient raftClient,
             InMemoryLogStore logStore,
             RaftNode.TimeSource timeSource,
             int randomSeed

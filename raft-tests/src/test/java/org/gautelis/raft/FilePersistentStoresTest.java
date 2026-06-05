@@ -18,7 +18,7 @@ package org.gautelis.raft;
 
 import org.gautelis.raft.storage.*;
 import org.gautelis.raft.statemachine.*;
-import org.gautelis.raft.transport.netty.*;
+import org.gautelis.raft.transport.RaftTransportClient;
 import org.gautelis.raft.serialization.ProtoMapper;
 
 import org.gautelis.raft.protocol.AppendEntriesRequest;
@@ -44,15 +44,7 @@ class FilePersistentStoresTest {
         System.out.println("TC: " + message);
     }
 
-    static class NoopRaftClient extends RaftClient {
-        NoopRaftClient() {
-            super("test", null);
-        }
-
-        @Override
-        public void shutdown() {
-            // no-op
-        }
+    static class NoopRaftClient extends NoopRaftTransportClient {
     }
 
     private static Peer peer(String id) {
@@ -62,7 +54,7 @@ class FilePersistentStoresTest {
     private static RaftNode newPersistentTestNode(
             Peer me,
             List<Peer> peers,
-            RaftClient raftClient,
+            RaftTransportClient raftClient,
             LogStore logStore,
             PersistentStateStore persistentStateStore,
             RaftNode.TimeSource timeSource,

@@ -19,7 +19,6 @@ package org.gautelis.raft;
 import org.gautelis.raft.storage.*;
 import org.gautelis.raft.statemachine.*;
 import org.gautelis.raft.transport.RaftTransportClient;
-import org.gautelis.raft.transport.netty.*;
 import org.gautelis.raft.serialization.ProtoMapper;
 
 import org.apache.logging.log4j.LogManager;
@@ -65,13 +64,12 @@ class RaftNodeElectionTest {
     /**
      * In-memory "network": a RaftClient implementation that .
      */
-    static class QueuedRaftClient extends RaftClient {
+    static class QueuedRaftClient extends NoopRaftTransportClient {
         private final String selfId;
         private final Map<String, RaftNode> nodesById;
         private final Queue<Runnable> queue = new ArrayDeque<>();
 
         QueuedRaftClient(String selfId, Map<String, RaftNode> nodesById) {
-            super("test", null);
             this.selfId = selfId;
             this.nodesById = nodesById;
         }
@@ -122,7 +120,6 @@ class RaftNodeElectionTest {
             return future;
         }
 
-        @Override
         public java.util.concurrent.CompletableFuture<Boolean> sendMessage(Peer peer, String type, byte[] payload) {
             java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
             queue.add(() -> {

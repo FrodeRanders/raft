@@ -18,7 +18,6 @@ package org.gautelis.raft;
 
 import org.gautelis.raft.storage.*;
 import org.gautelis.raft.statemachine.*;
-import org.gautelis.raft.transport.netty.*;
 import org.gautelis.raft.serialization.ProtoMapper;
 
 import org.gautelis.raft.protocol.AppendEntriesRequest;
@@ -46,15 +45,7 @@ class RaftSnapshotStateMachineTest {
         System.out.println("TC: " + message);
     }
 
-    static class NoopRaftClient extends RaftClient {
-        NoopRaftClient() {
-            super("test", null);
-        }
-
-        @Override
-        public void shutdown() {
-            // no-op in tests
-        }
+    static class NoopRaftClient extends NoopRaftTransportClient {
     }
 
     static class CapturingStateMachine implements SnapshotStateMachine {

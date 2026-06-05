@@ -44,12 +44,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RaftMessageHandlerTest {
     private static final Logger log = LoggerFactory.getLogger(RaftMessageHandlerTest.class);
 
-    static class NoopRaftClient extends RaftClient {
-        NoopRaftClient() {
-            super("test", null);
-        }
-    }
-
     static class CapturingMessageHandler implements MessageHandler {
         String correlationId;
         String type;
@@ -69,7 +63,7 @@ class RaftMessageHandlerTest {
                 .withTimeoutMillis(100)
                 .withMessageHandler(messageHandler)
                 .withStateMachine(null)
-                .withClient(new NoopRaftClient())
+                .withClient(new NoopRaftTransportClient())
                 .withLogStore(new InMemoryLogStore())
                 .build();
     }

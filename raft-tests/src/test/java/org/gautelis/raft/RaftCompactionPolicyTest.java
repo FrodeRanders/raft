@@ -20,7 +20,7 @@ import org.gautelis.raft.protocol.VoteRequest;
 import org.gautelis.raft.protocol.VoteResponse;
 import org.gautelis.raft.storage.*;
 import org.gautelis.raft.statemachine.*;
-import org.gautelis.raft.transport.netty.*;
+import org.gautelis.raft.transport.RaftTransportClient;
 import org.gautelis.raft.serialization.ProtoMapper;
 
 import org.gautelis.raft.protocol.AppendEntriesRequest;
@@ -48,15 +48,7 @@ class RaftCompactionPolicyTest {
         System.out.println("TC: " + message);
     }
 
-    static class NoopRaftClient extends RaftClient {
-        NoopRaftClient() {
-            super("test", null);
-        }
-
-        @Override
-        public void shutdown() {
-            // no-op in tests
-        }
+    static class NoopRaftClient extends NoopRaftTransportClient {
     }
 
     static class SnapshottingStateMachine implements SnapshotStateMachine {
@@ -82,7 +74,7 @@ class RaftCompactionPolicyTest {
             Peer me,
             List<Peer> peers,
             SnapshotStateMachine stateMachine,
-            RaftClient raftClient,
+            RaftTransportClient raftClient,
             LogStore logStore,
             RaftNode.TimeSource timeSource,
             int randomSeed

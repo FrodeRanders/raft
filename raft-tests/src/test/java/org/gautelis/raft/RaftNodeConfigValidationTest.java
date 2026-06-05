@@ -18,7 +18,6 @@ package org.gautelis.raft;
 
 import org.gautelis.raft.storage.*;
 import org.gautelis.raft.statemachine.*;
-import org.gautelis.raft.transport.netty.*;
 import org.gautelis.raft.serialization.ProtoMapper;
 
 import org.gautelis.raft.protocol.Peer;
@@ -42,20 +41,9 @@ class RaftNodeConfigValidationTest {
         System.out.println("TC: " + message);
     }
 
-    static class NoopRaftClient extends RaftClient {
-        NoopRaftClient() {
-            super("test", null);
-        }
-
-        @Override
-        public void shutdown() {
-            // no-op for tests
-        }
-    }
-
     private static TestRaftNodeBuilder nodeBuilder(Peer me) {
         return TestRaftNodeBuilder.forPeer(me)
-                .withClient(new NoopRaftClient())
+                .withClient(new NoopRaftTransportClient())
                 .withLogStore(new InMemoryLogStore())
                 .withPersistentStateStore(new InMemoryPersistentStateStore())
                 .withRandom(new Random(1));

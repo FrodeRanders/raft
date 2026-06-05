@@ -19,10 +19,10 @@ package org.gautelis.raft;
 import org.gautelis.raft.app.kv.KeyValueStateMachine;
 import org.gautelis.raft.storage.*;
 import org.gautelis.raft.statemachine.*;
-import org.gautelis.raft.transport.netty.*;
 import org.gautelis.raft.serialization.ProtoMapper;
 import org.gautelis.raft.app.reference.ReferenceDataCommand;
 import org.gautelis.raft.app.reference.ReferenceDataStateMachine;
+import org.gautelis.raft.transport.RaftTransportClient;
 
 import org.gautelis.raft.protocol.ClientCommandRequest;
 import org.gautelis.raft.protocol.ClientCommandResponse;
@@ -83,15 +83,7 @@ class BasicAdapterCommandTest {
         void set(long now) { this.now = now; }
     }
 
-    static class NoopRaftClient extends RaftClient {
-        NoopRaftClient() {
-            super("test", null);
-        }
-
-        @Override
-        public void shutdown() {
-            // no-op in tests
-        }
+    static class NoopRaftClient extends NoopRaftTransportClient {
     }
 
     static final class ImmediateRaftClient extends NoopRaftClient {
@@ -259,7 +251,7 @@ class BasicAdapterCommandTest {
             Peer me,
             List<Peer> peers,
             SnapshotStateMachine stateMachine,
-            RaftClient raftClient,
+            RaftTransportClient raftClient,
             LogStore logStore,
             PersistentStateStore persistentStateStore,
             RaftNode.TimeSource timeSource,
@@ -280,7 +272,7 @@ class BasicAdapterCommandTest {
             Peer me,
             List<Peer> peers,
             SnapshotStateMachine stateMachine,
-            RaftClient raftClient,
+            RaftTransportClient raftClient,
             RaftNode.TimeSource timeSource,
             int randomSeed
     ) {
@@ -301,7 +293,7 @@ class BasicAdapterCommandTest {
             List<Peer> peers,
             MessageHandler messageHandler,
             SnapshotStateMachine stateMachine,
-            RaftClient raftClient,
+            RaftTransportClient raftClient,
             RaftNode.TimeSource timeSource,
             int randomSeed
     ) {

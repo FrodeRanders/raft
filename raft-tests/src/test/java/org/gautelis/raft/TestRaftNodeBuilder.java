@@ -24,7 +24,6 @@ import org.gautelis.raft.storage.InMemoryPersistentStateStore;
 import org.gautelis.raft.storage.LogStore;
 import org.gautelis.raft.storage.PersistentStateStore;
 import org.gautelis.raft.transport.RaftTransportClient;
-import org.gautelis.raft.transport.netty.RaftClient;
 
 import java.util.List;
 import java.util.Random;
@@ -38,7 +37,7 @@ final class TestRaftNodeBuilder {
     private long timeoutMillis = 100L;
     private MessageHandler messageHandler;
     private SnapshotStateMachine snapshotStateMachine = new KeyValueStateMachine();
-    private RaftTransportClient raftClient = new NoopRaftClient();
+    private RaftTransportClient raftClient = new NoopRaftTransportClient();
     private LogStore logStore = new InMemoryLogStore();
     private PersistentStateStore persistentStateStore = new InMemoryPersistentStateStore();
     private RaftNode.TimeSource timeSource = System::currentTimeMillis;
@@ -111,14 +110,4 @@ final class TestRaftNodeBuilder {
                 .build();
     }
 
-    private static final class NoopRaftClient extends RaftClient {
-        private NoopRaftClient() {
-            super("test-builder", null);
-        }
-
-        @Override
-        public void shutdown() {
-            // no-op in tests
-        }
-    }
 }

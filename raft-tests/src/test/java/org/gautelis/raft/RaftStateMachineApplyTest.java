@@ -18,7 +18,6 @@ package org.gautelis.raft;
 
 import org.gautelis.raft.storage.*;
 import org.gautelis.raft.statemachine.*;
-import org.gautelis.raft.transport.netty.*;
 import org.gautelis.raft.serialization.ProtoMapper;
 
 import org.gautelis.raft.protocol.AppendEntriesRequest;
@@ -39,17 +38,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RaftStateMachineApplyTest {
     private static final Logger log = LoggerFactory.getLogger(RaftStateMachineApplyTest.class);
 
-    static class NoopRaftClient extends RaftClient {
-        NoopRaftClient() {
-            super("test", null);
-        }
-
-        @Override
-        public void shutdown() {
-            // no-op in tests
-        }
-    }
-
     private static Peer peer(String id) {
         return new Peer(id, null);
     }
@@ -59,7 +47,7 @@ class RaftStateMachineApplyTest {
                 .withPeers(peers)
                 .withTimeoutMillis(100)
                 .withStateMachine(new CommandHandlerStateMachineAdapter(commandHandler))
-                .withClient(new NoopRaftClient())
+                .withClient(new NoopRaftTransportClient())
                 .withLogStore(new InMemoryLogStore())
                 .withPersistentStateStore(new InMemoryPersistentStateStore())
                 .withTimeSource(System::currentTimeMillis)
