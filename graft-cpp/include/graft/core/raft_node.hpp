@@ -203,25 +203,6 @@ namespace graft {
         Role role() const;
 
     private:
-        static void append_u32_be(std::string &out, std::uint32_t value);
-
-        static void append_u16_be(std::string &out, std::uint16_t value);
-
-        static bool read_u32_be(const std::string &data, std::size_t &offset, std::uint32_t &value);
-
-        static bool read_u16_be(const std::string &data, std::size_t &offset, std::uint16_t &value);
-
-        static std::string base64_encode(std::string_view input);
-
-        static std::optional<std::string> base64_decode(std::string_view input);
-
-        static std::string quote_json(std::string_view value);
-
-        static std::string unwrap_snapshot_payload(const std::string &payload);
-
-        static std::string serialize_state_machine_snapshot_locked(
-            const std::unordered_map<std::string, std::string> &applied_kv);
-
         std::string wrap_snapshot_payload_locked(const std::string &state_machine_snapshot) const;
 
         void apply_snapshot_to_state_machine_locked();
