@@ -21,8 +21,19 @@ package org.gautelis.raft.bootstrap;
  */
 @FunctionalInterface
 public interface ClientCommandAuthorizer {
+    /**
+     * Authorizes a client command after authentication and before Raft submission.
+     *
+     * @param context authorization context
+     * @return authorization result
+     */
     ClientCommandAuthorizationResult authorize(ClientCommandAuthorizationContext context);
 
+    /**
+     * Creates an authorizer that allows every command.
+     *
+     * @return permissive authorizer
+     */
     static ClientCommandAuthorizer allowAll() {
         return context -> ClientCommandAuthorizationResult.allow();
     }

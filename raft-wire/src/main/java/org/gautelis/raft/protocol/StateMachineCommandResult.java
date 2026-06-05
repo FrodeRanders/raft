@@ -24,6 +24,9 @@ import java.util.Optional;
  * Encodes and decodes typed command results returned after a write has committed and applied.
  */
 public final class StateMachineCommandResult {
+    /**
+     * Supported write-result variants for key-value commands.
+     */
     public enum Type {
         CAS
     }

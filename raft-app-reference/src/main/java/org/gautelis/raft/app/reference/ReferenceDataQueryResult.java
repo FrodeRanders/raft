@@ -28,6 +28,12 @@ import java.util.Optional;
  * Query result payloads for the reference-data application.
  */
 public final class ReferenceDataQueryResult {
+    /**
+     * Read-model view of one product variant.
+     *
+     * @param variantId stable variant identifier
+     * @param variantName display name for the variant
+     */
     public record VariantView(String variantId, String variantName) {
     }
 

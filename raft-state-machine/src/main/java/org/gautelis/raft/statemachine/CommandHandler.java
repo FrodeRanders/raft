@@ -20,5 +20,11 @@ package org.gautelis.raft.statemachine;
  * Handles committed write commands for simple state machines that do not need snapshots directly.
  */
 public interface CommandHandler {
+    /**
+     * Handles one committed application command.
+     *
+     * @param myTerm Raft term of the committed log entry
+     * @param command application command bytes
+     */
     void handle(long myTerm, byte[] command);
 }

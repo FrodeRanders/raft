@@ -50,6 +50,9 @@ import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Command-line probe for exercising C++ Raft peers with Java wire messages.
+ */
 public final class InteropProbe {
     private InteropProbe() {
     }

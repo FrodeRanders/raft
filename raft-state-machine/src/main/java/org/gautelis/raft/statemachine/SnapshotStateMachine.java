@@ -17,10 +17,42 @@
 package org.gautelis.raft.statemachine;
 
 /**
- * Defines the state-machine contract RaftNode uses for applying commands and snapshots.
+ * Defines the application state-machine contract used by a Raft node.
+ *
+ * <p>Implementations own only domain/application state. Raft owns log replication,
+ * membership, terms, votes, commit tracking, and snapshot wrapping. The bytes passed to
+ * and returned from this interface are application-owned payloads.</p>
  */
 public interface SnapshotStateMachine {
+    /**
+     * Applies one committed application command.
+     *
+     * <p>Raft calls this method only after the command has been committed. Implementations
+     * should be deterministic: every replica that applies the same command at the same log
+     * position must reach the same state.</p>
+     *
+     * @param term Raft term of the committed log entry
+     * @param command application command bytes
+     */
     void apply(long term, byte[] command);
+
+    /**
+     * Creates an application snapshot.
+     *
+     * <p>The returned bytes must contain only domain state. Raft wraps these bytes with
+     * its own metadata, including cluster configuration at the snapshot boundary.</p>
+     *
+     * @return encoded application snapshot bytes
+     */
     byte[] snapshot();
+
+    /**
+     * Restores application state from a previously produced application snapshot.
+     *
+     * <p>The input is already unwrapped by Raft. It does not include Raft membership or
+     * log metadata.</p>
+     *
+     * @param snapshotData encoded application snapshot bytes
+     */
     void restore(byte[] snapshotData);
 }

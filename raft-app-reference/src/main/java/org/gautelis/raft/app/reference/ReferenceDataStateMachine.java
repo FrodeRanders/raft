@@ -33,9 +33,22 @@ import java.util.Map;
  * Simple aggregate-oriented reference-data state machine with products and nested variants.
  */
 public class ReferenceDataStateMachine implements QueryableStateMachine {
+    /**
+     * Domain value for one product variant.
+     *
+     * @param variantId stable variant identifier
+     * @param variantName display name for the variant
+     */
     public record Variant(String variantId, String variantName) {
     }
 
+    /**
+     * Domain value for a product and its known variants.
+     *
+     * @param productId stable product identifier
+     * @param productName display name for the product
+     * @param variants variants keyed by variant identifier
+     */
     public record Product(String productId, String productName, Map<String, Variant> variants) {
         public Product {
             variants = Collections.unmodifiableMap(new LinkedHashMap<>(variants));

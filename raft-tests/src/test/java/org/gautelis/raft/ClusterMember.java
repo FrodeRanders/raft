@@ -31,6 +31,9 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
+/**
+ * Test cluster member adapter used by integration-style Raft tests.
+ */
 public class ClusterMember extends BasicAdapter {
     protected static final Logger log = LoggerFactory.getLogger(ClusterMember.class);
 

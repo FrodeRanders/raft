@@ -25,5 +25,15 @@ import java.util.List;
  */
 @FunctionalInterface
 public interface RaftApplicationFactory {
+    /**
+     * Creates a runtime adapter for one local peer.
+     *
+     * @param timeoutMillis election timeout base in milliseconds
+     * @param me local peer descriptor
+     * @param peers initially known peers
+     * @param joinSeed optional seed peer for join mode
+     * @param configuration runtime configuration
+     * @return runnable adapter for the application
+     */
     BasicAdapter create(long timeoutMillis, Peer me, List<Peer> peers, Peer joinSeed, RuntimeConfiguration configuration);
 }

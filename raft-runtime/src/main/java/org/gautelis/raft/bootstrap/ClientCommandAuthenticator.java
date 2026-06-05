@@ -21,8 +21,26 @@ package org.gautelis.raft.bootstrap;
  */
 @FunctionalInterface
 public interface ClientCommandAuthenticator {
+    /**
+     * Authenticates a client command request.
+     *
+     * @param context authentication context
+     * @return authentication result
+     */
     ClientCommandAuthenticationResult authenticate(ClientCommandAuthenticationContext context);
 
+    /**
+     * Convenience adapter for older call sites that pass authentication fields separately.
+     *
+     * @param requesterId requester identity from the request
+     * @param authenticationScheme authentication scheme
+     * @param authenticationToken authentication token
+     * @param localPeer local peer
+     * @param localMemberRole local membership role
+     * @param leader whether the local peer is leader
+     * @param decommissioned whether the local peer is decommissioned
+     * @return authentication result
+     */
     default ClientCommandAuthenticationResult authenticate(String requesterId, String authenticationScheme, String authenticationToken,
                                                            org.gautelis.raft.protocol.Peer localPeer,
                                                            org.gautelis.raft.protocol.Peer.Role localMemberRole,
@@ -39,6 +57,11 @@ public interface ClientCommandAuthenticator {
         ));
     }
 
+    /**
+     * Creates an authenticator that accepts every request and maps it to a default principal.
+     *
+     * @return permissive authenticator
+     */
     static ClientCommandAuthenticator none() {
         return context -> ClientCommandAuthenticationResult.authenticated(
                 new AuthenticatedPrincipal(

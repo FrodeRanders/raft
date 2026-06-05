@@ -20,5 +20,15 @@ package org.gautelis.raft.statemachine;
  * Extends a snapshot state machine with typed read/query support.
  */
 public interface QueryableStateMachine extends SnapshotStateMachine {
+    /**
+     * Executes an application read query against local state.
+     *
+     * <p>The Raft runtime is responsible for leader checks, read leases, and read
+     * barriers before calling this method. Implementations should not contact peers
+     * or make quorum decisions.</p>
+     *
+     * @param request application query bytes
+     * @return encoded application query result, or an empty array when unsupported
+     */
     byte[] query(byte[] request);
 }

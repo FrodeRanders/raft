@@ -25,6 +25,9 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Starts a Java key-value Raft peer for mixed Java/C++ interoperability tests.
+ */
 public final class JavaPeerMain {
     private JavaPeerMain() {
     }

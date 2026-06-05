@@ -24,6 +24,9 @@ import java.util.Optional;
  * Encodes and decodes typed query results returned by a queryable state machine.
  */
 public final class StateMachineQueryResult {
+    /**
+     * Supported query-result variants for key-value reads.
+     */
     public enum Type {
         GET
     }

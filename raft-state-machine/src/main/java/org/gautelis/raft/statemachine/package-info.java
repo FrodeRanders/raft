@@ -14,18 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.gautelis.raft.bootstrap;
-
 /**
- * Adapter-level request admission policy for client write requests.
+ * Application state-machine contracts used by the Raft core.
+ *
+ * <p>Implementations receive committed write commands, produce application snapshot
+ * bytes, restore those bytes, and optionally answer local read queries after the Raft
+ * runtime has established the required read safety. The byte payloads are deliberately
+ * opaque to Raft so each application can choose its own command and snapshot encoding.</p>
  */
-@FunctionalInterface
-public interface ClientWriteAdmissionPolicy {
-    /**
-     * Decides whether a client write should be admitted before it is submitted to Raft.
-     *
-     * @param context write-admission context
-     * @return admission decision
-     */
-    ClientWriteAdmissionDecision evaluate(ClientWriteAdmissionContext context);
-}
+package org.gautelis.raft.statemachine;

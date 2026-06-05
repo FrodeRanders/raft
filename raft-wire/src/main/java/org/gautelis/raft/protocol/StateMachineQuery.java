@@ -23,6 +23,9 @@ import java.util.Optional;
  * Encodes and decodes the typed read queries understood by the demo state machine.
  */
 public final class StateMachineQuery {
+    /**
+     * Supported read query variants for the key-value demo state machine.
+     */
     public enum Type {
         GET
     }

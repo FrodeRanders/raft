@@ -27,6 +27,9 @@ import java.util.Optional;
  * Typed reference-data commands replicated through the Raft log.
  */
 public final class ReferenceDataCommand {
+    /**
+     * Supported reference-data write operations.
+     */
     public enum Type {
         UPSERT_PRODUCT,
         REMOVE_PRODUCT,

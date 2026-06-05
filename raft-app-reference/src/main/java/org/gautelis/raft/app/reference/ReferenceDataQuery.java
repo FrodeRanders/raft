@@ -27,6 +27,9 @@ import java.util.Optional;
  * Typed queries for the reference-data application.
  */
 public final class ReferenceDataQuery {
+    /**
+     * Supported reference-data read queries.
+     */
     public enum Type {
         VARIANTS_FOR_PRODUCT
     }

@@ -22,6 +22,9 @@ import org.gautelis.raft.transport.RaftTransportClient;
 import org.gautelis.raft.transport.RaftTransportFactory;
 import org.gautelis.raft.transport.RaftTransportServer;
 
+/**
+ * Creates Netty-backed Raft transport clients and servers.
+ */
 public final class NettyTransportFactory implements RaftTransportFactory {
     @Override
     public RaftTransportClient createClient(String localPeerId, MessageHandler messageHandler) {

@@ -24,6 +24,9 @@ import java.util.Optional;
  * Encodes and decodes the typed write commands understood by the demo state machine.
  */
 public final class StateMachineCommand {
+    /**
+     * Supported write command variants for the key-value demo state machine.
+     */
     public enum Type {
         PUT,
         CAS,

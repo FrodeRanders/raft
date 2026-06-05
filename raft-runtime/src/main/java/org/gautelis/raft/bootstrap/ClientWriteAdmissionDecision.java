@@ -20,6 +20,9 @@ package org.gautelis.raft.bootstrap;
  * Result of the adapter-level write admission decision.
  */
 public record ClientWriteAdmissionDecision(Action action, String status, String message) {
+    /**
+     * Admission outcomes available to the adapter before a write enters Raft.
+     */
     public enum Action {
         ACCEPT,
         REDIRECT,

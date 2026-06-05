@@ -790,6 +790,12 @@ public class RaftNode {
         return submitCommandWithResult(command).success();
     }
 
+    /**
+     * Result of appending, committing, and applying a client command.
+     *
+     * @param success whether the command was accepted by the leader and committed
+     * @param result application-specific command result bytes
+     */
     public record CommandApplication(boolean success, byte[] result) {
         public CommandApplication {
             result = result == null ? new byte[0] : result.clone();

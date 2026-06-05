@@ -14,18 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.gautelis.raft.bootstrap;
-
 /**
- * Adapter-level request admission policy for client write requests.
+ * Runtime bootstrap APIs for applications that embed the Raft library.
+ *
+ * <p>Application modules use this package to declare CLI commands, create runtime
+ * adapters, and plug in admission, authentication, and authorization policy around
+ * client writes. Raft still owns consensus, membership, durable log handling, and
+ * read safety; the application owns how domain commands and queries are encoded and
+ * interpreted.</p>
  */
-@FunctionalInterface
-public interface ClientWriteAdmissionPolicy {
-    /**
-     * Decides whether a client write should be admitted before it is submitted to Raft.
-     *
-     * @param context write-admission context
-     * @return admission decision
-     */
-    ClientWriteAdmissionDecision evaluate(ClientWriteAdmissionContext context);
-}
+package org.gautelis.raft.bootstrap;
