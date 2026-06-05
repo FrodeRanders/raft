@@ -132,6 +132,23 @@ Prerequisites:
 - Boost.Asio / Boost.System
 - Catch2 v3 for the C++ unit test target
 
+The C++ code intentionally requires C++20. Older Boost.Asio releases can still
+refer to `std::result_of`, which was removed from C++20. The CMake build defines
+`BOOST_ASIO_DISABLE_STD_RESULT_OF` for the transport target so those Boost
+versions use Asio's fallback trait instead.
+
+If CMake warns that the protobuf compiler version does not match the protobuf
+library version, make sure `protoc` and `libprotobuf` come from the same package
+manager prefix. For example, point CMake at the intended compiler explicitly:
+
+```text
+cmake -S graft-cpp -B graft-cpp/build \
+  -DProtobuf_PROTOC_EXECUTABLE=/opt/local/bin/protoc
+```
+
+With Homebrew, the corresponding path is usually under `/opt/homebrew/bin` on
+Apple silicon and `/usr/local/bin` on Intel Macs.
+
 Build from the repository root:
 
 ```text

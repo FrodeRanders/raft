@@ -69,6 +69,7 @@ target_link_libraries(graft_transport PUBLIC
 
 target_compile_definitions(graft_transport PUBLIC
     BOOST_ERROR_CODE_HEADER_ONLY
+    BOOST_ASIO_DISABLE_STD_RESULT_OF
 )
 
 add_executable(graft_smoke
