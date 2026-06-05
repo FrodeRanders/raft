@@ -17,6 +17,7 @@
 
 #include "graft/core/raft_node.hpp"
 
+#include "graft/core/key_value_state_machine.hpp"
 #include "graft/core/snapshot_codec.hpp"
 
 #include <algorithm>
@@ -817,51 +818,7 @@ namespace graft {
         if (!command.ParseFromString(data)) {
             return {};
         }
-
-        switch (command.command_case()) {
-            case raft::StateMachineCommand::kPut:
-                applied_kv_[command.put().key()] = command.put().value();
-                return {};
-            case raft::StateMachineCommand::kDelete:
-                applied_kv_.erase(command.delete_().key());
-                return {};
-            case raft::StateMachineCommand::kClear:
-                applied_kv_.clear();
-                return {};
-            case raft::StateMachineCommand::kCas: {
-                const auto &cas = command.cas();
-                const auto found = applied_kv_.find(cas.key());
-                const bool present = found != applied_kv_.end();
-                const bool matched = present == cas.expected_present() &&
-                                     (!present || found->second == cas.expected_value());
-                bool current_present = present;
-                std::string current_value = present ? found->second : "";
-                if (matched) {
-                    applied_kv_[cas.key()] = cas.new_value();
-                    current_present = true;
-                    current_value = cas.new_value();
-                }
-
-                raft::StateMachineCommandResult result;
-                auto *cas_result = result.mutable_cas();
-                cas_result->set_key(cas.key());
-                cas_result->set_expected_present(cas.expected_present());
-                cas_result->set_expected_value(cas.expected_value());
-                cas_result->set_new_value(cas.new_value());
-                cas_result->set_matched(matched);
-                cas_result->set_current_present(current_present);
-                cas_result->set_current_value(current_value);
-
-                std::string encoded;
-                if (!result.SerializeToString(&encoded)) {
-                    throw std::runtime_error("failed to serialize StateMachineCommandResult");
-                }
-                return encoded;
-            }
-            case raft::StateMachineCommand::COMMAND_NOT_SET:
-                return {};
-        }
-        return {};
+        return KeyValueStateMachine::apply_command(applied_kv_, command);
     }
 
     std::optional<raft::InternalRaftCommand> RaftNode::parse_internal_command_locked(const std::string &data) const {

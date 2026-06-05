@@ -1,0 +1,81 @@
+/*
+ * Copyright (C) 2026 Frode Randers
+ * All rights reserved
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include "graft/core/key_value_state_machine.hpp"
+
+#include <stdexcept>
+
+namespace graft {
+    std::string KeyValueStateMachine::apply_command(Store &store, const raft::StateMachineCommand &command) {
+        switch (command.command_case()) {
+            case raft::StateMachineCommand::kPut:
+                store[command.put().key()] = command.put().value();
+                return {};
+            case raft::StateMachineCommand::kDelete:
+                store.erase(command.delete_().key());
+                return {};
+            case raft::StateMachineCommand::kClear:
+                store.clear();
+                return {};
+            case raft::StateMachineCommand::kCas: {
+                const auto &cas = command.cas();
+                const auto found = store.find(cas.key());
+                const bool present = found != store.end();
+                const bool matched = present == cas.expected_present() &&
+                                     (!present || found->second == cas.expected_value());
+                bool current_present = present;
+                std::string current_value = present ? found->second : "";
+                if (matched) {
+                    store[cas.key()] = cas.new_value();
+                    current_present = true;
+                    current_value = cas.new_value();
+                }
+
+                raft::StateMachineCommandResult result;
+                auto *cas_result = result.mutable_cas();
+                cas_result->set_key(cas.key());
+                cas_result->set_expected_present(cas.expected_present());
+                cas_result->set_expected_value(cas.expected_value());
+                cas_result->set_new_value(cas.new_value());
+                cas_result->set_matched(matched);
+                cas_result->set_current_present(current_present);
+                cas_result->set_current_value(current_value);
+
+                std::string encoded;
+                if (!result.SerializeToString(&encoded)) {
+                    throw std::runtime_error("failed to serialize StateMachineCommandResult");
+                }
+                return encoded;
+            }
+            case raft::StateMachineCommand::COMMAND_NOT_SET:
+                return {};
+        }
+        return {};
+    }
+
+    raft::StateMachineQueryResult KeyValueStateMachine::get(const Store &store, const std::string &key) {
+        raft::StateMachineQueryResult result;
+        auto *get = result.mutable_get();
+        get->set_key(key);
+        const auto found = store.find(key);
+        get->set_found(found != store.end());
+        if (found != store.end()) {
+            get->set_value(found->second);
+        }
+        return result;
+    }
+} // namespace graft

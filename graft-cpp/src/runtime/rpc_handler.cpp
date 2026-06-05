@@ -1,5 +1,7 @@
 #include "graft/runtime/rpc_handler.hpp"
 
+#include "graft/core/key_value_state_machine.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -520,17 +522,7 @@ namespace graft {
             }
         }
 
-        raft::StateMachineQueryResult result;
-        auto *get = result.mutable_get();
-        get->set_key(query.get().key());
-        const auto applied = node_->applied_kv();
-        const auto found = applied.find(query.get().key());
-        if (found != applied.end()) {
-            get->set_found(true);
-            get->set_value(found->second);
-        } else {
-            get->set_found(false);
-        }
+        const auto result = KeyValueStateMachine::get(node_->applied_kv(), query.get().key());
 
         response.set_success(true);
         response.set_status("OK");
