@@ -35,12 +35,26 @@ import java.util.TreeMap;
 
 /**
  * Demo key-value application state machine kept outside the generic Raft runtime layer.
+ *
+ * Walkthrough for application developers:
+ * 1. Client code encodes a domain command or query as bytes.
+ * 2. The Raft runtime handles leader redirects, authorization hooks, log append, replication, commit,
+ *    read barriers, snapshots, and membership. None of that is implemented here.
+ * 3. After a write is committed, Raft calls apply/applyWithResult with the command bytes.
+ * 4. After Raft has established that a read is safe, it calls query with the query bytes.
+ * 5. During compaction/recovery, Raft wraps this application's snapshot bytes with cluster metadata;
+ *    this class only sees its own key/value snapshot.
+ *
+ * The important boundary is that this class owns only domain state. It must not store Raft cluster
+ * membership, terms, votes, peer progress, or other consensus metadata.
  */
 public class KeyValueStateMachine implements QueryableStateMachine, ResultSnapshotStateMachine {
     private final Map<String, String> values = new HashMap<>();
 
     @Override
     public synchronized void apply(long term, byte[] command) {
+        // Raft calls this only for committed log entries. The term is available for auditing/debugging,
+        // but the application should not make consensus decisions from it.
         applyWithResult(term, command);
     }
 
@@ -54,6 +68,8 @@ public class KeyValueStateMachine implements QueryableStateMachine, ResultSnapsh
             return new byte[0];
         }
         StateMachineCommand decoded = parsed.get();
+        // These are demo application commands, not Raft commands. Membership changes are carried as
+        // internal Raft log entries and are consumed by Raft before application apply is invoked.
         return switch (decoded.getType()) {
             case PUT -> {
                 values.put(decoded.getKey(), decoded.getValue());
@@ -93,6 +109,8 @@ public class KeyValueStateMachine implements QueryableStateMachine, ResultSnapsh
 
     @Override
     public synchronized byte[] snapshot() {
+        // Return only application state. Raft will add its own snapshot wrapper containing the committed
+        // cluster configuration at this snapshot boundary.
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
              DataOutputStream out = new DataOutputStream(baos)) {
             Map<String, String> ordered = new TreeMap<>(values);
@@ -110,6 +128,8 @@ public class KeyValueStateMachine implements QueryableStateMachine, ResultSnapsh
 
     @Override
     public synchronized void restore(byte[] snapshotData) {
+        // Restore only application state. Raft has already unwrapped the snapshot and restored the
+        // cluster configuration it needs for elections, quorum, and replication.
         values.clear();
         if (snapshotData == null || snapshotData.length == 0) {
             return;
@@ -133,6 +153,8 @@ public class KeyValueStateMachine implements QueryableStateMachine, ResultSnapsh
 
     @Override
     public synchronized byte[] query(byte[] request) {
+        // The runtime calls query only after leader/read-lease/read-barrier checks have succeeded.
+        // Domain code can therefore perform a local lookup without contacting peers.
         var parsed = StateMachineQuery.decode(request);
         if (parsed.isEmpty()) {
             return new byte[0];

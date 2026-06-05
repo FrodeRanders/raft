@@ -25,6 +25,10 @@ import java.io.PrintStream;
 
 /**
  * Application module for the key-value demo.
+ *
+ * The module is how the distribution discovers domain functionality. It maps runtime mode and CLI
+ * commands to application-specific factories/helpers while the shared runtime continues to handle
+ * Raft RPCs, membership, persistence, and safe read/write execution.
  */
 public final class KeyValueApplicationModule implements RaftApplicationModule {
     @Override

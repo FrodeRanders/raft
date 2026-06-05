@@ -21,16 +21,28 @@
 #include <string_view>
 
 namespace graft {
+    // ApplicationStateMachine is the C++ domain/Raft boundary.
+    //
+    // Raft owns elections, log replication, commit, membership, snapshots as transport/storage units,
+    // and read safety. A domain application owns only opaque command/query payloads and domain
+    // snapshot bytes. Cluster configuration must not be stored in the domain state machine.
     class ApplicationStateMachine {
     public:
         virtual ~ApplicationStateMachine() = default;
 
+        // Called after Raft has committed a log entry. The index and term identify the committed entry
+        // for audit/idempotency purposes; they are not an invitation for the application to influence
+        // consensus behavior.
         virtual std::string apply(std::int64_t index, std::int64_t term, std::string_view command) = 0;
 
+        // Called only after the runtime has established read safety for the leader. Implementations
+        // should answer from local domain state and should not contact Raft peers.
         virtual std::string query(std::string_view request) const = 0;
 
+        // Return only application state. Raft wraps these bytes with cluster membership metadata.
         virtual std::string snapshot() const = 0;
 
+        // Restore only application state. Raft has already restored its own metadata from the wrapper.
         virtual void restore(std::string_view snapshot) = 0;
     };
 } // namespace graft

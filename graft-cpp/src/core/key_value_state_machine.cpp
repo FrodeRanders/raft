@@ -24,6 +24,9 @@
 
 namespace graft {
     std::string KeyValueStateMachine::apply(std::int64_t, std::int64_t, std::string_view data) {
+        // The runtime calls apply only after the command has been appended, replicated, and committed.
+        // Invalid demo payloads return an empty result; real applications can choose stricter validation
+        // before submission or encode rejection in the command result.
         raft::StateMachineCommand command;
         if (!command.ParseFromArray(data.data(), static_cast<int>(data.size()))) {
             return {};
@@ -32,6 +35,7 @@ namespace graft {
     }
 
     std::string KeyValueStateMachine::query(std::string_view data) const {
+        // Raft read safety has already been handled by the runtime. This method is just a domain lookup.
         raft::StateMachineQuery query;
         if (!query.ParseFromArray(data.data(), static_cast<int>(data.size())) ||
             query.query_case() != raft::StateMachineQuery::kGet) {
@@ -47,10 +51,12 @@ namespace graft {
     }
 
     std::string KeyValueStateMachine::snapshot() const {
+        // SnapshotCodec serializes the demo map. Raft will wrap these bytes with current/next members.
         return SnapshotCodec::serialize_key_value_snapshot(store_);
     }
 
     void KeyValueStateMachine::restore(std::string_view snapshot) {
+        // The incoming bytes are already unwrapped application bytes, not the full Raft snapshot.
         if (auto restored = SnapshotCodec::deserialize_key_value_snapshot(std::string(snapshot)); restored.has_value()) {
             store_ = std::move(*restored);
         }
@@ -65,6 +71,8 @@ namespace graft {
     }
 
     std::string KeyValueStateMachine::apply_command(Store &store, const raft::StateMachineCommand &command) {
+        // These protobuf command types are the demo application's command language. They are distinct
+        // from InternalRaftCommand, which the Raft node consumes for membership changes.
         switch (command.command_case()) {
             case raft::StateMachineCommand::kPut:
                 store[command.put().key()] = command.put().value();

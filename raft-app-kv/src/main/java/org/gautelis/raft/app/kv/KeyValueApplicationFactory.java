@@ -34,6 +34,11 @@ import java.util.Set;
 
 /**
  * Factory for the key-value demo application wiring.
+ *
+ * Application developers can use this as the packaging example:
+ * - decide which adapter/runtime policies the application needs
+ * - provide the application state machine
+ * - leave Raft cluster mechanics to BasicAdapter/PolicyBasedAdapter
  */
 public final class KeyValueApplicationFactory implements RaftApplicationFactory {
     private final Set<String> allowList;
@@ -50,6 +55,9 @@ public final class KeyValueApplicationFactory implements RaftApplicationFactory 
 
     @Override
     public BasicAdapter create(long timeoutMillis, Peer me, List<Peer> peers, Peer joinSeed, RuntimeConfiguration configuration) {
+        // The default demo path uses the standard leader-redirect admission behavior. If auth/allow-list
+        // settings are present, we wrap the same state machine in PolicyBasedAdapter so domain policy
+        // can reject writes before they enter the Raft log.
         if (allowList.isEmpty() && "none".equals(authMode)) {
             return KeyValueDemoAdapter.builder(me)
                     .withTimeoutMillis(timeoutMillis)
@@ -93,6 +101,7 @@ public final class KeyValueApplicationFactory implements RaftApplicationFactory 
 
         @Override
         protected org.gautelis.raft.statemachine.SnapshotStateMachine createSnapshotStateMachine() {
+            // PolicyBasedAdapter changes admission/auth behavior, not domain replication semantics.
             return new KeyValueStateMachine();
         }
     }

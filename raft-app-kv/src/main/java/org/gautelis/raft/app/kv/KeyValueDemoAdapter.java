@@ -27,6 +27,13 @@ import java.util.List;
 
 /**
  * Demo/runtime adapter for the key-value sample application.
+ *
+ * This is the Java application/Raft boundary for the basic demo. BasicAdapter wires storage,
+ * transport, RaftNode, request handlers, membership, telemetry, and read/write safety. This
+ * adapter contributes only the domain state machine through createSnapshotStateMachine().
+ *
+ * A production domain application should follow the same shape: keep Raft mechanics in the
+ * runtime adapter and put business state changes in a SnapshotStateMachine/QueryableStateMachine.
  */
 public class KeyValueDemoAdapter extends BasicAdapter {
     public static Builder builder(Peer me) {
@@ -51,6 +58,8 @@ public class KeyValueDemoAdapter extends BasicAdapter {
 
     @Override
     protected SnapshotStateMachine createSnapshotStateMachine() {
+        // Each node gets its own local application state machine. Raft keeps these replicas in sync by
+        // applying the same committed log entries, in order, on every node.
         return new KeyValueStateMachine();
     }
 

@@ -23,6 +23,14 @@
 #include "raft.pb.h"
 
 namespace graft {
+    // Basic/demo application for C++.
+    //
+    // This class demonstrates how a domain state machine plugs into Raft:
+    // - apply handles committed writes
+    // - query handles safe reads
+    // - snapshot/restore handle only domain state
+    //
+    // It deliberately does not know about members, quorum, leadership, or log replication.
     class KeyValueStateMachine final : public ApplicationStateMachine {
     public:
         using Store = std::unordered_map<std::string, std::string>;
