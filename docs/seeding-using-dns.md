@@ -114,8 +114,6 @@ resolving to container IPs.
 
 We still need to provide a seed list like: ```raft-1:7000,raft-2:7000,raft-3:7000```
 
-then you can skip SRV locally and still be conceptually close to OpenShift.
-
 ### Manually setting up Docker for using DNS SRV records (for seeding) 
 
 The cleanest approach to serve DNS SRV records for seeding is to run CoreDNS 
