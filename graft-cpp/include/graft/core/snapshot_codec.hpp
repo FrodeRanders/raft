@@ -23,14 +23,22 @@
 #include <vector>
 
 namespace graft {
+    // SnapshotCodec separates application bytes from Raft metadata. The wrapped
+    // snapshot carries membership state so a follower or restarted node can restore
+    // the correct configuration at the compaction boundary.
     class SnapshotCodec {
     public:
+        // Wrap a domain snapshot with current/next membership. next_members is empty
+        // for stable configurations and populated for joint consensus.
         static std::string wrap_payload(const std::vector<std::string> &current_members,
                                         const std::vector<std::string> &next_members,
                                         const std::string &state_machine_snapshot);
 
+        // Return only the domain payload for ApplicationStateMachine::restore().
         static std::string unwrap_payload(const std::string &payload);
 
+        // Java-compatible key-value snapshot helpers used by the demo state machine
+        // and mixed Java/C++ snapshot tests.
         static std::string serialize_key_value_snapshot(
             const std::unordered_map<std::string, std::string> &applied_kv);
 
@@ -38,6 +46,8 @@ namespace graft {
             const std::string &snapshot);
 
     private:
+        // The binary helper routines keep the snapshot format deterministic and avoid
+        // dependence on platform endianness.
         static void append_u32_be(std::string &out, std::uint32_t value);
 
         static void append_u16_be(std::string &out, std::uint16_t value);

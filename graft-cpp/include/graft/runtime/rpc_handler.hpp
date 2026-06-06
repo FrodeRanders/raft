@@ -30,6 +30,9 @@
 #include "graft/storage/persistent_state_store.hpp"
 
 namespace graft {
+    // Inbound RPC dispatch boundary. RaftServer decodes the transport envelope and
+    // calls one of these methods with a typed protobuf request; implementations return
+    // an optional typed protobuf response to be wrapped back into an envelope.
     class RpcHandler {
     public:
         virtual ~RpcHandler() = default;
@@ -66,6 +69,8 @@ namespace graft {
             const raft::InstallSnapshotRequest &request) = 0;
     };
 
+    // Minimal non-participating handler for transport/protocol smoke probes. It keeps
+    // wire compatibility tests separate from real consensus behavior.
     class StubRpcHandler final : public RpcHandler {
     public:
         StubRpcHandler(std::string peer_id, std::int64_t current_term);
@@ -108,8 +113,12 @@ namespace graft {
 
     using RpcHandlerPtr = std::shared_ptr<RpcHandler>;
 
+    // Connects client/admin/Raft protobuf requests to a RaftNode. The handler owns
+    // policy decisions and response vocabulary; RaftNode owns consensus state changes.
     class InMemoryRpcHandler final : public RpcHandler {
     public:
+        // Callback seams used by active runtime modes. They keep network scheduling,
+        // persistence and domain policy out of RaftNode.
         using CommandReplicator = std::function<std::optional<std::string>(const std::string &)>;
         using InternalCommandReplicator = std::function<bool(const std::string &)>;
         using ReadBarrier = std::function<bool()>;
@@ -129,11 +138,15 @@ namespace graft {
             std::int32_t port;
         };
 
+        // Membership callbacks update the active runtime once a join/reconfigure
+        // command has been accepted and replicated.
         using JoinTracker = std::function<void(const std::string &, const Endpoint &)>;
         using MembershipUpdater = std::function<void(const std::vector<std::string> &, const std::vector<Endpoint> &)>;
         using JoinForwarder = std::function<bool(const Endpoint &, const raft::JoinClusterRequest &)>;
         using ReconfigureForwarder = std::function<bool(const Endpoint &, const raft::ReconfigureClusterRequest &)>;
 
+        // Shared summary used to populate telemetry, cluster-summary and
+        // reconfiguration-status responses without drifting status semantics.
         struct ClusterHealthSummary {
             std::string health;
             std::string reason;
@@ -182,19 +195,23 @@ namespace graft {
         void set_known_peer_endpoints(const std::vector<Endpoint> &endpoints_by_position,
                                       const std::vector<std::string> &peer_ids);
 
+        // Operational/admin messages.
         std::optional<raft::TelemetryResponse> on_telemetry_request(const raft::TelemetryRequest &request) override;
 
         std::optional<raft::ClusterSummaryResponse> on_cluster_summary_request(
             const raft::ClusterSummaryRequest &request) override;
 
+        // Core Raft protocol messages.
         std::optional<raft::VoteResponse> on_vote_request(const raft::VoteRequest &request) override;
 
+        // Client/domain messages.
         std::optional<raft::ClientCommandResponse>
         on_client_command_request(const raft::ClientCommandRequest &request) override;
 
         std::optional<raft::ClientQueryResponse>
         on_client_query_request(const raft::ClientQueryRequest &request) override;
 
+        // Membership control-plane messages.
         std::optional<raft::JoinClusterResponse>
         on_join_cluster_request(const raft::JoinClusterRequest &request) override;
 
@@ -220,6 +237,8 @@ namespace graft {
         std::shared_ptr<RaftNode> node_ptr();
 
     private:
+        // Response-building helpers. Keeping these centralized is important because
+        // Java and C++ must agree on statuses and operational fields.
         static std::string normalize_peer_role(std::string role);
 
         static std::string role_to_string(RaftNode::Role role);
@@ -263,12 +282,16 @@ namespace graft {
         std::optional<Endpoint> current_leader_endpoint() const;
 
         std::shared_ptr<RaftNode> node_;
+        // Optional runtime callbacks. If command_replicator_ is absent, the handler can
+        // still support single-node local commit for smoke/demo operation.
         CommandReplicator command_replicator_;
         InternalCommandReplicator internal_command_replicator_;
         ReadBarrier read_barrier_;
+        // Application-facing policy hooks.
         Authenticator authenticator_;
         CommandAuthorizer command_authorizer_;
         bool reference_data_admission_{false};
+        // Operational safeguards and endpoint metadata used by admin APIs.
         std::int64_t linearizable_read_lease_millis_{750};
         std::int32_t telemetry_rate_limit_per_minute_{30};
         std::int64_t telemetry_reconfiguration_stuck_millis_{60'000};
@@ -281,6 +304,8 @@ namespace graft {
         std::unordered_map<std::string, Endpoint> known_peer_endpoints_;
     };
 
+    // Persistent decorator around InMemoryRpcHandler. It reloads RaftNode state from
+    // disk and persists after request paths that may mutate Raft state.
     class PersistentRpcHandler final : public RpcHandler {
     public:
         PersistentRpcHandler(std::filesystem::path state_path, RaftNode::Config initial_config);

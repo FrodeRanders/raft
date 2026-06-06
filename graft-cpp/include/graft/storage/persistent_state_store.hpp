@@ -23,6 +23,9 @@
 #include "graft/core/raft_node.hpp"
 
 namespace graft {
+    // Simple file-backed store for RaftNode::PersistentState. This is intentionally
+    // not a general storage engine; it is enough to preserve Raft safety state across
+    // smoke-test restarts and to document what a production store must persist.
     class PersistentStateStore {
     public:
         explicit PersistentStateStore(std::filesystem::path path);
@@ -36,6 +39,8 @@ namespace graft {
         std::optional<RaftNode::PersistentState> load() const;
 
     private:
+        // The on-disk format is line-oriented, so string fields are escaped rather than
+        // serialized with protobuf. That keeps the file inspectable during debugging.
         static std::string escape(const std::string &value);
 
         static std::string unescape(const std::string &value);

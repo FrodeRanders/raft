@@ -24,6 +24,8 @@
 #include "raft.pb.h"
 
 namespace graft {
+    // The C++ transport uses the same length-delimited protobuf framing style as
+    // the Java Netty pipeline: varint32 length followed by a serialized Envelope.
     inline std::vector<std::uint8_t> encode_varint32(std::uint32_t value) {
         std::vector<std::uint8_t> out;
         while ((value & ~0x7Fu) != 0) {
@@ -52,6 +54,7 @@ namespace graft {
         throw std::runtime_error("malformed varint32 length prefix");
     }
 
+    // Serialize the envelope once, then prefix it with the protobuf varint length.
     inline std::vector<std::uint8_t> encode_envelope(const raft::Envelope &envelope) {
         const auto payload_size = envelope.ByteSizeLong();
         if (payload_size > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
@@ -76,6 +79,8 @@ namespace graft {
     template<typename SyncReadStream>
     raft::Envelope read_envelope(SyncReadStream &stream) {
         const auto length = read_varint32(stream);
+        // A zero-length envelope is technically parseable as an empty protobuf message,
+        // but callers will reject it because type/correlation/payload are absent.
         std::vector<std::uint8_t> buffer(length);
         boost::asio::read(stream, boost::asio::buffer(buffer.data(), buffer.size()));
 

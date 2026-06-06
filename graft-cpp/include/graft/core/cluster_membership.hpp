@@ -23,22 +23,32 @@
 #include "raft.pb.h"
 
 namespace graft {
+    // Pure membership helper. Keeping majority math here avoids scattering the
+    // joint-consensus rule through elections, commits, read barriers and telemetry.
     class ClusterMembership {
     public:
+        // Sort and de-duplicate protobuf member specs while preserving only meaningful ids.
         static std::vector<raft::PeerSpec> normalize_member_specs(std::vector<raft::PeerSpec> members);
 
+        // Stable-side voters. If the local node is decommissioned, it is excluded even
+        // if old persisted data still mentions it.
         static std::vector<std::string> current_voting_members(const std::string &local_peer_id,
                                                                bool decommissioned,
                                                                const std::vector<std::string> &voting_peers,
                                                                const std::vector<raft::PeerSpec> &current_members);
 
+        // Next-side voters. Outside joint consensus the next side is identical to
+        // current, which lets callers use one majority helper for both cases.
         static std::vector<std::string> next_voting_members(bool joint_consensus,
                                                             const std::vector<std::string> &current_voters,
                                                             const std::vector<raft::PeerSpec> &next_members);
 
+        // Union of voters used for peer tracking and endpoint discovery.
         static std::vector<std::string> active_voting_members(const std::vector<std::string> &current_voters,
                                                               const std::vector<std::string> &next_voters);
 
+        // The important Raft membership rule: joint consensus requires a majority in
+        // both current and next configurations. Do not replace this with a union quorum.
         static bool has_joint_majority(const std::unordered_set<std::string> &peer_ids,
                                        const std::vector<std::string> &current_voters,
                                        const std::vector<std::string> &next_voters,

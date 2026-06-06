@@ -63,6 +63,11 @@ import java.util.function.Supplier;
 
 /**
  * Wires protocol messages, storage, telemetry, and the state machine into a runnable Raft node.
+ *
+ * <p>This adapter is the Java equivalent of the C++ CLI/runtime composition:
+ * transport owns network IO, {@link RaftNode} owns consensus state, and this
+ * layer decides how application commands, administrative requests, telemetry,
+ * authentication, and authorization are connected around that Raft core.</p>
  */
 public class BasicAdapter {
     protected static final Logger log = LoggerFactory.getLogger(BasicAdapter.class);
@@ -112,6 +117,10 @@ public class BasicAdapter {
         this.joinSeed = spec.joinSeed();
         this.runtimeConfiguration = spec.runtimeConfiguration();
         this.transportFactory = spec.transportFactory();
+        // HandlerContext is the boundary object between generic request handlers
+        // and application-specific policy.  The handlers can stay reusable while
+        // subclasses/modules override validation, state machine creation, auth,
+        // and admission decisions.
         AdapterHandlerContext handlerContext = new AdapterHandlerContext(
                 log,
                 me,
@@ -136,7 +145,9 @@ public class BasicAdapter {
         if (transportFactory == null) {
             throw new IllegalStateException("No transport factory configured for adapter " + me.getId());
         }
-        // Adapter bootstraps a runnable node with either in-memory or file-backed durability.
+        // Adapter bootstraps a runnable node with either in-memory or file-backed
+        // durability.  Applications embedding the library can make the same
+        // choice with their own LogStore/PersistentStateStore implementations.
         String dataDir = runtimeConfiguration.dataDir();
         LogStore logStore;
         PersistentStateStore persistentStateStore;
@@ -149,10 +160,16 @@ public class BasicAdapter {
             persistentStateStore = new FilePersistentStateStore(root.resolve(me.getId() + ".state"));
         }
 
+        // Non-Raft protocol envelopes are routed through MessageHandler.  Raft
+        // RPCs themselves are handled directly by the transport adapter and
+        // RaftNode; client/domain/admin envelopes enter through this adapter.
         MessageHandler messageHandler = this::handleMessage;
         SnapshotStateMachine snapshotStateMachine = createSnapshotStateMachine();
 
         RaftTransportClient raftClient = transportFactory.createClient(me.getId(), messageHandler);
+        // RaftNode is intentionally built from interfaces: transport, log,
+        // persistent term/vote store, and application state machine.  This keeps
+        // the consensus machinery usable outside this demo/runtime package.
         stateMachine = RaftNode.forPeer(me)
                 .withPeers(peers)
                 .withTimeoutMillis(timeoutMillis)
@@ -189,6 +206,9 @@ public class BasicAdapter {
     }
 
     protected SnapshotStateMachine createSnapshotStateMachine() {
+        // BasicAdapter has no domain state.  Application modules override this
+        // to provide the command/query/snapshot implementation that committed
+        // Raft log entries should drive.
         return new NoopSnapshotStateMachine();
     }
 
@@ -227,6 +247,9 @@ public class BasicAdapter {
         Thread joinThread = new Thread(() -> {
             while (stateMachine != null && stateMachine.isJoining()) {
                 try {
+                    // Joining is modeled as an administrative request to the
+                    // existing cluster.  The leader will replicate the resulting
+                    // configuration entry; the joining node should not self-add.
                     stateMachine.getRaftClient().sendJoinClusterRequest(
                             joinSeed,
                             new JoinClusterRequest(stateMachine.getTerm(), me.getId(), me, outboundRequestAuthScheme(), outboundRequestAuthToken())
@@ -245,6 +268,9 @@ public class BasicAdapter {
     }
 
     public void handleMessage(String correlationId, String type, byte[] payload, MessageResponder responder) {
+        // Dispatch table for application/admin protocol messages.  Keeping this
+        // separate from RaftMessageHandler makes the transport framing reusable
+        // and keeps RaftNode free of CLI/domain payload parsing.
         RequestHandler handler = requestHandlers.get(type);
         if (handler != null) {
             handler.handle(correlationId, payload, responder);
@@ -254,6 +280,9 @@ public class BasicAdapter {
     }
 
     private Map<String, RequestHandler> createRequestHandlers() {
+        // Each entry follows the same safe pattern: parse protobuf payload,
+        // return a typed INVALID response on malformed input, otherwise delegate
+        // to a small handler focused on one API surface.
         Map<String, RequestHandler> handlers = new HashMap<>();
         handlers.put("ClientCommandRequest", typedHandler(
                 ProtoMapper::parseClientCommandRequest,
@@ -376,6 +405,8 @@ public class BasicAdapter {
     }
 
     static boolean isValidClusterCommand(byte[] command) {
+        // The default domain is the demo key/value protocol.  Other applications
+        // override isValidClientCommand/query and supply their own state machine.
         var decoded = StateMachineCommand.decode(command);
         if (decoded.isEmpty()) {
             return false;
@@ -389,6 +420,8 @@ public class BasicAdapter {
     }
 
     private boolean submitClusterCommand(byte[] command) {
+        // submitCommand means "append through Raft and wait for commitment" when
+        // called on the leader.  It must not be confused with local application.
         return stateMachine.submitCommand(command);
     }
 
@@ -430,6 +463,8 @@ public class BasicAdapter {
     }
 
     private ClientCommandAuthenticationResult authenticateExternalRequest(String requesterId, String authenticationScheme, String authenticationToken) {
+        // Authentication gets local Raft context because policies often depend on
+        // whether this node is leader, learner, or decommissioned.
         Peer.Role localMemberRole = stateMachine == null ? null : stateMachine.getLocalMemberRole();
         return clientCommandAuthenticator().authenticate(
                 requesterId,
@@ -459,6 +494,9 @@ public class BasicAdapter {
     }
 
     private void registerPeerReference(Peer peer) {
+        // Administrative requests may introduce a peer endpoint before the peer
+        // appears in committed configuration.  Registering it here gives the
+        // runtime enough address information for forwarding and catch-up.
         if (peer == null) {
             throw new IllegalArgumentException("Peer must not be null");
         }

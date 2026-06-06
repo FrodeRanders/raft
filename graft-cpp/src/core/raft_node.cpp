@@ -49,8 +49,12 @@ namespace graft {
           last_activity_(std::chrono::steady_clock::now()),
           voting_peers_(std::move(config.voting_peers)) {
         if (!application_) {
+            // The KV state machine is the built-in demo/default. Library users should
+            // inject their own ApplicationStateMachine through Config.
             application_ = std::make_shared<KeyValueStateMachine>();
         }
+        // Normalize immediately so every later majority calculation sees a consistent
+        // membership model, even when the node was created from sparse smoke-test input.
         seed_bootstrap_log_locked();
         normalize_voting_peers_locked();
         seed_current_members_locked();
@@ -69,6 +73,7 @@ namespace graft {
         std::scoped_lock lock(mu_);
 
         if (request.term() > current_term_) {
+            // Observing a newer term invalidates any local leadership/candidacy.
             step_down_locked(request.term(), std::nullopt);
         }
 
@@ -78,6 +83,8 @@ namespace graft {
             request.term() == current_term_ &&
             candidate_log_is_up_to_date_locked(request)) {
             if (!voted_for_.has_value() || *voted_for_ == request.candidate_id()) {
+                // Grant at most one vote per term, and only to a candidate whose log is
+                // at least as up-to-date as ours.
                 role_ = Role::follower;
                 voted_for_ = request.candidate_id();
                 last_activity_ = std::chrono::steady_clock::now();
@@ -106,6 +113,8 @@ namespace graft {
             is_known_voting_member_locked(request.leader_id()) &&
             request.term() == current_term_ && prev_log_matches_locked(request.prev_log_index(),
                                                                        request.prev_log_term())) {
+            // A valid AppendEntries request is also the leader heartbeat. It refreshes
+            // leader identity and suppresses local elections.
             role_ = Role::follower;
             leader_id_ = request.leader_id();
             last_activity_ = std::chrono::steady_clock::now();
@@ -216,6 +225,9 @@ namespace graft {
 
         snapshot_index_ = index;
         snapshot_term_ = term;
+        // The caller-provided string is ignored intentionally; the authoritative
+        // application snapshot must be captured from the state machine at the selected
+        // committed index so Raft and domain state stay aligned.
         snapshot_data_ = wrap_snapshot_payload_locked(application_->snapshot());
         truncate_prefix_up_to_locked(snapshot_index_);
         commit_index_ = std::max(commit_index_, snapshot_index_);
@@ -355,6 +367,8 @@ namespace graft {
         }
 
         if (has_joint_majority_locked(votes_granted_)) {
+            // This helper enforces the split-majority joint-consensus rule. A flat
+            // majority of the union would be unsafe during reconfiguration.
             become_leader_locked();
             return true;
         }
@@ -374,6 +388,8 @@ namespace graft {
         const auto next_index = found != peer_progress_.end() ? found->second.next_index : (last_log_index_ + 1);
         const auto prev_log_index = std::max<std::int64_t>(0, next_index - 1);
 
+        // Heartbeats carry the previous-log position for the follower. That lets a
+        // heartbeat double as a consistency/read-barrier probe without sending entries.
         request.set_prev_log_index(prev_log_index);
         if (prev_log_index == 0) {
             request.set_prev_log_term(0);
@@ -454,14 +470,19 @@ namespace graft {
             return false;
         }
         if (last_applied_ < commit_index_) {
+            // A leader with unapplied committed entries could answer from stale local
+            // application state even if its lease is fresh.
             return false;
         }
         std::unordered_set<std::string> fresh_voters;
         fresh_voters.insert(peer_id_);
         if (has_joint_majority_locked(fresh_voters)) {
+            // Single-voter clusters have a quorum with the leader alone.
             return true;
         }
 
+        // The lease is derived from recent successful contact, not from wall-clock
+        // promises made by other nodes. Runtime refreshes this by sending heartbeats.
         const auto freshness_cutoff = std::max<std::int64_t>(0, current_time_millis() - std::max<std::int64_t>(1, lease_millis));
         for (const auto &peer_id: voting_peers_) {
             const auto found = peer_progress_.find(peer_id);
@@ -522,6 +543,9 @@ namespace graft {
 
     std::int64_t RaftNode::append_local_entry(std::string data) {
         std::scoped_lock lock(mu_);
+        // Appending locally is only the first half of a write. Client-facing success is
+        // reported later, after replication has advanced commit_index_ and the state
+        // machine has applied the entry.
         previous_log_index_ = last_log_index_;
         previous_log_term_ = last_log_term_;
         last_log_index_ += 1;
@@ -571,6 +595,8 @@ namespace graft {
 
         request.set_prev_log_term(log_term_at_locked(prev_log_index));
 
+        // Send every entry the follower is missing according to next_index. The bounded
+        // runtime does not batch by size yet; snapshot fallback handles compacted gaps.
         for (const auto &local_entry: log_entries_) {
             if (local_entry.index < next_index) {
                 continue;
@@ -657,6 +683,8 @@ namespace graft {
             return std::nullopt;
         }
 
+        // Single-node clusters can commit immediately because the leader is the whole
+        // quorum. Multi-node paths must go through RaftRuntime replication.
         previous_log_index_ = last_log_index_;
         previous_log_term_ = last_log_term_;
         last_log_index_ += 1;
@@ -722,6 +750,8 @@ namespace graft {
 
     void RaftNode::apply_persistent_state(const PersistentState &state) {
         std::scoped_lock lock(mu_);
+        // Restore the exact durable Raft state first. The role is derived afterward so
+        // stale volatile leadership does not accidentally survive a restart.
         peer_id_ = state.peer_id;
         current_term_ = state.current_term;
         voted_for_ = state.voted_for;
@@ -749,6 +779,8 @@ namespace graft {
         snapshot_data_ = state.snapshot_data;
         last_applied_ = snapshot_index_;
         if (!snapshot_data_.empty()) {
+            // Snapshot data is stored wrapped. The application receives only its own
+            // payload; membership metadata has already been restored into Raft fields.
             application_->restore(SnapshotCodec::unwrap_payload(snapshot_data_));
         }
         applied_command_results_.clear();
@@ -757,6 +789,8 @@ namespace graft {
         last_entry_data_ = state.last_entry_data;
         log_entries_ = state.log_entries;
         if (log_entries_.empty()) {
+            // Some older persisted/smoke states carry only last index/term. Seed a
+            // synthetic log suffix so consistency checks have deterministic terms.
             seed_bootstrap_log_locked();
         }
         role_ = !decommissioned_ && leader_id_.has_value() && *leader_id_ == peer_id_ ? Role::leader : Role::follower;
@@ -782,6 +816,8 @@ namespace graft {
         }
         for (const auto &[peer_id, _]: state.peer_progress) {
             if (peer_id != peer_id_) {
+                // Peer progress is not authoritative membership, but it may reveal
+                // recovered peers from older state files. Normalize afterward.
                 voting_peers_.push_back(peer_id);
             }
         }
@@ -815,6 +851,8 @@ namespace graft {
         }
         std::sort(current_members.begin(), current_members.end());
 
+        // The snapshot wrapper currently stores member ids. This keeps the C++ snapshot
+        // compatible with the bounded mixed-language snapshot tests.
         return SnapshotCodec::wrap_payload(
             current_members,
             joint_consensus_ ? current_members : std::vector<std::string>{},
@@ -850,9 +888,14 @@ namespace graft {
             return false;
         }
 
+        // Internal commands are consumed by Raft and are not delivered to the domain
+        // state machine. They still travel through the log so membership changes obey
+        // the same ordering and commit rules as ordinary commands.
         const auto &command = *parsed;
         switch (command.command_case()) {
             case raft::InternalRaftCommand::kJoin:
+                // Join records a pending peer and initializes progress so the leader
+                // can catch it up before voter promotion.
                 if (!command.join().member().id().empty() && command.join().member().id() != peer_id_) {
                     pending_join_ids_.insert(command.join().member().id());
                     auto &progress = peer_progress_[command.join().member().id()];
@@ -860,6 +903,9 @@ namespace graft {
                 }
                 return true;
             case raft::InternalRaftCommand::kJoint: {
+                // Joint consensus activates both current and next configurations. The
+                // node may discover here that it is being removed, but final removal is
+                // delayed until the finalize entry commits.
                 bool includes_self = false;
                 seed_current_members_locked();
                 std::vector<raft::PeerSpec> next_members;
@@ -886,6 +932,8 @@ namespace graft {
                 return true;
             }
             case raft::InternalRaftCommand::kFinalize:
+                // Finalize collapses the next configuration into the stable current
+                // configuration. If this node was removed, it steps down permanently.
                 joint_consensus_ = false;
                 reconfiguration_started_at_millis_ = 0;
                 if (!next_members_.empty()) {
@@ -918,6 +966,7 @@ namespace graft {
 
     void RaftNode::apply_committed_entries_locked() {
         if (snapshot_index_ > last_applied_) {
+            // Restore snapshot state before replaying post-snapshot entries.
             apply_snapshot_to_state_machine_locked();
             last_applied_ = snapshot_index_;
         }
@@ -927,6 +976,8 @@ namespace graft {
                 continue;
             }
             applied_command_results_.erase(entry.index);
+            // The result is stored by log index so the client RPC path can return the
+            // deterministic application result after commit/apply.
             applied_command_results_[entry.index] = apply_log_entry_locked(entry);
             last_applied_ = entry.index;
         }
@@ -1121,6 +1172,8 @@ namespace graft {
         auto candidate_commit = commit_index_;
         for (auto index = commit_index_ + 1; index <= last_log_index_; ++index) {
             if (log_term_at_locked(index) != current_term_) {
+                // Standard Raft guard: a leader advances commit by counting replicas for
+                // entries from its own term, which indirectly commits older entries.
                 continue;
             }
             std::unordered_set<std::string> replicated;

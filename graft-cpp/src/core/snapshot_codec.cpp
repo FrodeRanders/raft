@@ -56,6 +56,8 @@ namespace graft {
 
     std::string SnapshotCodec::unwrap_payload(const std::string &payload) {
         if (payload.empty() || payload.front() != '{') {
+            // Older/local snapshots may be raw application bytes. Preserve backward
+            // compatibility by returning them unchanged.
             return payload;
         }
 
@@ -105,6 +107,8 @@ namespace graft {
             return std::nullopt;
         }
         for (std::uint32_t i = 0; i < size; ++i) {
+            // The format is strict: a malformed length or truncated key/value makes the
+            // whole snapshot invalid rather than partially restored.
             std::uint16_t key_length = 0;
             std::uint16_t value_length = 0;
             if (!read_u16_be(snapshot, offset, key_length) || offset + key_length > snapshot.size()) {
@@ -218,6 +222,8 @@ namespace graft {
             unsigned char values[4];
             std::size_t pad = 0;
             for (int j = 0; j < 4; ++j) {
+                // Whitespace is not expected in generated snapshots. Rejecting invalid
+                // characters keeps unwrap failures visible and deterministic.
                 if (i >= input.size()) {
                     return std::nullopt;
                 }

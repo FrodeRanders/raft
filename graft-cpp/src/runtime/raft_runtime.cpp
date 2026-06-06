@@ -107,6 +107,9 @@ namespace graft {
     }
 
     void RaftRuntime::refresh_configured_peers() {
+        // Membership can be learned from committed configuration entries, not only from
+        // the initial CLI peer list. Pull endpoint-bearing PeerSpecs back into runtime
+        // tracking before sending heartbeats or replication.
         auto add_member_endpoint = [this](const raft::PeerSpec &member) {
             if (member.id().empty() || member.id() == node_->peer_id() || member.host().empty() || member.port() <= 0) {
                 return;
@@ -127,6 +130,8 @@ namespace graft {
     }
 
     bool RaftRuntime::run_election_round() {
+        // The bounded runtime performs one synchronous election round. Long-running
+        // server modes schedule this periodically from the CLI layer.
         const auto request = node_->start_election();
         persist();
 
@@ -170,6 +175,8 @@ namespace graft {
             return 0;
         }
 
+        // Heartbeats are implemented by the same sync path as catch-up. If a follower
+        // is behind, sync_peer_once will send AppendEntries with entries instead.
         std::size_t successes = 0;
         for (const auto &peer: peers()) {
             successes += sync_peer_once(peer) ? 1 : 0;
@@ -184,6 +191,8 @@ namespace graft {
             return false;
         }
 
+        // Capture the term before probing. If the node steps down or learns a newer
+        // term while refreshing the barrier, the read is not safe.
         const auto term_snapshot = node_->current_term();
         std::unordered_set<std::string> acknowledgements;
         acknowledgements.insert(node_->peer_id());
@@ -212,6 +221,8 @@ namespace graft {
 
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         do {
+            // Refreshing the barrier is separate from checking the lease because the
+            // heartbeat responses must first update RaftNode peer progress.
             if (refresh_read_barrier_once() && node_->can_serve_linearizable_read(lease.count())) {
                 return true;
             }
@@ -233,12 +244,16 @@ namespace graft {
         node_->append_local_entry(data);
         persist();
 
+        // Replicate to every known peer once per call. Commit advancement happens inside
+        // RaftNode as successful responses update match_index.
         std::size_t successes = 0;
         for (const auto &peer: peers()) {
             successes += replicate_peer_until_caught_up(peer) ? 1 : 0;
         }
 
         if (node_->commit_index() > initial_commit_index) {
+            // Send a follow-up heartbeat so followers learn the new leader_commit even
+            // when they already received the entry before it became committed.
             send_heartbeats_once();
         }
 

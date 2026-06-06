@@ -29,6 +29,8 @@
 #include "graft/transport/raft_client.hpp"
 
 namespace graft {
+    // Runtime-level endpoint metadata. RaftNode only knows peer ids; the runtime
+    // translates those ids into host/port destinations for outbound RPCs.
     struct PeerEndpoint {
         std::string peer_id;
         std::string host;
@@ -36,9 +38,15 @@ namespace graft {
         std::string role;
     };
 
+    // RaftRuntime is the active side of a node. It drives elections, heartbeats,
+    // replication, snapshot fallback and read barriers by calling the pure RaftNode
+    // methods and sending the resulting protobuf messages through RaftClient.
     class RaftRuntime {
     public:
+        // The bounded runtime retries AppendEntries backtracking a fixed number of
+        // times. Production implementations would usually keep running asynchronously.
         static constexpr std::size_t kMaxReplicationAttempts = 16;
+        // Small chunks make mixed-language snapshot smoke tests exercise chunk assembly.
         static constexpr std::size_t kSnapshotChunkBytes = 8;
 
         RaftRuntime(boost::asio::io_context &io_context, RaftNode::Config config, std::vector<PeerEndpoint> peers);
@@ -63,8 +71,11 @@ namespace graft {
 
         void configure_peers(std::vector<PeerEndpoint> peers);
 
+        // Track a peer endpoint without necessarily making it a voter. This is used
+        // when membership messages carry endpoint data before the node is promoted.
         void track_peer(PeerEndpoint peer);
 
+        // One-shot operations used by CLI modes and tests. The caller owns scheduling.
         bool run_election_round();
 
         std::size_t send_heartbeats_once();
@@ -78,6 +89,7 @@ namespace graft {
         std::optional<std::string> replicate_entry_once_with_result(const std::string &data);
 
     private:
+        // Only voting peers participate in elections, commit majorities and read barriers.
         std::vector<PeerEndpoint> voting_peers() const;
 
         bool sync_peer_once(const PeerEndpoint &peer);
@@ -91,9 +103,13 @@ namespace graft {
         void persist();
 
         RaftClient client_;
+        // Endpoint membership can be updated by join/reconfigure handling while runtime
+        // loops are active, so the vector has its own mutex separate from RaftNode.
         mutable std::mutex peers_mu_;
         std::vector<PeerEndpoint> peers_;
         std::shared_ptr<RaftNode> node_;
+        // Persistence is injected so tests, smoke modes and future library users can
+        // decide how durable state is stored without changing the runtime algorithm.
         std::function<void(const RaftNode &)> persist_callback_;
     };
 } // namespace graft

@@ -30,6 +30,10 @@
 #include "raft.pb.h"
 
 namespace graft {
+    // RaftNode is deliberately transport-agnostic. It is the consensus state machine:
+    // given protobuf RPC requests and locally-triggered actions, it mutates durable Raft
+    // state and returns protobuf responses. The runtime layer decides when to send those
+    // requests over TCP and when to persist the returned state.
     class RaftNode {
     public:
         enum class Role {
@@ -38,6 +42,9 @@ namespace graft {
             leader
         };
 
+        // Construction-time state. Runtime modes use this for both fresh nodes and
+        // nodes rebuilt from PersistentStateStore. Peer ids here are logical Raft ids,
+        // not host:port endpoints; endpoint resolution lives in RaftRuntime/RpcHandler.
         struct Config {
             std::string peer_id;
             std::int64_t current_term{0};
@@ -50,6 +57,9 @@ namespace graft {
             std::shared_ptr<ApplicationStateMachine> application;
         };
 
+        // Leader-side view of one peer. next_index/match_index are the classic Raft
+        // replication cursors; the reachability fields are operational telemetry and
+        // read-lease input, not part of the formal persistent Raft paper state.
         struct PeerProgress {
             std::int64_t next_index{1};
             std::int64_t match_index{0};
@@ -59,17 +69,25 @@ namespace graft {
             std::int64_t last_failed_contact_millis{0};
         };
 
+        // In-memory representation of a log entry. The protobuf LogEntry carries
+        // term/data but not an explicit index, so the C++ core keeps the index beside it.
         struct LogEntryRecord {
             std::int64_t index{0};
             std::int64_t term{0};
             std::string data;
         };
 
+        // Returned to client-facing code after a single-node local commit or after
+        // replicated commit has advanced far enough to apply the command.
         struct CommandCommitResult {
             std::int64_t index{0};
             std::string result;
         };
 
+        // Serializable snapshot of the whole Raft node, including the application
+        // snapshot wrapper and membership state. This is intentionally larger than the
+        // domain state-machine snapshot: it is what lets a restarted node recover its
+        // term, vote, log, membership and compaction boundary.
         struct PersistentState {
             std::string peer_id;
             std::int64_t current_term{0};
@@ -99,8 +117,12 @@ namespace graft {
 
         explicit RaftNode(Config config);
 
+        // Internal commands are replicated through the same log as application commands
+        // but are consumed by Raft itself. Membership change entries are the primary use.
         static std::string encode_internal_command(const raft::InternalRaftCommand &command);
 
+        // RPC receiver side: these methods are called by RpcHandler after an envelope
+        // has been decoded. They do not perform network I/O.
         raft::VoteResponse handle_vote_request(const raft::VoteRequest &request);
 
         raft::AppendEntriesResponse handle_append_entries(const raft::AppendEntriesRequest &request);
@@ -109,6 +131,7 @@ namespace graft {
 
         bool compact_snapshot_to(std::int64_t index, std::string snapshot_data);
 
+        // Local role transitions used by runtime loops and tests.
         void become_candidate();
 
         void become_leader();
@@ -147,6 +170,8 @@ namespace graft {
 
         bool handle_vote_response(const raft::VoteResponse &response);
 
+        // Leader-side RPC builders. They construct protobuf messages from local Raft
+        // state; RaftRuntime is responsible for sending them and feeding responses back.
         raft::AppendEntriesRequest make_heartbeat_request_for(const std::string &peer_id) const;
 
         std::vector<raft::AppendEntriesRequest> make_heartbeat_requests() const;
@@ -205,6 +230,8 @@ namespace graft {
         Role role() const;
 
     private:
+        // All private helpers require mu_ to be held. The _locked suffix is used as a
+        // convention so callers do not accidentally call them without the node mutex.
         std::string wrap_snapshot_payload_locked(const std::string &state_machine_snapshot) const;
 
         void apply_snapshot_to_state_machine_locked();
@@ -267,17 +294,24 @@ namespace graft {
 
         std::unordered_map<std::string, std::string> applied_kv_locked() const;
 
+        // One mutex protects the complete Raft state below. This keeps the bounded C++
+        // implementation easy to reason about while it is still converging with Java.
         mutable std::mutex mu_;
+        // Persistent Raft identity and role state.
         std::string peer_id_;
         Role role_;
         std::int64_t current_term_;
         std::optional<std::string> voted_for_;
         std::optional<std::string> leader_id_;
+        // Membership state. current_members_ is always the stable side; next_members_
+        // is populated only while joint_consensus_ is true.
         bool joint_consensus_{false};
         bool pending_decommission_{false};
         bool decommissioned_{false};
         std::int64_t reconfiguration_started_at_millis_{0};
         std::unordered_set<std::string> pending_join_ids_;
+        // Log and snapshot boundary. snapshot_data_ is a wrapped payload containing
+        // application snapshot bytes plus Raft metadata.
         std::int64_t last_log_index_;
         std::int64_t last_log_term_;
         std::int64_t commit_index_;
@@ -286,10 +320,16 @@ namespace graft {
         std::string snapshot_data_;
         std::int64_t last_applied_{0};
         std::shared_ptr<ApplicationStateMachine> application_;
+        // Command results are retained long enough for client-facing RPC handlers to
+        // return the deterministic result of the committed entry, for example CAS.
         std::unordered_map<std::int64_t, std::string> applied_command_results_;
+        // InstallSnapshot chunk assembly state. Followers build the full snapshot here
+        // before replacing the active snapshot boundary.
         std::int64_t pending_snapshot_index_{0};
         std::int64_t pending_snapshot_term_{0};
         std::string pending_snapshot_data_;
+        // Compatibility fields for bounded smoke/probe modes that start from only
+        // previous index/term values rather than a fully materialized log.
         std::int64_t previous_log_index_;
         std::int64_t previous_log_term_;
         std::string last_entry_data_;

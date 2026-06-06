@@ -29,6 +29,11 @@ import java.util.Optional;
 
 /**
  * Wraps state-machine snapshots with Raft configuration metadata for persistence and install.
+ *
+ * <p>The application state machine supplies opaque snapshot bytes. This codec
+ * adds the Raft membership configuration that was active at the same snapshot
+ * boundary so a restarting or snapshot-installing node restores both pieces in
+ * step.</p>
  */
 final class ClusterConfigurationSnapshotCodec {
     private static final int VERSION = 1;
@@ -63,6 +68,8 @@ final class ClusterConfigurationSnapshotCodec {
 
         String json = new String(payload, StandardCharsets.UTF_8).trim();
         if (!json.startsWith("{")) {
+            // Older/raw application snapshots do not have the wrapper. Treating
+            // them as absent lets callers retain backward-compatible restore paths.
             return Optional.empty();
         }
 

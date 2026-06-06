@@ -22,6 +22,10 @@ import java.util.Set;
 
 /**
  * Shared runtime wiring context passed to application modules.
+ *
+ * <p>Application factories receive this instead of constructing global runtime
+ * services themselves.  That keeps authentication, transport, and configuration
+ * consistent across key/value, reference-data, and future domain modules.</p>
  */
 public record RuntimeAdapterContext(
         RuntimeConfiguration configuration,

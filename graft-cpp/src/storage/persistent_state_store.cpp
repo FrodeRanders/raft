@@ -79,6 +79,8 @@ namespace graft {
             out << "log_entry=" << entry.index << ',' << entry.term << ',' << escape(entry.data) << '\n';
         }
         for (const auto &[peer_id, progress]: state.peer_progress) {
+            // Persisting peer progress is not required for Raft safety, but it improves
+            // restart behavior in the bounded runtime and lets telemetry recover shape.
             out << "peer_progress=" << escape(peer_id) << ',' << progress.next_index << ',' << progress.match_index <<
                     ',' << (progress.reachable ? 1 : 0) << ',' << progress.consecutive_failures <<
                     '\n';
@@ -98,6 +100,8 @@ namespace graft {
         RaftNode::PersistentState state;
         std::string line;
         while (std::getline(in, line)) {
+            // Unknown keys are ignored so newer state files can be read by older code
+            // for fields that are not safety-critical.
             const auto pos = line.find('=');
             if (pos == std::string::npos) {
                 continue;
@@ -173,6 +177,8 @@ namespace graft {
                     .data = value.substr(second + 1),
                 });
             } else if (key == "peer_progress") {
+                // Older files may have only next_index/match_index. The parser accepts
+                // the shorter form and defaults newer telemetry fields.
                 const auto first = value.find(',');
                 const auto second = value.find(',', first == std::string::npos ? first : first + 1);
                 const auto third = value.find(',', second == std::string::npos ? second : second + 1);

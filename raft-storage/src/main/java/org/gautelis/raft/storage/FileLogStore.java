@@ -36,6 +36,10 @@ import java.util.Properties;
 
 /**
  * Persists the Raft log and snapshot metadata to files on disk.
+ *
+ * <p>The store exposes Raft-global log indexes even though compacted entries are
+ * no longer present in memory or on disk. The snapshot index/term act as the
+ * retained prefix boundary for AppendEntries consistency checks.</p>
  */
 public final class FileLogStore implements LogStore {
     private static final Logger log = LoggerFactory.getLogger(FileLogStore.class);
@@ -109,6 +113,8 @@ public final class FileLogStore implements LogStore {
 
     @Override
     public synchronized void append(List<LogEntry> entries) {
+        // Appending only records local history. Client-visible success requires
+        // RaftNode to advance commitIndex and apply the entry to the state machine.
         this.entries.addAll(entries);
         persist();
     }
@@ -137,6 +143,8 @@ public final class FileLogStore implements LogStore {
 
     @Override
     public synchronized List<LogEntry> entriesFrom(long index) {
+        // Leaders may ask for entries at or before the snapshot boundary while
+        // backing up nextIndex. Clamp to the first retained suffix entry.
         if (index <= snapshotIndex) index = snapshotIndex + 1;
         int from = Math.toIntExact(index - snapshotIndex - 1);
         if (from >= entries.size()) {
@@ -222,7 +230,8 @@ public final class FileLogStore implements LogStore {
     }
 
     private void loadMeta() {
-        // Snapshot metadata is persisted separately from log suffix bytes.
+        // Snapshot metadata is persisted separately from log suffix bytes and
+        // loaded first so suffix entries retain correct global numbering.
         if (!Files.exists(metaFile)) {
             snapshotIndex = 0L;
             snapshotTerm = 0L;

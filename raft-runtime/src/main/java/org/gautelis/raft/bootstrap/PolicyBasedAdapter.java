@@ -22,6 +22,10 @@ import java.util.List;
 
 /**
  * Adapter variant that injects explicit admission and authorization policies for client writes.
+ *
+ * <p>This is the preferred extension point when a domain application wants the
+ * standard Raft/runtime wiring but needs its own edge policy before commands are
+ * allowed into the replicated log.</p>
  */
 public class PolicyBasedAdapter extends BasicAdapter {
     private final ClientWriteAdmissionPolicy writeAdmissionPolicy;

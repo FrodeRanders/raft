@@ -30,6 +30,10 @@ import java.util.Properties;
 
 /**
  * Persists the current term and voted-for state to disk across restarts.
+ *
+ * <p>This store is small but safety-critical. Raft election safety depends on
+ * preserving term and vote before a restarted node can participate in another
+ * election.</p>
  */
 public final class FilePersistentStateStore implements PersistentStateStore {
     private static final Logger log = LoggerFactory.getLogger(FilePersistentStateStore.class);
@@ -53,6 +57,8 @@ public final class FilePersistentStateStore implements PersistentStateStore {
 
     @Override
     public synchronized void setCurrentTerm(long term) {
+        // Persist immediately: a higher term observed from any RPC must survive
+        // restart before the node can grant or solicit votes again.
         this.currentTerm = term;
         persist();
     }
@@ -64,6 +70,8 @@ public final class FilePersistentStateStore implements PersistentStateStore {
 
     @Override
     public synchronized void setVotedFor(String peerId) {
+        // Persist immediately to prevent double voting in the same term after a
+        // crash. Null means no vote is recorded for the current term.
         this.votedFor = peerId;
         persist();
     }
@@ -102,6 +110,8 @@ public final class FilePersistentStateStore implements PersistentStateStore {
             try (OutputStream out = Files.newOutputStream(tmp)) {
                 props.store(out, "raft persistent state");
             }
+            // Replace atomically when the platform supports it so readers never
+            // observe a half-written term/vote file.
             Files.move(tmp, stateFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
 
         } catch (IOException e) {

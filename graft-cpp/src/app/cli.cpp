@@ -36,6 +36,11 @@
 #include "graft/transport/raft_server.hpp"
 
 namespace {
+    // The CLI is intentionally a broad integration surface: it drives direct
+    // request/response probes, passive servers, active Raft nodes, persistence
+    // exercises, and mixed Java/C++ smoke tests.  The core library does not
+    // depend on this file; application developers should read it as a worked
+    // example of how to wire the library pieces together.
     void print_usage() {
         std::cerr
                 << "Usage:\n"
@@ -85,6 +90,9 @@ namespace {
     }
 
     std::optional<graft::InMemoryRpcHandler::Authenticator> shared_secret_authenticator_from_env() {
+        // Authentication is a domain/integration concern, not a Raft primitive.
+        // The handler exposes a callback so an application can plug in shared
+        // secrets, mTLS identity, JWT validation, or any other local policy.
         const auto mode = lower_ascii(env_value("RAFT_REQUEST_AUTH_MODE").value_or("none"));
         if (mode == "none") {
             return std::nullopt;
@@ -142,6 +150,9 @@ namespace {
     }
 
     std::optional<graft::InMemoryRpcHandler::CommandAuthorizer> command_authorizer_from_env() {
+        // Authorization is checked before a client command is appended to the
+        // Raft log.  Once an entry is committed, every node must apply the same
+        // bytes, so admission decisions belong at the edge of the leader.
         auto allowed = parse_csv_env("RAFT_COMMAND_AUTHORIZER_ALLOW_LIST");
         if (allowed.empty()) {
             return std::nullopt;
@@ -163,12 +174,17 @@ namespace {
     }
 
     bool reference_data_admission_from_env() {
+        // This switch demonstrates a domain-specific admission policy.  It is
+        // deliberately outside RaftNode so the consensus library can be reused
+        // for applications other than reference-data distribution.
         const auto mode = lower_ascii(env_value("RAFT_ADAPTER_MODE").value_or("basic"));
         return mode == "reference-data" || mode == "reference" || mode == "refdata";
     }
 
     template<typename Request>
     void apply_request_auth(Request &request) {
+        // Client-side helper for the demo CLI.  Real applications would normally
+        // populate these fields from their own identity/session infrastructure.
         if (const auto scheme = env_value("RAFT_REQUEST_AUTH_CLIENT_SCHEME"); scheme.has_value()) {
             request.set_auth_scheme(*scheme);
         }
@@ -234,6 +250,9 @@ namespace {
     }
 
     std::vector<graft::PeerEndpoint> parse_peer_specs(char **argv, int start_index, int argc) {
+        // peer-id@host:port[/ROLE] is the compact notation used by smoke tests.
+        // ROLE is part of the cluster configuration model; learners are tracked
+        // and replicated to, but are excluded from quorum calculations.
         std::vector<graft::PeerEndpoint> peers;
         for (int i = start_index; i < argc; ++i) {
             const std::string spec = argv[i];
@@ -286,6 +305,9 @@ namespace {
         std::uint16_t port,
         const std::vector<graft::PeerEndpoint> &peers = {}
     ) {
+        // Operational APIs such as redirects, summaries, and join forwarding
+        // need network endpoints in addition to Raft peer ids.  RaftNode itself
+        // only reasons about ids and log state.
         if constexpr (std::is_same_v<typename HandlerPtr::element_type, graft::InMemoryRpcHandler>) {
             handler->set_local_endpoint(bind_host, static_cast<std::int32_t>(port));
             handler->set_known_peer_endpoints(endpoints_from_peers(peers), peer_ids_from_peers(peers));
@@ -297,6 +319,9 @@ namespace {
 
     template<typename HandlerPtr>
     void configure_handler_auth(const HandlerPtr &handler) {
+        // Shared helper keeps persistent and in-memory handler setup identical.
+        // PersistentRpcHandler is a decorator around InMemoryRpcHandler, so most
+        // knobs are applied to its delegate.
         const auto authenticator = shared_secret_authenticator_from_env();
         if (!authenticator.has_value()) {
             return;
@@ -333,6 +358,10 @@ namespace {
 
     template<typename HandlerPtr>
     void configure_handler_operational_policy(const HandlerPtr &handler) {
+        // These knobs affect observability and read behavior, not Raft safety:
+        // telemetry rate limiting protects the operational surface, while the
+        // read lease duration controls how recent leader contact must be before
+        // a local read can be treated as linearizable.
         const auto limit = parse_int32_env("RAFT_TELEMETRY_RATE_LIMIT_PER_MINUTE");
         const auto stuck_millis = parse_int64_env("RAFT_TELEMETRY_RECONFIGURATION_STUCK_MILLIS");
         const auto read_lease_millis = linearizable_read_lease_from_env().count();
@@ -359,6 +388,9 @@ namespace {
         const graft::InMemoryRpcHandler::Endpoint &endpoint,
         const raft::JoinClusterRequest &request
     ) {
+        // Followers can receive administrative requests.  Forwarding lets users
+        // point tooling at any node while still ensuring that configuration
+        // changes are proposed by the current leader.
         try {
             boost::asio::io_context io_context;
             graft::RaftClient client(io_context);
@@ -949,6 +981,8 @@ namespace {
         const std::string &peer_id,
         std::int64_t current_term
     ) {
+        // Minimal passive server: useful for protocol probes, but it does not
+        // run elections or maintain a replicated log.
         boost::asio::io_context io_context;
         auto handler = std::make_shared<graft::StubRpcHandler>(peer_id, current_term);
         graft::RaftServer server(io_context, bind_host, port, std::move(handler));
@@ -963,6 +997,9 @@ namespace {
         std::int64_t last_log_index,
         std::int64_t last_log_term
     ) {
+        // Stateful passive server: answers Raft RPCs through InMemoryRpcHandler
+        // but still lacks the active runtime loops that initiate elections,
+        // heartbeats, or outgoing replication.
         boost::asio::io_context io_context;
         auto handler = std::make_shared<graft::InMemoryRpcHandler>(peer_id, current_term, last_log_index,
                                                                      last_log_term);
@@ -985,6 +1022,8 @@ namespace {
         std::int64_t last_log_term,
         std::vector<graft::PeerEndpoint> peers
     ) {
+        // Passive persistent server: mainly used to verify that incoming RPCs
+        // update durable Raft state correctly across restarts.
         boost::asio::io_context io_context;
         std::vector<std::string> peer_ids;
         peer_ids.reserve(peers.size());
@@ -1025,12 +1064,25 @@ namespace {
         std::string replicate_prefix = "synthetic",
         std::optional<std::int64_t> snapshot_threshold = std::nullopt
     ) {
+        // Active server wiring:
+        //
+        // * RaftServer owns inbound TCP traffic and calls RpcHandler.
+        // * RpcHandler translates protobuf requests to RaftNode operations and
+        //   domain callbacks.
+        // * RaftRuntime owns outbound RPCs: elections, heartbeats, replication,
+        //   read barriers, and dynamic peer endpoint tracking.
+        //
+        // This is the composition an application would normally reproduce,
+        // replacing CLI parsing and demo policies with application services.
         boost::asio::io_context server_io_context;
         boost::asio::io_context client_io_context;
         graft::RaftRuntime runtime(client_io_context, node, std::move(peers), std::move(persist_callback));
         const auto peer_endpoints = runtime.peers();
 
         if (auto in_memory = std::dynamic_pointer_cast<graft::InMemoryRpcHandler>(handler)) {
+            // Domain commands enter Raft through handler callbacks.  The handler
+            // performs edge validation; the runtime appends and replicates the
+            // command; RaftNode applies it only after commitment.
             configure_handler_endpoints(in_memory, bind_host, port, peer_endpoints);
             configure_handler_auth(in_memory);
             configure_handler_authorization(in_memory);
@@ -1044,6 +1096,9 @@ namespace {
             });
             const auto read_lease = linearizable_read_lease_from_env();
             const auto read_timeout = linearizable_read_timeout_from_env();
+            // Queries do not append log entries, so the handler asks the runtime
+            // for a read barrier before serving from local state.  The runtime
+            // confirms recent leader authority using the read-lease model.
             in_memory->set_read_barrier([&runtime, read_lease, read_timeout]() {
                 return runtime.await_linearizable_read(read_lease, read_timeout);
             });
@@ -1051,6 +1106,9 @@ namespace {
             in_memory->set_reconfigure_forwarder(forward_reconfigure_request);
             in_memory->set_join_tracker(
                 [&runtime](const std::string &peer_id, const graft::InMemoryRpcHandler::Endpoint &endpoint) {
+                    // Track the endpoint immediately so the leader can start
+                    // contacting a joining peer even before the configuration
+                    // entry has been committed everywhere.
                     runtime.track_peer(graft::PeerEndpoint{
                         .peer_id = peer_id,
                         .host = endpoint.host,
@@ -1060,6 +1118,8 @@ namespace {
             in_memory->set_membership_updater(
                 [&runtime](const std::vector<std::string> &peer_ids,
                            const std::vector<graft::InMemoryRpcHandler::Endpoint> &endpoints) {
+                    // Once a configuration entry is accepted, keep the runtime's
+                    // address book in sync with the ids stored in Raft state.
                     std::vector<graft::PeerEndpoint> peers;
                     peers.reserve(peer_ids.size());
                     for (std::size_t i = 0; i < peer_ids.size() && i < endpoints.size(); ++i) {
@@ -1073,6 +1133,9 @@ namespace {
                 });
         }
         if (auto persistent = std::dynamic_pointer_cast<graft::PersistentRpcHandler>(handler)) {
+            // Same active wiring as the in-memory case, with the important
+            // difference that committed Raft state is saved through the store
+            // callback supplied by the persistent wrapper.
             configure_handler_endpoints(persistent, bind_host, port, peer_endpoints);
             configure_handler_auth(persistent);
             configure_handler_authorization(persistent);
@@ -1117,6 +1180,9 @@ namespace {
 
         graft::RaftServer server(server_io_context, bind_host, port, std::move(handler));
 
+        // Inbound and outbound work use separate io_context instances.  That
+        // keeps server accepts/reads independent from outbound client RPCs and
+        // timer callbacks used by the Raft runtime.
         std::jthread server_thread([&server]() {
             server.serve_forever();
         });
@@ -1136,6 +1202,9 @@ namespace {
         auto heartbeat_timer = std::make_shared<boost::asio::steady_timer>(client_io_context);
         auto election_timer = std::make_shared<boost::asio::steady_timer>(client_io_context);
 
+        // These timers implement the background behavior that the paper treats
+        // as "servers do periodically": leaders send heartbeats; followers and
+        // candidates start elections after randomized inactivity timeouts.
         std::function<void()> schedule_heartbeat;
         std::function<void(std::chrono::milliseconds)> schedule_election;
 
@@ -1146,6 +1215,9 @@ namespace {
                     return;
                 }
                 if (runtime.node().role() == graft::RaftNode::Role::leader) {
+                    // Heartbeats are empty AppendEntries RPCs.  They also carry
+                    // commit index and leader identity, and they refresh the
+                    // successful-contact timestamps used by read leases.
                     runtime.send_heartbeats_once();
                 }
                 schedule_heartbeat();
@@ -1166,6 +1238,9 @@ namespace {
 
                 const auto idle_for = std::chrono::steady_clock::now() - runtime.node().last_activity();
                 if (idle_for < timeout) {
+                    // Any valid leader/candidate contact resets the election
+                    // clock.  Rescheduling the remaining time avoids starting an
+                    // election just because the timer was already armed.
                     const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(timeout - idle_for);
                     schedule_election(std::max<std::chrono::milliseconds>(std::chrono::milliseconds(1), remaining));
                     return;
@@ -1173,6 +1248,9 @@ namespace {
 
                 const auto became_leader = runtime.run_election_round();
                 if (became_leader) {
+                    // A new leader sends an immediate heartbeat.  This announces
+                    // leadership quickly and initializes follower progress for
+                    // later log replication.
                     heartbeat_timer->cancel();
                     heartbeat_timer->expires_after(std::chrono::milliseconds(0));
                     heartbeat_timer->async_wait([&, heartbeat_timer](const boost::system::error_code &timer_error) {
@@ -1192,6 +1270,9 @@ namespace {
 
         std::jthread replicate_thread;
         if (replicate_interval.has_value()) {
+            // Synthetic workload mode is for demos and Jepsen-style smoke tests:
+            // it continuously appends commands so replication, commitment, and
+            // snapshot compaction can be observed without an external client.
             replicate_thread = std::jthread([&, replicate_interval, replicate_prefix, snapshot_threshold]() {
                 std::size_t replicate_counter = 0;
                 for (;;) {
@@ -1203,6 +1284,9 @@ namespace {
                             const auto snapshot_index = runtime.node().snapshot_index();
                             if (commit_index > snapshot_index && (commit_index - snapshot_index) >= *
                                 snapshot_threshold) {
+                                // The core node snapshots the application state
+                                // machine, not the synthetic string passed here;
+                                // the label remains only as CLI output context.
                                 const auto compacted = runtime.node().compact_snapshot_to(
                                     commit_index,
                                     "auto-snapshot-" + std::to_string(commit_index)
@@ -1239,6 +1323,8 @@ namespace {
         std::int64_t last_log_term,
         std::vector<graft::PeerEndpoint> peers
     ) {
+        // Non-persistent active mode is convenient for short-lived tests.  It is
+        // still a real Raft participant, but restart loses term/vote/log state.
         auto node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
             .peer_id = peer_id,
             .current_term = current_term,
@@ -1263,6 +1349,9 @@ namespace {
         std::int64_t last_log_term,
         std::vector<graft::PeerEndpoint> peers
     ) {
+        // Persistent active mode is the shape expected for real deployments:
+        // Raft metadata, log entries, snapshots, and cluster configuration are
+        // restored before the node rejoins the cluster.
         auto handler = std::make_shared<graft::PersistentRpcHandler>(
             state_file,
             graft::RaftNode::Config{
@@ -1301,6 +1390,9 @@ namespace {
         std::optional<std::int64_t> snapshot_threshold,
         std::vector<graft::PeerEndpoint> peers
     ) {
+        // Adds only the synthetic workload/compaction loop to persistent active
+        // mode.  Application code should normally drive commands through the
+        // client API instead.
         auto handler = std::make_shared<graft::PersistentRpcHandler>(
             state_file,
             graft::RaftNode::Config{
@@ -1337,6 +1429,9 @@ namespace {
         std::int64_t last_log_term,
         std::vector<graft::PeerEndpoint> peers
     ) {
+        // One-shot commands are useful when testing the Raft mechanics in
+        // isolation.  They construct a runtime, execute a single protocol step,
+        // print the resulting state, and then exit.
         boost::asio::io_context io_context;
         graft::RaftRuntime runtime(
             io_context,
@@ -1573,6 +1668,8 @@ int run_cli(int argc, char **argv) {
         }
 
         const std::string command = argv[1];
+        // Commands that address a running node share the leading host/port
+        // arguments; purely local one-shot commands parse their own arguments.
         const auto uses_host_port =
                 command == "cluster-summary" ||
                 command == "telemetry" ||

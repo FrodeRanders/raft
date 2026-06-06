@@ -35,6 +35,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Builds operational, telemetry, and reconfiguration status responses.
+ *
+ * <p>The values reported here are derived from Raft state and leader-side
+ * replication observations, but the health labels are operational policy.  Raft
+ * safety depends on the quorum calculations in {@link RaftNode}; this class
+ * translates those mechanics into API-friendly diagnostics.</p>
+ */
 final class OperationalRequestHandler {
     private final AdapterHandlerContext context;
     private final Map<String, Deque<Long>> telemetryRequestHistory = new HashMap<>();
@@ -58,6 +66,9 @@ final class OperationalRequestHandler {
             return emptyTelemetry("RATE_LIMITED");
         }
         if (request.isRequireLeaderSummary() && !stateMachine.isLeader()) {
+            // Some tools want a cluster-wide view.  Followers can identify the
+            // leader but cannot truthfully summarize leader-side replication
+            // progress, so they return REDIRECT/NO_LEADER instead.
             RaftNode.TelemetrySnapshot snapshot = stateMachine.telemetrySnapshot();
             Peer leader = stateMachine.getKnownLeaderPeer();
             return new TelemetryResponse(
@@ -301,6 +312,9 @@ final class OperationalRequestHandler {
     }
 
     private synchronized boolean allowTelemetryRequest(String requesterId) {
+        // Operational endpoints can be polled aggressively by dashboards.  A
+        // simple per-requester sliding window protects small demo clusters and
+        // tests without bringing in a full rate-limit subsystem.
         if (context.runtimeConfiguration().telemetryRateLimitPerMinute() <= 0) {
             return true;
         }
@@ -335,6 +349,8 @@ final class OperationalRequestHandler {
             return new ClusterTelemetrySummary("", false, false, false, 0, 0, 0, 0L, "", List.of(), List.of(), List.of());
         }
 
+        // Replication status is keyed by peer id because membership views are
+        // configuration-driven while replication observations arrive per peer.
         Map<String, org.gautelis.raft.protocol.TelemetryReplicationStatus> replicationByPeer = new HashMap<>();
         for (var replication : snapshot.replication()) {
             replicationByPeer.put(replication.peerId(), replication);
@@ -361,6 +377,9 @@ final class OperationalRequestHandler {
                 : List.of();
         java.util.Set<String> blockingCurrentPeerSet = new java.util.LinkedHashSet<>(blockingCurrentQuorumPeerIds);
         java.util.Set<String> blockingNextPeerSet = new java.util.LinkedHashSet<>(blockingNextQuorumPeerIds);
+        // Joint consensus remains available only when both old/current and
+        // new/next voting sets have a healthy majority.  This mirrors the commit
+        // and read-lease majority semantics in the Raft core.
         boolean currentQuorumAvailable = hasHealthyQuorum(snapshot.configuration().currentVotingMembers(), snapshot.peerId(), replicationByPeer, snapshot.observedAtMillis());
         boolean nextQuorumAvailable = snapshot.configuration().isJointConsensus()
                 ? hasHealthyQuorum(snapshot.configuration().nextVotingMembers(), snapshot.peerId(), replicationByPeer, snapshot.observedAtMillis())
@@ -408,6 +427,9 @@ final class OperationalRequestHandler {
             java.util.Set<String> blockingCurrentPeerSet,
             java.util.Set<String> blockingNextPeerSet
     ) {
+        // Member summaries include peers that are known by address even if they
+        // are between configurations.  That makes joins, removals, promotions,
+        // and demotions visible while joint consensus is in progress.
         List<ClusterMemberSummary> members = new ArrayList<>();
         List<Peer> clusterPeers = new ArrayList<>();
         clusterPeers.add(new Peer(snapshot.peerId(), null));
@@ -425,6 +447,8 @@ final class OperationalRequestHandler {
             boolean current = currentMember != null;
             boolean next = nextMember != null;
             Peer targetMember = targetConfigurationMember(snapshot.latestKnownConfiguration(), peer.getId());
+            // During joint consensus, the "effective" role shown to operators is
+            // the target role when known; otherwise use next/current membership.
             Peer effectiveMember = targetMember != null ? targetMember : (nextMember != null ? nextMember : (currentMember != null ? currentMember : peer));
             String currentRole = currentMember == null ? "" : currentMember.getRole().name();
             String nextRole = targetMember == null ? "" : targetMember.getRole().name();
@@ -549,6 +573,9 @@ final class OperationalRequestHandler {
     private boolean hasHealthyQuorum(Collection<Peer> members, String selfId,
                                      Map<String, org.gautelis.raft.protocol.TelemetryReplicationStatus> replicationByPeer,
                                      long observedAtMillis) {
+        // The local leader counts as healthy for its own quorum calculation.
+        // Remote voters must have recent successful contact and no repeated
+        // failures to count as operationally healthy.
         int total = 0;
         int healthy = 0;
         for (Peer peer : members) {
@@ -565,6 +592,8 @@ final class OperationalRequestHandler {
     }
 
     private boolean isHealthyVotingPeer(org.gautelis.raft.protocol.TelemetryReplicationStatus replication, long observedAtMillis) {
+        // This is an operational health threshold, not a Raft safety proof.  The
+        // core still uses actual AppendEntries/read-barrier results for decisions.
         if (replication == null || !replication.reachable()) {
             return false;
         }

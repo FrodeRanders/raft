@@ -386,6 +386,8 @@ namespace graft {
         response.set_peer_id(node_->peer_id());
         populate_leader_endpoint(response);
 
+        // Authentication and authorization are application-facing policy checks. They
+        // happen before the command is offered to Raft and therefore cannot imply commit.
         if (const auto auth = authenticate(request.auth_scheme(), request.auth_token()); auth.has_value()) {
             response.set_success(false);
             response.set_status(auth->status);
@@ -395,6 +397,8 @@ namespace graft {
 
         raft::StateMachineCommand command;
         if (!command.ParseFromString(request.command())) {
+            // The C++ demo currently understands the shared key-value command payload.
+            // Domain applications should replace this with their own stable encoding.
             response.set_success(false);
             response.set_status("INVALID");
             response.set_message("failed to parse StateMachineCommand");
@@ -414,6 +418,8 @@ namespace graft {
         if (node_->role() != RaftNode::Role::leader) {
             response.set_success(false);
             if (reference_data_admission_ && local_member_is_learner()) {
+                // Reference-data mode intentionally rejects learner writes rather than
+                // redirecting, matching the Java domain policy for that application.
                 response.set_status("REJECTED");
                 response.set_message("Learner nodes never accept or redirect reference-data writes");
                 return response;
@@ -438,8 +444,11 @@ namespace graft {
 
         std::optional<std::string> command_result;
         if (command_replicator_) {
+            // Active multi-node modes replicate through RaftRuntime and return only
+            // after the entry is committed and applied.
             command_result = command_replicator_(request.command());
         } else {
+            // Single-node demo mode can commit locally because it is its own quorum.
             const auto committed = node_->append_and_commit_local_command(request.command());
             if (committed.has_value()) {
                 command_result = committed->result;
@@ -511,6 +520,9 @@ namespace graft {
         }
 
         if (node_->quorum_size() > 1 && !node_->can_serve_linearizable_read(linearizable_read_lease_millis_)) {
+            // A queryable state machine is not enough for a linearizable read. The leader
+            // first needs recent quorum evidence; if the lease is stale, ask the runtime
+            // to refresh a heartbeat barrier.
             const bool barrier_completed = read_barrier_ && read_barrier_();
             if (!barrier_completed || !node_->can_serve_linearizable_read(linearizable_read_lease_millis_)) {
                 response.set_status("RETRY");
@@ -522,6 +534,8 @@ namespace graft {
 
         const auto result = node_->query_application(request.query());
         if (result.empty()) {
+            // Empty result means unsupported/invalid for this bounded demo state machine.
+            // A production domain can choose a richer encoded "not found" result.
             response.set_status("UNSUPPORTED");
             response.set_message("query could not be applied");
             return response;
@@ -551,6 +565,8 @@ namespace graft {
 
         if (node_->role() != RaftNode::Role::leader) {
             if (const auto leader_endpoint = current_leader_endpoint(); leader_endpoint.has_value()) {
+                // Join and reconfigure requests are leader-only. Followers try to forward
+                // when they have enough endpoint information; otherwise clients retry.
                 if (join_forwarder_ && join_forwarder_(*leader_endpoint, request)) {
                     response.set_success(true);
                     response.set_status("FORWARDED");
@@ -724,11 +740,15 @@ namespace graft {
 
             std::vector<raft::PeerSpec> members;
             if (action == "JOINT") {
+                // Explicit joint configuration: the requester supplies the next member
+                // set. The committed internal command will make current+next active.
                 members.reserve(request.members_size());
                 for (const auto &member: request.members()) {
                     members.push_back(member);
                 }
             } else {
+                // Promote/demote are convenience operations. Build a complete next
+                // configuration from recovered membership and override one member role.
                 const auto &target = request.members(0);
                 if (target.id().empty()) {
                     response.set_success(false);
@@ -794,6 +814,9 @@ namespace graft {
                 *spec = member;
             }
             if (!includes_self) {
+                // Keep the leader in the joint entry unless the caller explicitly
+                // removes it through finalize. This avoids accidental self-removal when
+                // callers provide only remote members.
                 auto *self = internal.mutable_joint()->add_members();
                 self->set_id(node_->peer_id());
                 if (local_endpoint_.has_value()) {
@@ -814,6 +837,8 @@ namespace graft {
             }
 
             if (action == "PROMOTE" || action == "DEMOTE") {
+                // The bounded C++ runtime auto-finalizes role-only transitions so the
+                // CLI/API can expose simple promote/demote commands.
                 raft::InternalRaftCommand finalize;
                 finalize.mutable_finalize();
                 if (!internal_command_replicator_ ||
@@ -972,6 +997,8 @@ namespace graft {
 
     void InMemoryRpcHandler::add_peer_specs(raft::TelemetryResponse &response) const {
         std::unordered_set<std::string> known;
+        // Report current, next and known peers separately so clients can distinguish
+        // stable membership from joint-consensus transition state.
         for (const auto &member: node_->current_member_specs()) {
             auto *peer = response.add_current_members();
             *peer = member;
@@ -1029,6 +1056,8 @@ namespace graft {
         std::unordered_set<std::string> healthy_voters;
         healthy_voters.insert(node_->peer_id());
 
+        // A voter is considered healthy for quorum summaries only if it is reachable
+        // and caught up to the leader's committed index.
         for (const auto &peer_id: voting_peers) {
             const auto found = progress_map.find(peer_id);
             const bool reachable = found != progress_map.end() && found->second.reachable;
@@ -1048,6 +1077,8 @@ namespace graft {
             return !voters.empty() && present >= ((voters.size() / 2) + 1);
         };
         summary.current_quorum_available = has_majority(current_voters);
+        // During joint consensus both sides must be healthy. This mirrors the commit
+        // and read-barrier majority rule rather than reporting a union majority.
         summary.next_quorum_available = node_->joint_consensus() ? has_majority(next_voters) : summary.current_quorum_available;
         summary.quorum_available = summary.current_quorum_available && summary.next_quorum_available;
         summary.reconfiguration_age_millis = reconfiguration_age_millis();
@@ -1083,6 +1114,8 @@ namespace graft {
 
     void InMemoryRpcHandler::populate_member(raft::ClusterMemberSummary &member, const std::string &peer_id, bool local,
                                              const RaftNode::PeerProgress &progress) const {
+        // Member summaries intentionally expose both role and transition state. This
+        // makes stuck promotions/demotions visible to operators and tests.
         const auto current = find_member_spec(node_->current_member_specs(), peer_id);
         const auto next = find_member_spec(node_->next_member_specs(), peer_id);
         const auto effective = node_->joint_consensus() && next.has_value() ? next : current;
@@ -1225,6 +1258,8 @@ namespace graft {
         if (telemetry_rate_limit_per_minute_ <= 0) {
             return true;
         }
+        // Simple per-requester sliding window. It protects high-frequency operational
+        // polling without affecting Raft protocol RPCs.
         const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch())
                 .count();
@@ -1268,6 +1303,8 @@ namespace graft {
         if (!leader_id.has_value()) {
             return std::nullopt;
         }
+        // Redirect responses need endpoint data, not just leader id. The leader may be
+        // local or one of the known peers learned from CLI input or membership messages.
         if (*leader_id == node_->peer_id()) {
             return local_endpoint_;
         }
@@ -1283,8 +1320,12 @@ namespace graft {
           node_(std::make_shared<RaftNode>(std::move(initial_config))),
           delegate_(node_) {
         if (const auto persisted = store_.load(); persisted.has_value()) {
+            // Persistent handlers recover Raft state before serving traffic. This is
+            // where term/vote/log/membership state returns to the in-memory node.
             node_->apply_persistent_state(*persisted);
         } else {
+            // Fresh stores are initialized immediately so later startup failures still
+            // leave an inspectable baseline file.
             store_.save(node_->persistent_state());
         }
     }

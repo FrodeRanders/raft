@@ -25,6 +25,14 @@ import org.gautelis.raft.protocol.Peer;
 import org.gautelis.raft.protocol.ReconfigureClusterRequest;
 import org.gautelis.raft.protocol.ReconfigureClusterResponse;
 
+/**
+ * Handles cluster membership control-plane requests.
+ *
+ * <p>Membership changes are not side-channel mutations.  They are converted to
+ * internal Raft log entries and become effective only after commitment.  This
+ * handler provides the API behavior around that rule: validation, authentication,
+ * leader forwarding, and Java/C++ compatible status strings.</p>
+ */
 final class MembershipRequestHandler {
     private final AdapterHandlerContext context;
 
@@ -44,11 +52,16 @@ final class MembershipRequestHandler {
             return new JoinClusterResponse(stateMachine.getTerm(), context.me().getId(), false, authentication.status(), authentication.message(), knownLeaderId(stateMachine));
         }
         try {
+            // Register endpoint information before proposing the membership
+            // entry.  The committed configuration stores peer identity/role; the
+            // runtime also needs addresses to contact the joining peer.
             context.peerRegistrar().accept(request.getJoiningPeer());
         } catch (IllegalArgumentException e) {
             return new JoinClusterResponse(stateMachine.getTerm(), context.me().getId(), false, "INVALID", e.getMessage(), knownLeaderId(stateMachine));
         }
         if (stateMachine.isLeader()) {
+            // Join is represented as a joint configuration entry.  It must flow
+            // through Raft so every node observes the same membership history.
             boolean accepted = stateMachine.submitJoinConfigurationChange(request.getJoiningPeer());
             if (!accepted) {
                 return new JoinClusterResponse(stateMachine.getTerm(), context.me().getId(), false, "REJECTED", "Join request could not be applied", knownLeaderId(stateMachine));
@@ -58,6 +71,8 @@ final class MembershipRequestHandler {
         }
         Peer leader = stateMachine.getKnownLeaderPeer();
         if (leader != null && !stateMachine.isDecommissioned()) {
+            // Followers forward administrative intent to the known leader.  They
+            // do not locally mutate configuration or admit the joining peer.
             stateMachine.getRaftClient().sendJoinClusterRequest(leader, request);
             return new JoinClusterResponse(stateMachine.getTerm(), context.me().getId(), true, "FORWARDED", "Join request forwarded to leader", leader.getId());
         }
@@ -99,12 +114,18 @@ final class MembershipRequestHandler {
         }
         try {
             for (Peer member : request.getMembers()) {
+                // Keep address knowledge in step with requested configuration
+                // changes so promotion/demotion/removal workflows can still
+                // communicate with affected nodes during the transition.
                 context.peerRegistrar().accept(member);
             }
         } catch (IllegalArgumentException e) {
             return new ReconfigureClusterResponse(stateMachine.getTerm(), context.me().getId(), false, "INVALID", e.getMessage(), knownLeaderId(stateMachine));
         }
         if (stateMachine.isLeader()) {
+            // Joint consensus requires explicit transition entries.  Convenience
+            // actions such as PROMOTE/DEMOTE are translated into the same Raft
+            // configuration machinery instead of special-casing quorum rules.
             boolean accepted = switch (request.getAction()) {
                 case JOINT -> stateMachine.submitJointConfigurationChange(request.getMembers());
                 case FINALIZE -> stateMachine.submitFinalizeConfigurationChange();
@@ -124,6 +145,8 @@ final class MembershipRequestHandler {
         }
         Peer leader = stateMachine.getKnownLeaderPeer();
         if (leader != null && !stateMachine.isDecommissioned()) {
+            // Forwarding preserves an ergonomic admin API without weakening the
+            // Raft rule that configuration changes are leader-proposed log entries.
             stateMachine.getRaftClient().sendReconfigureClusterRequest(leader, request);
             return new ReconfigureClusterResponse(stateMachine.getTerm(), context.me().getId(), true, "FORWARDED", "Reconfiguration request forwarded to leader", leader.getId());
         }

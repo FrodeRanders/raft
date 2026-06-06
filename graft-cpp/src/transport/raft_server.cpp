@@ -11,6 +11,8 @@
 #include "graft/wire/envelope_codec.hpp"
 
 namespace graft {
+    // One Connection handles one TCP stream. The protocol is request/response but the
+    // connection can carry multiple envelopes sequentially.
     class RaftServer::Connection final : public std::enable_shared_from_this<Connection> {
     public:
         Connection(boost::asio::ip::tcp::socket socket, RpcHandlerPtr handler)
@@ -25,6 +27,8 @@ namespace graft {
     private:
         void read_length_byte() {
             auto self = shared_from_this();
+            // Length is protobuf varint32, so read one byte at a time until the high
+            // continuation bit clears.
             boost::asio::async_read(socket_, boost::asio::buffer(length_byte_),
                                     [self](const boost::system::error_code &error, std::size_t) {
                                         if (error) {
@@ -71,6 +75,8 @@ namespace graft {
             reset_frame_state();
             const auto response = dispatch(request_envelope);
             if (!response.has_value()) {
+                // Some handlers may intentionally consume a message without response.
+                // Continue reading rather than closing the connection.
                 read_length_byte();
                 return;
             }
@@ -95,6 +101,8 @@ namespace graft {
                     << '\n';
 
             if (request_envelope.type() == "VoteRequest") {
+                // Dispatch is intentionally explicit rather than reflection-based. It
+                // keeps the shared Java/C++ type names visible and easy to audit.
                 raft::VoteRequest request;
                 if (!request.ParseFromString(request_envelope.payload())) {
                     throw std::runtime_error("failed to parse VoteRequest");

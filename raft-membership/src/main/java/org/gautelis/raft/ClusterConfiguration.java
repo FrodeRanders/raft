@@ -36,6 +36,10 @@ import java.util.Set;
  * Joint consensus configuration:
  * - both {@code currentMembers} and {@code nextMembers} are populated
  * - quorums must satisfy majorities of the voter subsets in both sets
+ *
+ * <p>ClusterConfiguration is deliberately a small immutable value object. The
+ * Raft node stores and snapshots it, while application code should treat it as
+ * consensus metadata rather than domain state.</p>
  */
 public final class ClusterConfiguration {
     private final LinkedHashMap<String, Peer> currentMembers;
@@ -47,6 +51,8 @@ public final class ClusterConfiguration {
     }
 
     public static ClusterConfiguration stable(Collection<Peer> members) {
+        // Normalize once at the boundary so quorum calculations are based on a
+        // deterministic peer-id map, not caller list order or duplicate entries.
         LinkedHashMap<String, Peer> normalized = normalize(members);
         if (normalized.isEmpty()) {
             throw new IllegalArgumentException("Cluster configuration must contain at least one member");
@@ -74,6 +80,8 @@ public final class ClusterConfiguration {
 
     public Collection<Peer> nextVotingMembers() {
         if (!isJointConsensus()) {
+            // In stable mode the next configuration is implicitly the current
+            // one; callers can use nextVotingMembers() without branching.
             return currentVotingMembers();
         }
         return nextMembers.values().stream()
@@ -82,6 +90,8 @@ public final class ClusterConfiguration {
     }
 
     public Collection<Peer> allVotingMembers() {
+        // During joint consensus this is the union of current and next voters.
+        // It is useful for replication/telemetry, but not itself a quorum rule.
         LinkedHashMap<String, Peer> all = new LinkedHashMap<>();
         for (Peer peer : currentVotingMembers()) {
             all.put(peer.getId(), peer);
@@ -119,6 +129,8 @@ public final class ClusterConfiguration {
     }
 
     public ClusterConfiguration transitionTo(Collection<Peer> proposedMembers) {
+        // Enter joint consensus by keeping the committed current set and adding
+        // the proposed next set. Finalization is a separate committed command.
         LinkedHashMap<String, Peer> normalized = normalize(proposedMembers);
         if (normalized.isEmpty()) {
             throw new IllegalArgumentException("Next cluster configuration must contain at least one member");
@@ -133,6 +145,8 @@ public final class ClusterConfiguration {
         if (!isJointConsensus()) {
             return this;
         }
+        // Once the finalize entry commits, the next set becomes the only stable
+        // membership. Old-only voters no longer participate in quorums.
         return new ClusterConfiguration(nextMembers, Map.of());
     }
 
@@ -162,6 +176,8 @@ public final class ClusterConfiguration {
         if (!isJointConsensus()) {
             return hasCurrentMajority(peerIds);
         }
+        // Joint consensus safety hinges on this conjunction: an entry or read
+        // lease must be acknowledged by majorities of both configurations.
         return hasCurrentMajority(peerIds) && hasNextMajority(peerIds);
     }
 
@@ -204,6 +220,9 @@ public final class ClusterConfiguration {
 
             Peer existing = normalized.get(peerId);
             if (existing != null && (!sameAddress(existing.getAddress(), peer.getAddress()) || existing.getRole() != peer.getRole())) {
+                // Duplicate ids are allowed only when they describe the exact
+                // same endpoint and role. Conflicting duplicates would make
+                // quorum and transport behavior ambiguous.
                 throw new IllegalArgumentException("Conflicting peer configuration for id " + peerId + ": " + existing + " vs " + peer);
             }
             normalized.putIfAbsent(peerId, peer);

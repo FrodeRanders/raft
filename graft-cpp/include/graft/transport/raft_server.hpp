@@ -23,16 +23,29 @@
 #include "graft/runtime/rpc_handler.hpp"
 
 namespace graft {
+    // TCP server for the Java-compatible Raft wire protocol.
+    //
+    // RaftServer owns only the listening socket and connection lifecycle.  It
+    // does not know about elections, logs, state machines, or domain commands;
+    // every decoded request is handed to RpcHandler, which is the boundary from
+    // transport concerns into Raft/runtime/domain behavior.
     class RaftServer {
     public:
         RaftServer(boost::asio::io_context &io_context, std::string bind_host, std::uint16_t port,
                    RpcHandlerPtr handler);
 
+        // Start accepting asynchronously.  The caller still owns running the
+        // io_context; tests can call start() and drive the event loop manually.
         void start();
 
+        // Convenience for the CLI/server process: start accepting and run the
+        // io_context until the process is stopped.
         [[noreturn]] void serve_forever();
 
     private:
+        // One Connection instance represents one accepted TCP stream.  The
+        // implementation reads one or more framed protobuf envelopes from that
+        // stream and lets RpcHandler produce response envelopes.
         class Connection;
 
         void start_accept();

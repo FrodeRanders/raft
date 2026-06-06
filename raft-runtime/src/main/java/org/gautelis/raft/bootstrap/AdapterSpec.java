@@ -23,6 +23,11 @@ import java.util.List;
 
 /**
  * Fluent adapter construction spec with sensible runtime defaults.
+ *
+ * <p>AdapterSpec describes the application-facing runtime composition.  It is
+ * intentionally separate from {@code RaftNode.Builder}: applications choose
+ * transport/runtime settings here, while RaftNode receives the already-created
+ * storage, transport client, and state machine dependencies.</p>
  */
 public record AdapterSpec(
         long timeoutMillis,
@@ -82,6 +87,8 @@ public record AdapterSpec(
         }
 
         public AdapterSpec build() {
+            // build() is for runnable adapters.  Tests and policy-only adapters
+            // may use buildDetached() when they do not start transport directly.
             if (transportFactory == null) {
                 throw new IllegalStateException("transportFactory must not be null for a runnable adapter");
             }

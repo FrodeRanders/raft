@@ -21,6 +21,8 @@
 
 namespace graft {
     std::vector<raft::PeerSpec> ClusterMembership::normalize_member_specs(std::vector<raft::PeerSpec> members) {
+        // Deterministic ordering matters because membership appears in snapshots,
+        // summaries and tests. Sorting also makes duplicate elimination predictable.
         std::sort(members.begin(), members.end(), [](const raft::PeerSpec &left, const raft::PeerSpec &right) {
             return left.id() < right.id();
         });
@@ -32,6 +34,8 @@ namespace graft {
                 continue;
             }
             if (member.role().empty()) {
+                // Missing role means voter for compatibility with older peer lists that
+                // only contained ids/endpoints.
                 member.set_role("VOTER");
             }
             if (seen.insert(member.id()).second) {
@@ -48,6 +52,8 @@ namespace graft {
         const std::vector<raft::PeerSpec> &current_members) {
         std::vector<std::string> voters;
         if (current_members.empty()) {
+            // Legacy/static configuration path: the local node plus voting_peers form
+            // the current voter set.
             voters.reserve(voting_peers.size() + 1);
             if (!decommissioned) {
                 voters.push_back(local_peer_id);
@@ -106,6 +112,8 @@ namespace graft {
         if (!has_majority(current_voters)) {
             return false;
         }
+        // Stable config: current majority is enough. Joint config: both sides must
+        // independently have majorities.
         return !joint_consensus || has_majority(next_voters);
     }
 
