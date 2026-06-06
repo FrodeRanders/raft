@@ -5,7 +5,7 @@ Development and tests of this software library has primarily been run on a singl
 individual Raft nodes communicating through different ports on the same host. This is not how
 I expect Raft to be run in domain specific test or production environments. 
 
-For development eronomic reasons, running all nodes on the same host is perfect, but steps need
+For development ergonomic reasons, running all nodes on the same host is perfect, but steps need
 to be taken to accomodate a realistic setup. Therefore, this information relates to how a Raft 
 cluster would operate in a production (or test) runtime environment. 
 
