@@ -32,6 +32,7 @@
 #include "raft.pb.h"
 #include "graft/runtime/raft_runtime.hpp"
 #include "graft/runtime/rpc_handler.hpp"
+#include "graft/runtime/seed_provider.hpp"
 #include "graft/transport/raft_client.hpp"
 #include "graft/transport/raft_server.hpp"
 
@@ -70,6 +71,7 @@ namespace {
                 << "  graft_smoke replicate-put-persistent <peer-id> <state-file> <term> <key> <value> [last-log-index] [last-log-term] <peer-spec>...\n"
                 << "  graft_smoke compact-snapshot <peer-id> <state-file> <index> <snapshot-data> [current-term] [last-log-index] [last-log-term]\n"
                 << "  graft_smoke dump-state <state-file>\n"
+                << "  graft_smoke --node-id <id> --bind <host:port> [--advertise <host:port>] [--cluster-srv <name>] [--peer <peer-spec>]... [--state-file <path>] [--bootstrap-new-cluster=true]\n"
                 << "\n"
                 << "  peer-spec format: <peer-id>@<host>:<port>\n";
     }
@@ -222,6 +224,22 @@ namespace {
         return static_cast<std::int64_t>(std::stoll(*value));
     }
 
+    bool parse_bool_text(const std::string &text, const std::string &field_name) {
+        const auto value = lower_ascii(text);
+        if (value == "true" || value == "1" || value == "yes" || value == "on") {
+            return true;
+        }
+        if (value == "false" || value == "0" || value == "no" || value == "off") {
+            return false;
+        }
+        throw std::runtime_error("invalid boolean for " + field_name + ": " + text);
+    }
+
+    bool parse_bool_env(const char *name, bool fallback) {
+        const auto value = env_value(name);
+        return value.has_value() ? parse_bool_text(*value, name) : fallback;
+    }
+
     std::chrono::milliseconds linearizable_read_lease_from_env() {
         const auto value = parse_int64_env("RAFT_LINEARIZABLE_READ_LEASE_MILLIS").value_or(750);
         return std::chrono::milliseconds(std::max<std::int64_t>(1, value));
@@ -240,6 +258,22 @@ namespace {
             return false;
         }
         throw std::runtime_error("invalid boolean for " + field_name + ": " + text);
+    }
+
+    struct EndpointOption {
+        std::string host;
+        std::uint16_t port;
+    };
+
+    EndpointOption parse_endpoint_option(const std::string &text, const std::string &field_name) {
+        const auto colon = text.rfind(':');
+        if (colon == std::string::npos || colon == 0 || colon == text.size() - 1) {
+            throw std::runtime_error("invalid " + field_name + " endpoint, expected host:port: " + text);
+        }
+        return EndpointOption{
+            .host = text.substr(0, colon),
+            .port = parse_port(text.substr(colon + 1)),
+        };
     }
 
     std::string normalize_peer_role(std::string role) {
@@ -277,6 +311,41 @@ namespace {
             throw std::runtime_error("at least one peer spec is required");
         }
         return peers;
+    }
+
+    graft::PeerEndpoint parse_peer_spec_text(const std::string &spec) {
+        const auto at = spec.find('@');
+        const auto colon = spec.rfind(':');
+        const auto slash = spec.find('/', colon == std::string::npos ? 0 : colon);
+        if (at == std::string::npos || colon == std::string::npos || at == 0 || colon <= at + 1 || colon == spec.
+            size() - 1 || (slash != std::string::npos && slash == spec.size() - 1)) {
+            throw std::runtime_error("invalid peer spec: " + spec);
+        }
+        return graft::PeerEndpoint{
+            .peer_id = spec.substr(0, at),
+            .host = spec.substr(at + 1, colon - at - 1),
+            .port = parse_port(spec.substr(colon + 1, slash == std::string::npos
+                                                        ? std::string::npos
+                                                        : slash - colon - 1)),
+            .role = slash == std::string::npos ? "VOTER" : normalize_peer_role(spec.substr(slash + 1)),
+        };
+    }
+
+    std::vector<graft::PeerEndpoint> deduplicate_peers(std::vector<graft::PeerEndpoint> peers) {
+        std::vector<graft::PeerEndpoint> unique;
+        for (const auto &peer: peers) {
+            const auto found = std::find_if(unique.begin(), unique.end(), [&](const graft::PeerEndpoint &existing) {
+                return existing.peer_id == peer.peer_id;
+            });
+            if (found == unique.end()) {
+                unique.push_back(peer);
+                continue;
+            }
+            if (found->host != peer.host || found->port != peer.port || found->role != peer.role) {
+                throw std::runtime_error("conflicting seed peer definitions for " + peer.peer_id);
+            }
+        }
+        return unique;
     }
 
     std::vector<graft::InMemoryRpcHandler::Endpoint> endpoints_from_peers(
@@ -1422,6 +1491,141 @@ namespace {
         );
     }
 
+    struct OptionStartup {
+        std::string node_id;
+        EndpointOption bind;
+        std::string state_file;
+        std::vector<graft::PeerEndpoint> peers;
+        bool bootstrap_new_cluster;
+    };
+
+    std::vector<std::string> option_values(int argc, char **argv, const std::string &name) {
+        std::vector<std::string> values;
+        const auto prefix = "--" + name + "=";
+        const auto flag = "--" + name;
+        for (int i = 1; i < argc; ++i) {
+            const std::string arg = argv[i];
+            if (arg.rfind(prefix, 0) == 0) {
+                values.push_back(arg.substr(prefix.size()));
+            } else if (arg == flag && i + 1 < argc && std::string(argv[i + 1]).rfind("--", 0) != 0) {
+                values.push_back(argv[++i]);
+            } else if (arg == flag) {
+                values.push_back("true");
+            }
+        }
+        return values;
+    }
+
+    std::optional<std::string> option_value(int argc, char **argv, const std::string &name) {
+        auto values = option_values(argc, argv, name);
+        if (values.empty()) {
+            return std::nullopt;
+        }
+        return values.back();
+    }
+
+    bool uses_option_startup(int argc, char **argv) {
+        if (env_value("RAFT_NODE_ID").has_value() || env_value("RAFT_CLUSTER_SRV").has_value()) {
+            return true;
+        }
+        return argc > 1 && std::string(argv[1]).rfind("--", 0) == 0;
+    }
+
+    OptionStartup parse_option_startup(int argc, char **argv) {
+        auto node_id = option_value(argc, argv, "node-id");
+        if (!node_id.has_value()) {
+            node_id = env_value("RAFT_NODE_ID");
+        }
+        if (!node_id.has_value() || node_id->empty()) {
+            throw std::runtime_error("missing node id; set --node-id or RAFT_NODE_ID");
+        }
+
+        EndpointOption bind{};
+        if (const auto bind_arg = option_value(argc, argv, "bind"); bind_arg.has_value()) {
+            bind = parse_endpoint_option(*bind_arg, "bind");
+        } else {
+            const auto host = env_value("RAFT_BIND_HOST").value_or("0.0.0.0");
+            const auto port = env_value("RAFT_BIND_PORT");
+            if (!port.has_value()) {
+                throw std::runtime_error("missing bind port; set --bind or RAFT_BIND_PORT");
+            }
+            bind = EndpointOption{.host = host, .port = parse_port(*port)};
+        }
+
+        auto state_file_option = option_value(argc, argv, "state-file");
+        if (!state_file_option.has_value()) {
+            state_file_option = env_value("RAFT_STATE_FILE");
+        }
+        const auto state_file = state_file_option.value_or(
+            env_value("RAFT_DATA_DIR").value_or(".") + "/" + *node_id + ".graft.state");
+
+        std::vector<graft::PeerEndpoint> peers;
+        for (const auto &peer_spec: option_values(argc, argv, "peer")) {
+            peers.push_back(parse_peer_spec_text(peer_spec));
+        }
+        if (const auto env_peers = env_value("RAFT_PEERS"); env_peers.has_value()) {
+            std::size_t start = 0;
+            while (start <= env_peers->size()) {
+                const auto comma = env_peers->find(',', start);
+                auto value = env_peers->substr(start, comma == std::string::npos
+                                                          ? std::string::npos
+                                                          : comma - start);
+                const auto first = value.find_first_not_of(" \t\r\n");
+                if (first != std::string::npos) {
+                    const auto last = value.find_last_not_of(" \t\r\n");
+                    peers.push_back(parse_peer_spec_text(value.substr(first, last - first + 1)));
+                }
+                if (comma == std::string::npos) {
+                    break;
+                }
+                start = comma + 1;
+            }
+        }
+
+        auto cluster_srv = option_value(argc, argv, "cluster-srv");
+        if (!cluster_srv.has_value()) {
+            cluster_srv = env_value("RAFT_CLUSTER_SRV");
+        }
+        if (cluster_srv.has_value() && !cluster_srv->empty()) {
+            auto dns_peers = graft::DnsSrvSeedProvider(*cluster_srv).seeds();
+            for (auto &peer: dns_peers) {
+                if (peer.peer_id != *node_id) {
+                    peers.push_back(std::move(peer));
+                }
+            }
+        }
+
+        bool bootstrap = parse_bool_env("RAFT_BOOTSTRAP_NEW_CLUSTER", false);
+        if (const auto bootstrap_arg = option_value(argc, argv, "bootstrap-new-cluster"); bootstrap_arg.has_value()) {
+            bootstrap = parse_bool_text(*bootstrap_arg, "bootstrap-new-cluster");
+        }
+        peers = deduplicate_peers(std::move(peers));
+        if (peers.empty() && !bootstrap) {
+            throw std::runtime_error("no seed peers resolved; refusing to bootstrap without --bootstrap-new-cluster=true");
+        }
+        return OptionStartup{
+            .node_id = *node_id,
+            .bind = bind,
+            .state_file = state_file,
+            .peers = std::move(peers),
+            .bootstrap_new_cluster = bootstrap,
+        };
+    }
+
+    [[noreturn]] void run_option_startup(int argc, char **argv) {
+        auto startup = parse_option_startup(argc, argv);
+        run_active_persistent_server(
+            startup.bind.host,
+            startup.bind.port,
+            startup.node_id,
+            startup.state_file,
+            0,
+            0,
+            0,
+            std::move(startup.peers)
+        );
+    }
+
     int run_election_round(
         const std::string &peer_id,
         std::int64_t current_term,
@@ -1662,6 +1866,9 @@ namespace {
 namespace graft {
 int run_cli(int argc, char **argv) {
     try {
+        if (uses_option_startup(argc, argv)) {
+            run_option_startup(argc, argv);
+        }
         if (argc < 2) {
             print_usage();
             return 1;

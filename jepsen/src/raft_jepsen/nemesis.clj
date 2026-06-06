@@ -128,6 +128,24 @@
            (re-find #"status=([A-Z_]+)")
            second))
 
+(defn- parse-bool [value]
+  (case (some-> value str/lower-case)
+    "true" true
+    "false" false
+    nil))
+
+(defn- parse-cpp-summary [text]
+  (let [raw (into {}
+                  (keep (fn [line]
+                          (when-let [[_ key value] (re-matches #"([^:]+):\s*(.*)" line)]
+                            [(keyword key) value])))
+                  (str/split-lines (or text "")))]
+    {:peerId (:peer_id raw)
+     :status (:status raw)
+     :success (parse-bool (:success raw))
+     :leaderId (:leader_id raw)
+     :clusterHealth (:cluster_health raw)}))
+
 (defn- target-spec [test node]
   (str node "@127.0.0.1:" (raft-db/node-port test node)))
 
@@ -135,14 +153,26 @@
   ;; Nemeses often need current cluster state, for example to locate the leader
   ;; before isolating it. These probes are outside the checked workload; they
   ;; are control-plane observations used to aim faults.
-  (let [{:keys [exit out err]}
-        (shell! (:repo-root test)
-                (java-command (:jar-path test) "cluster-summary" "--json" (target-spec test node)))
-        response (parse-json out)]
-    (when-not (zero? exit)
-      (throw (ex-info "Cluster summary command failed"
-                      {:node node :exit exit :out out :err err})))
-    response))
+  (if (raft-db/docker-backend? test)
+    (let [{:keys [exit out err]}
+          (shell! (:repo-root test)
+                  [(raft-db/resolved-cpp-bin test)
+                   "cluster-summary"
+                   "127.0.0.1"
+                   (str (raft-db/node-port test node))
+                   "jepsen-control"])]
+      (when-not (zero? exit)
+        (throw (ex-info "Docker/SRV cluster summary command failed"
+                        {:node node :exit exit :out out :err err})))
+      (parse-cpp-summary out))
+    (let [{:keys [exit out err]}
+          (shell! (:repo-root test)
+                  (java-command (:jar-path test) "cluster-summary" "--json" (target-spec test node)))
+          response (parse-json out)]
+      (when-not (zero? exit)
+        (throw (ex-info "Cluster summary command failed"
+                        {:node node :exit exit :out out :err err})))
+      response)))
 
 (defn- telemetry-summary [test node]
   (let [{:keys [exit out err]}
@@ -198,8 +228,7 @@
             (try
               (when-let [response (cluster-summary test node)]
                 (let [leader-id (some-> (:leaderId response) str/trim not-empty)]
-                  (when (and (:success response)
-                             leader-id
+                  (when (and leader-id
                              (some #(= leader-id %) known-nodes))
                     leader-id)))
               (catch Throwable _
@@ -311,14 +340,18 @@
   ;; Partition helpers work at the port level, but nemesis histories are easier
   ;; to read in node terms. Return both so logs show the logical target and the
   ;; actual ports that were filtered.
-  (let [ports (mapv #(raft-db/node-port test %) nodes)]
-    (apply run-script! test "isolate" (map str ports))
-    {:nodes (vec nodes)
-     :ports ports}))
+  (if (raft-db/docker-backend? test)
+    (raft-db/docker-isolate-nodes! test nodes)
+    (let [ports (mapv #(raft-db/node-port test %) nodes)]
+      (apply run-script! test "isolate" (map str ports))
+      {:nodes (vec nodes)
+       :ports ports})))
 
 (defn- heal-isolation! [test isolation]
   (when isolation
-    (apply run-script! test "heal" (map str (:ports isolation)))))
+    (if (raft-db/docker-backend? test)
+      (raft-db/docker-heal-isolation! test isolation)
+      (apply run-script! test "heal" (map str (:ports isolation))))))
 
 (defn- leader-minority-nodes [test]
   (when-let [leader (leader-node test)]

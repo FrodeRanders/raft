@@ -150,14 +150,55 @@ Current mixed-run limitations:
 - only `membership-join-promote` currently supports choosing a C++ joining node
 - the C++ client path currently covers key-value put/get/CAS operations, not every raft-dist administrative command
 
+## Docker/SRV Runs
+
+DNS SRV based cluster startup is validated at two levels. The first level is a fast Docker Compose smoke suite in the repository root:
+
+```text
+docker/run-srv-smoke.sh java
+docker/run-srv-smoke.sh cpp
+docker/run-srv-smoke.sh mixed
+docker/run-srv-suite.sh
+```
+
+Those scripts build images, start CoreDNS plus three Raft nodes, probe all published node ports, and tear the cluster down.
+
+The second level is a Jepsen backend that runs the same key-value workload and linearizability checker against the Compose/SRV topology:
+
+```text
+./run-docker-srv.sh smoke
+./run-docker-srv.sh partition
+./run-docker-srv.sh all
+```
+
+You can also call the Clojure entrypoint directly:
+
+```text
+clojure -M:run --backend docker-srv --srv-mode java --time-limit 8 --concurrency 4
+clojure -M:run --backend docker-srv --srv-mode cpp --client-impl cpp --time-limit 8 --concurrency 4
+clojure -M:run --backend docker-srv --srv-mode mixed --client-impl mixed --nemesis partition-leader
+```
+
+Docker/SRV Jepsen mode currently uses the fixed three-node Compose topology:
+
+- `--srv-mode java`: three Java nodes
+- `--srv-mode cpp`: three C++ nodes
+- `--srv-mode mixed`: one Java node and two C++ nodes
+
+The Docker DB starts and stops Compose services rather than local processes, maps Jepsen node names to Compose service names (`raft-1`, `raft-2`, `raft-3`), captures `docker compose logs` into each node work directory, and applies network partitions by disconnecting/reconnecting containers from the Compose network.
+
+Supported Docker/SRV Jepsen scenarios are baseline, `crash-restart`, `partition-one`, `partition-leader`, and `partition-leader-minority`.
+Dynamic membership and persistence-loss scenarios remain local-harness scenarios for now because they need a generated SRV zone/Compose topology and explicit Docker volume manipulation for nodes beyond the static three SRV records.
+
 ## Layout
 
 - `src/raft_jepsen/core.clj`: main Jepsen test definition and CLI entrypoint
-- `src/raft_jepsen/db.clj`: local process lifecycle for Java and optional C++ nodes
+- `src/raft_jepsen/db.clj`: local process lifecycle plus Docker/SRV Compose lifecycle
 - `src/raft_jepsen/client.clj`: shell-based Java/C++ KV client adapter
 - `src/raft_jepsen/nemesis.clj`: process crash/restart nemesis
 - `src/raft_jepsen/observer.clj`: JSONL observability snapshots for correlation
 - `run-suite.sh`: serial suite runner for multiple Jepsen scenarios in separate processes
+- `run-docker-srv.sh`: Docker/SRV Jepsen suite runner
 - `scripts/partition.sh`: privileged local packet-filter helper for partition tests
 
 ## Notes

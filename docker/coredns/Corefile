@@ -1,0 +1,11 @@
+raft.local:53 {
+    file /etc/coredns/raft.local.db
+    log
+    errors
+}
+
+.:53 {
+    forward . 1.1.1.1 8.8.8.8
+    log
+    errors
+}

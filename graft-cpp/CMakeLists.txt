@@ -35,14 +35,21 @@ target_include_directories(graft_proto PUBLIC
 )
 
 target_link_libraries(graft_proto PUBLIC
+    protobuf::libprotobuf
+)
+
+foreach(ABSL_TARGET
     absl::base
     absl::check
     absl::log
     absl::log_internal_check_op
     absl::log_internal_message
     absl::strings
-    protobuf::libprotobuf
 )
+    if(TARGET ${ABSL_TARGET})
+        target_link_libraries(graft_proto PUBLIC ${ABSL_TARGET})
+    endif()
+endforeach()
 
 add_library(graft_transport STATIC
     src/app/cli.cpp
@@ -52,6 +59,7 @@ add_library(graft_transport STATIC
     src/core/snapshot_codec.cpp
     src/runtime/raft_runtime.cpp
     src/runtime/rpc_handler.cpp
+    src/runtime/seed_provider.cpp
     src/storage/persistent_state_store.cpp
     src/transport/raft_server.cpp
 )
@@ -66,6 +74,10 @@ target_include_directories(graft_transport PUBLIC
 target_link_libraries(graft_transport PUBLIC
     graft_proto
 )
+
+if(UNIX)
+    target_link_libraries(graft_transport PUBLIC resolv)
+endif()
 
 target_compile_definitions(graft_transport PUBLIC
     BOOST_ERROR_CODE_HEADER_ONLY
@@ -91,6 +103,7 @@ if(Catch2_FOUND)
         tests/raft_node_membership_tests.cpp
         tests/snapshot_codec_tests.cpp
         tests/raft_node_state_machine_tests.cpp
+        tests/seed_provider_tests.cpp
         tests/test_main.cpp
     )
 

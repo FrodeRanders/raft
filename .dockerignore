@@ -1,0 +1,11 @@
+.git
+.idea
+**/.DS_Store
+**/target
+!raft-dist/target
+!raft-dist/target/raft-1.0-SNAPSHOT.jar
+graft-cpp/build
+graft-cpp/cmake-build-debug
+jepsen/.cpcache
+jepsen/work
+*.log

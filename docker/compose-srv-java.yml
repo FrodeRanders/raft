@@ -1,0 +1,96 @@
+services:
+  dns:
+    image: coredns/coredns:latest
+    container_name: raft-dns
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes:
+      - ./coredns/Corefile:/etc/coredns/Corefile:ro
+      - ./coredns/raft.local.db:/etc/coredns/raft.local.db:ro
+    networks:
+      raft-net:
+        ipv4_address: 10.77.0.10
+
+  raft-1:
+    build:
+      context: ..
+      dockerfile: docker/raft-java.Dockerfile
+    image: graft-java:local
+    container_name: raft-1
+    dns:
+      - 10.77.0.10
+    environment:
+      RAFT_NODE_ID: raft-1
+      RAFT_BIND_HOST: 0.0.0.0
+      RAFT_BIND_PORT: 7000
+      RAFT_ADVERTISE_HOST: raft-1.raft.local
+      RAFT_ADVERTISE_PORT: 7000
+      RAFT_CLUSTER_SRV: _raft._tcp.raft.local
+      RAFT_DATA_DIR: /data
+    ports:
+      - "17001:7000"
+    volumes:
+      - raft-1-data:/data
+    networks:
+      raft-net:
+        ipv4_address: 10.77.0.11
+    depends_on:
+      - dns
+
+  raft-2:
+    image: graft-java:local
+    container_name: raft-2
+    dns:
+      - 10.77.0.10
+    environment:
+      RAFT_NODE_ID: raft-2
+      RAFT_BIND_HOST: 0.0.0.0
+      RAFT_BIND_PORT: 7000
+      RAFT_ADVERTISE_HOST: raft-2.raft.local
+      RAFT_ADVERTISE_PORT: 7000
+      RAFT_CLUSTER_SRV: _raft._tcp.raft.local
+      RAFT_DATA_DIR: /data
+    ports:
+      - "17002:7000"
+    volumes:
+      - raft-2-data:/data
+    networks:
+      raft-net:
+        ipv4_address: 10.77.0.12
+    depends_on:
+      - dns
+      - raft-1
+
+  raft-3:
+    image: graft-java:local
+    container_name: raft-3
+    dns:
+      - 10.77.0.10
+    environment:
+      RAFT_NODE_ID: raft-3
+      RAFT_BIND_HOST: 0.0.0.0
+      RAFT_BIND_PORT: 7000
+      RAFT_ADVERTISE_HOST: raft-3.raft.local
+      RAFT_ADVERTISE_PORT: 7000
+      RAFT_CLUSTER_SRV: _raft._tcp.raft.local
+      RAFT_DATA_DIR: /data
+    ports:
+      - "17003:7000"
+    volumes:
+      - raft-3-data:/data
+    networks:
+      raft-net:
+        ipv4_address: 10.77.0.13
+    depends_on:
+      - dns
+      - raft-1
+
+networks:
+  raft-net:
+    ipam:
+      config:
+        - subnet: 10.77.0.0/24
+
+volumes:
+  raft-1-data:
+  raft-2-data:
+  raft-3-data:

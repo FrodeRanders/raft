@@ -31,6 +31,9 @@
 (defn- default-workdir []
   (.getCanonicalPath (io/file "work")))
 
+(defn- docker-node-names [node-count]
+  (mapv #(str "raft-" %) (range 1 (inc node-count))))
+
 (defn- parse-args [args]
   ;; Jepsen tests are ordinary Clojure values, so this harness keeps CLI
   ;; parsing deliberately small: parse flags into one opts map, validate it in
@@ -65,6 +68,9 @@
           "--node-impls" (recur (assoc opts :node-impl-list (parse-node-impls value)) rest)
           "--client-impl" (recur (assoc opts :client-impl (keyword (str/lower-case value))) rest)
           "--joining-impl" (recur (assoc opts :joining-impl (keyword (str/lower-case value))) rest)
+          "--backend" (recur (assoc opts :backend (keyword (str/lower-case value))) rest)
+          "--srv-mode" (recur (assoc opts :srv-mode (keyword (str/lower-case value))) rest)
+          "--compose-project" (recur (assoc opts :compose-project value) rest)
           "--time-limit" (recur (assoc opts :time-limit (parse-long-arg value)) rest)
           "--concurrency" (recur (assoc opts :concurrency (parse-long-arg value)) rest)
           "--base-port" (recur (assoc opts :base-port (parse-long-arg value)) rest)
@@ -94,6 +100,9 @@
     "  --node-impls <list>   Comma-separated node implementations, e.g. java,cpp,java"
     "  --client-impl <impl>  Client CLI implementation, java|cpp|mixed"
     "  --joining-impl <impl> Implementation for membership-join-promote joining node, java|cpp"
+    "  --backend <backend>   local|docker-srv, default local"
+    "  --srv-mode <mode>     Docker/SRV Compose mode, java|cpp|mixed"
+    "  --compose-project <p> Docker Compose project name for docker-srv"
     "  --time-limit <sec>    Workload duration, default 30"
     "  --concurrency <n>     Client concurrency, default 10"
     "  --base-port <port>    First node port, default 10080"
@@ -111,11 +120,43 @@
   ;; The important Jepsen convention here is that :nodes are opaque node names;
   ;; implementation type, ports, and paths live in the test map instead of
   ;; being encoded into those names.
-  (let [nodes (:nodes opts)
-        impls (or (:node-impl-list opts) (vec (repeat (count nodes) :java)))
+  (let [backend (get opts :backend :local)
+        srv-mode (get opts :srv-mode :java)
+        opts (cond-> opts
+               (= :docker-srv backend)
+               (assoc :node-count 3
+                      :nodes (docker-node-names 3)
+                      :base-port 17001
+                      :srv-mode srv-mode))
+        nodes (:nodes opts)
+        impls (or (:node-impl-list opts)
+                  (case srv-mode
+                    :java (vec (repeat (count nodes) :java))
+                    :cpp (vec (repeat (count nodes) :cpp))
+                    :mixed [:java :cpp :cpp]
+                    (vec (repeat (count nodes) :java))))
         joining-impl (:joining-impl opts)
         client-impl (:client-impl opts)
         allowed #{:java :cpp}]
+    (when-not (#{:local :docker-srv} backend)
+      (throw (ex-info "Unsupported backend"
+                      {:backend backend :allowed #{:local :docker-srv}})))
+    (when-not (#{:java :cpp :mixed} srv-mode)
+      (throw (ex-info "Unsupported Docker/SRV mode"
+                      {:srv-mode srv-mode :allowed #{:java :cpp :mixed}})))
+    (when (and (= :docker-srv backend)
+               (not (#{3} (:node-count opts))))
+      (throw (ex-info "Docker/SRV backend currently uses the fixed three-node Compose topology"
+                      {:node-count (:node-count opts)})))
+    (when (and (= :docker-srv backend)
+               (#{"persistence-loss-restart"
+                  "membership-join-promote"
+                  "membership-demote"
+                  "membership-remove-follower"
+                  "membership-remove-leader"
+                  "membership-remove-follower-partition-leader"} (:nemesis-mode opts)))
+      (throw (ex-info "Docker/SRV backend supports baseline, crash-restart, and partition nemeses; dynamic membership needs a generated SRV zone"
+                      {:nemesis-mode (:nemesis-mode opts)})))
     (when-not (= (count nodes) (count impls))
       (throw (ex-info "--node-impls count must match --node-count"
                       {:node-count (count nodes)
@@ -133,6 +174,8 @@
                       {:impl client-impl :allowed #{:java :cpp :mixed}})))
     (-> opts
         (assoc :node-impls (zipmap nodes impls))
+        (assoc :backend backend
+               :srv-mode srv-mode)
         (dissoc :node-impl-list))))
 
 (def cas-values ["v0" "v1" "v2" "v3" "v4"])
@@ -329,13 +372,15 @@
   (merge
    tests/noop-test
    (workload opts)
-   {:name (str "raft-kv-local-" (:node-count opts) "n")
+    {:name (str "raft-kv-" (name (:backend opts)) "-" (:node-count opts) "n")
     :os os/noop
     :remote local-remote/remote
     :nodes (:nodes opts)
     ;; local-db starts and kills local OS processes, dispatching each node to
     ;; the Java or C++ command builder according to :node-impls.
-    :db (raft-db/local-db)
+    :db (case (:backend opts)
+          :local (raft-db/local-db)
+          :docker-srv (raft-db/docker-db))
     ;; The Jepsen client can drive operations through the Java CLI, the C++
     ;; graft_smoke CLI, or by matching each target node's implementation.
     :client (raft-client/client opts)
@@ -350,6 +395,9 @@
     :node-impls (:node-impls opts)
     :client-impl (:client-impl opts)
     :joining-impl (:joining-impl opts)
+    :backend (:backend opts)
+    :srv-mode (:srv-mode opts)
+    :compose-project (:compose-project opts)
     :cpp-bin (:cpp-bin opts)
     :repo-root (:repo-root opts)
     :workdir (:workdir opts)
@@ -365,7 +413,7 @@
       (println (usage))
       (do
         (let [opts (assoc opts :jar-path (raft-db/resolved-jar-path opts))]
-          (println "Running local Jepsen harness with options:" (pr-str (dissoc opts :help)))
+          (println "Running Raft Jepsen harness with options:" (pr-str (dissoc opts :help)))
           (try
             (let [result (jepsen/run! (raft-test opts))
                   valid? (or (:valid? result)
