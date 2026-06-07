@@ -43,7 +43,7 @@ Useful directions:
 
 ## Priority 4: Mixed Java/C++ Extended Matrix
 
-Status: open
+Status: expanded in local mixed suite; snapshot-transfer and full Docker/SRV mixed matrix still open
 
 Mixed runs exist, but the full extended suite is still mostly local/static.
 Extend Java/C++ combinations across leader partition, leader removal, follower

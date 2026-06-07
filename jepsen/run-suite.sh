@@ -97,6 +97,11 @@ run_mixed() {
   run_case mixed-cpp-leader-cpp-joiner 21780 --time-limit 12 --concurrency 4 --node-count 3 --node-impls cpp,java,java --nemesis membership-join-promote --nemesis-interval 3 --joining-impl cpp
   run_case mixed-cpp-client 21880 --time-limit 8 --concurrency 4 --node-count 3 --node-impls java,cpp,java --client-impl cpp
   run_case mixed-target-client 21980 --time-limit 8 --concurrency 4 --node-count 3 --node-impls cpp,java,java --client-impl mixed
+  run_case mixed-partition-leader 22080 --time-limit 12 --concurrency 4 --node-count 3 --node-impls java,cpp,java --nemesis partition-leader --nemesis-interval 3
+  run_case mixed-partition-leader-minority 22180 --time-limit 12 --concurrency 4 --node-count 3 --node-impls cpp,java,java --nemesis partition-leader-minority --nemesis-interval 3
+  run_case mixed-persistence-loss-restart 22280 --time-limit 12 --concurrency 4 --node-count 3 --node-impls java,cpp,java --nemesis persistence-loss-restart --nemesis-interval 3 --snapshot-min-entries 5 --snapshot-chunk-bytes 1024
+  run_case mixed-remove-follower 22380 --time-limit 12 --concurrency 4 --node-count 3 --node-impls java,cpp,java --nemesis membership-remove-follower --nemesis-interval 3
+  run_case mixed-remove-leader 22480 --time-limit 12 --concurrency 4 --node-count 3 --node-impls cpp,java,java --nemesis membership-remove-leader --nemesis-interval 3
 }
 
 case "${suite}" in

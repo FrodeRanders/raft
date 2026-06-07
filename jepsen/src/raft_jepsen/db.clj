@@ -263,7 +263,8 @@
                     {:node node :backend (:backend test)}))
     (do
       (local-stop-node! test node)
-      (delete-recursively! (node-data-dir test node)))))
+      (delete-recursively! (node-data-dir test node))
+      (delete-recursively! (cpp-state-file test node)))))
 
 (defn- await-port! [port timeout-ms]
   ;; setup! should not return until the node can accept client connections.

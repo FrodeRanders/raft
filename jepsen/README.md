@@ -139,6 +139,8 @@ To run mixed Java/C++ validation, build the C++ smoke binary and pass node imple
 ./run-local.sh --node-count 3 --node-impls cpp,java,java --time-limit 8 --concurrency 4
 ./run-local.sh --node-count 3 --node-impls java,cpp,java --client-impl cpp --time-limit 8 --concurrency 4
 ./run-local.sh --node-count 3 --node-impls cpp,java,java --client-impl mixed --time-limit 8 --concurrency 4
+./run-local.sh --node-count 3 --node-impls java,cpp,java --nemesis partition-leader --time-limit 12 --concurrency 4
+./run-local.sh --node-count 3 --node-impls java,cpp,java --nemesis persistence-loss-restart --snapshot-min-entries 5 --time-limit 12 --concurrency 4
 ./run-local.sh --node-count 3 --node-impls java,cpp,java --nemesis membership-join-promote --joining-impl cpp
 ./run-local.sh --node-count 3 --node-impls cpp,java,java --nemesis membership-join-promote --joining-impl cpp
 ./run-suite.sh mixed
@@ -147,7 +149,7 @@ To run mixed Java/C++ validation, build the C++ smoke binary and pass node imple
 `--node-impls` must contain exactly one implementation per node. Supported values are `java` and `cpp`.
 The harness starts Java nodes with the shaded `raft-dist` jar and initial C++ nodes with `graft_smoke serve-active-persistent`.
 C++ membership joiners are started with `graft_smoke serve-persistent` and admitted through the same explicit join request as Java joiners.
-The mixed suite includes a C++-first membership case, which exercises C++ leader handling for join admission, reconfiguration status, and learner promotion.
+The mixed suite includes C++-first membership, partition, persistence-loss restart, and removal cases so Java and C++ nodes are exercised as both leaders and followers across ordinary workload and administrative faults.
 
 `--client-impl` controls the CLI used by Jepsen operations:
 
