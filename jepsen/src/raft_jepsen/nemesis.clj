@@ -7,7 +7,7 @@
             [raft-jepsen.db :as raft-db]
             [raft-jepsen.observer :as observer]))
 
-(declare leader-node)
+(declare leader-node telemetry-detail wait-for!)
 
 (defn- random-node
   ;; Nemeses choose targets from Jepsen's logical :nodes list. Keeping target
@@ -96,6 +96,62 @@
         (when-let [node @disrupted-node]
           (raft-db/start-node! test node true)
           (reset! disrupted-node nil))))))
+
+(defn- snapshot-boundary-node [test]
+  ;; A snapshot-boundary fault should be aimed at a node that has actually
+  ;; compacted. Telemetry gives us the externally visible snapshot index, so the
+  ;; nemesis waits for a real boundary rather than guessing from write counts.
+  (wait-for! 90000 500
+             #(let [leader (leader-node test)
+                    candidates (shuffle (:nodes test))]
+                (some (fn [node]
+                        (try
+                          (let [summary (telemetry-detail test node)
+                                snapshot-index (long (or (:snapshotIndex summary) 0))]
+                            (when (and (:success summary)
+                                       (pos? snapshot-index)
+                                       (not= node leader))
+                              {:node node
+                               :snapshot-index snapshot-index
+                               :snapshot-term (long (or (:snapshotTerm summary) 0))
+                               :leader leader}))
+                          (catch Throwable _
+                            nil)))
+                      candidates))))
+
+(defn snapshot-boundary-restart []
+  ;; Restart immediately after observing compaction. This covers the common
+  ;; durable-state edge where the node has persisted a compacted prefix and must
+  ;; recover with snapshot metadata, remaining log suffix, and applied state in
+  ;; agreement.
+  (reify
+    jepsen.nemesis/Nemesis
+    (setup! [this _test] this)
+    (invoke! [_ test op]
+      (case (:f op)
+        :start (if-let [{:keys [node snapshot-index snapshot-term leader]} (snapshot-boundary-node test)]
+                 (do
+                   (observer/capture-safe! test "nemesis-snapshot-boundary-restart"
+                                           {:node node
+                                            :op {:f :start}
+                                            :extra {:phase :before-restart
+                                                    :snapshotIndex snapshot-index
+                                                    :snapshotTerm snapshot-term
+                                                    :leader leader}})
+                   (raft-db/stop-node! test node)
+                   (raft-db/start-node! test node true)
+                   (observer/capture-safe! test "nemesis-snapshot-boundary-restart"
+                                           {:node node
+                                            :op {:f :start}
+                                            :extra {:phase :after-restart
+                                                    :snapshotIndex snapshot-index
+                                                    :snapshotTerm snapshot-term
+                                                    :leader leader}})
+                   (assoc op :type :info :value {node {:restarted-after-snapshot-index snapshot-index
+                                                        :snapshot-term snapshot-term}}))
+                 (assoc op :type :info :error :snapshot-boundary-timeout))
+        (assoc op :type :info :error :unsupported-nemesis-op)))
+    (teardown! [_ _test])))
 
 (defn process-pause []
   ;; Pause/resume models stop-the-world behavior: the process remains alive and
@@ -250,6 +306,16 @@
         response (parse-json out)]
     (when-not (zero? exit)
       (throw (ex-info "Telemetry summary command failed"
+                      {:node node :exit exit :out out :err err})))
+    response))
+
+(defn- telemetry-detail [test node]
+  (let [{:keys [exit out err]}
+        (shell! (:repo-root test)
+                (java-command (:jar-path test) "telemetry" "--json" (target-spec test node)))
+        response (parse-json out)]
+    (when-not (zero? exit)
+      (throw (ex-info "Telemetry detail command failed"
                       {:node node :exit exit :out out :err err})))
     response))
 

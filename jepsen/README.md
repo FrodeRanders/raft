@@ -55,6 +55,7 @@ Optional overrides:
 ./run-local.sh --node-count 5 --nemesis process-pause
 ./run-local.sh --node-count 5 --nemesis clock-skew --clock-skew-millis 5000
 ./run-local.sh --node-count 5 --nemesis persistence-loss-restart --snapshot-min-entries 5
+./run-local.sh --node-count 5 --nemesis snapshot-boundary-restart
 ./run-local.sh --node-count 5 --nemesis partition-leader
 ./run-local.sh --node-count 5 --nemesis partition-leader-minority
 ./run-local.sh --node-count 5 --nemesis membership-join-promote
@@ -84,7 +85,7 @@ Supported options:
 - `--concurrency <n>`: Jepsen client concurrency
 - `--base-port <port>`: first node port, default `10080`
 - `--node-count <n>`: number of local nodes, default `5`
-- `--nemesis <mode>`: `none`, `crash-restart`, `process-pause`, `clock-skew`, `persistence-loss-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, `membership-join-promote`, `membership-demote`, `membership-remove-follower`, `membership-remove-leader`, or `membership-remove-follower-partition-leader`
+- `--nemesis <mode>`: `none`, `crash-restart`, `process-pause`, `clock-skew`, `persistence-loss-restart`, `snapshot-boundary-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, `membership-join-promote`, `membership-demote`, `membership-remove-follower`, `membership-remove-leader`, or `membership-remove-follower-partition-leader`
 - `--nemesis-interval <seconds>`: delay between crash/restart actions
 - `--clock-skew-millis <ms>`: logical Raft clock offset for `clock-skew`, default `5000`
 - `--workdir <path>`: local node state/log directory
@@ -103,6 +104,8 @@ These Jepsen scenarios are meant to approximate concrete runtime conditions rath
   This stresses read leases, election timing, and stale-leader behavior without changing the host operating-system clock for the whole test machine.
 - `persistence-loss-restart`: stops one non-leader follower, deletes its local `data` directory, then restarts it from empty state.
   This emulates disk replacement, volume loss, or state-directory corruption recovery where the node must rejoin from replicated log or snapshot transfer.
+- `snapshot-boundary-restart`: waits until telemetry shows that a follower has compacted to a snapshot, then restarts it while preserving state.
+  This emulates process loss immediately after compaction and verifies that recovery keeps snapshot metadata, remaining log entries, and applied state consistent.
 - `partition-one`: isolates one random node by blocking its local TCP port.
   This emulates a single-node network reachability failure, firewall issue, or local routing break.
 - `partition-leader`: discovers the current leader and isolates it.

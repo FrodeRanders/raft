@@ -113,7 +113,7 @@
     "  --snapshot-min-entries <n>  Override raft.snapshot.min.entries"
     "  --snapshot-chunk-bytes <n>  Override raft.snapshot.chunk.bytes"
     "  --node-count <n>      Number of local nodes, default 5"
-    "  --nemesis <mode>      none|crash-restart|process-pause|clock-skew|persistence-loss-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower|membership-remove-leader|membership-remove-follower-partition-leader, default none"
+    "  --nemesis <mode>      none|crash-restart|process-pause|clock-skew|persistence-loss-restart|snapshot-boundary-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower|membership-remove-leader|membership-remove-follower-partition-leader, default none"
     "  --nemesis-interval <sec> Nemesis interval, default 5"
     "  --clock-skew-millis <ms> Logical clock offset for clock-skew nemesis, default 5000"
     "  --workdir <path>      Local work directory, default ./work"]))
@@ -154,12 +154,13 @@
     (when (and (= :docker-srv backend)
                (#{"persistence-loss-restart"
                   "clock-skew"
+                  "snapshot-boundary-restart"
                   "membership-join-promote"
                   "membership-demote"
                   "membership-remove-follower"
                   "membership-remove-leader"
                   "membership-remove-follower-partition-leader"} (:nemesis-mode opts)))
-      (throw (ex-info "Docker/SRV backend supports baseline, crash-restart, process-pause, and partition nemeses; clock skew and dynamic membership need generated service definitions"
+      (throw (ex-info "Docker/SRV backend supports baseline, crash-restart, process-pause, and partition nemeses; clock skew, snapshot boundary, and dynamic membership need generated service definitions"
                       {:nemesis-mode (:nemesis-mode opts)})))
     (when-not (= (count nodes) (count impls))
       (throw (ex-info "--node-impls count must match --node-count"
@@ -177,6 +178,10 @@
       (throw (ex-info "Unsupported client implementation"
                       {:impl client-impl :allowed #{:java :cpp :mixed}})))
     (-> opts
+        (cond-> (= "snapshot-boundary-restart" (:nemesis-mode opts))
+          (update :snapshot-min-entries #(or % 5))
+          (= "snapshot-boundary-restart" (:nemesis-mode opts))
+          (update :snapshot-chunk-bytes #(or % 1024)))
         (assoc :node-impls (zipmap nodes impls))
         (assoc :backend backend
                :srv-mode srv-mode)
@@ -300,6 +305,7 @@
     "process-pause" (raft-nemesis/process-pause)
     "clock-skew" (raft-nemesis/clock-skew)
     "persistence-loss-restart" (raft-nemesis/persistence-loss-restart)
+    "snapshot-boundary-restart" (raft-nemesis/snapshot-boundary-restart)
     "partition-one" (raft-nemesis/partition-one)
     "partition-leader" (raft-nemesis/partition-leader)
     "partition-leader-minority" (raft-nemesis/partition-leader-minority)
@@ -326,6 +332,10 @@
      (gen/sleep (:nemesis-interval opts))
      (gen/once {:f :start}))
     "membership-remove-follower"
+    (gen/phases
+     (gen/sleep (:nemesis-interval opts))
+     (gen/once {:f :start}))
+    "snapshot-boundary-restart"
     (gen/phases
      (gen/sleep (:nemesis-interval opts))
      (gen/once {:f :start}))

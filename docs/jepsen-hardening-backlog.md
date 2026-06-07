@@ -29,7 +29,7 @@ that sends `SIGSTOP`/`SIGCONT` to local node processes and Docker containers.
 
 ## Priority 3: Snapshot Boundary Failures
 
-Status: open
+Status: post-compaction restart implemented; creation/transfer crash hooks still open
 
 Existing snapshot stress lowers thresholds, but does not deliberately crash at
 snapshot creation, snapshot installation, or immediately after compaction.

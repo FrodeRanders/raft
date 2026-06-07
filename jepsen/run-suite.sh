@@ -76,6 +76,7 @@ run_extended() {
   run_case persistence-loss-restart 20380 --time-limit 20 --concurrency 10 --node-count 5 --nemesis persistence-loss-restart --nemesis-interval 5 --snapshot-min-entries 5 --snapshot-chunk-bytes 1024
   run_case process-pause 20390 --time-limit 20 --concurrency 10 --node-count 5 --nemesis process-pause --nemesis-interval 5
   run_case clock-skew 20440 --time-limit 20 --concurrency 10 --node-count 5 --nemesis clock-skew --nemesis-interval 5 --clock-skew-millis 5000
+  run_case snapshot-boundary-restart 20460 --time-limit 60 --concurrency 10 --node-count 5 --nemesis snapshot-boundary-restart --nemesis-interval 5 --snapshot-min-entries 3 --snapshot-chunk-bytes 1024
   run_case partition-leader 20480 --time-limit 20 --concurrency 10 --node-count 5 --nemesis partition-leader --nemesis-interval 5
   run_case partition-leader-minority 20580 --time-limit 20 --concurrency 10 --node-count 5 --nemesis partition-leader-minority --nemesis-interval 5
   run_case membership-join-promote 20680 --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-join-promote --nemesis-interval 3
