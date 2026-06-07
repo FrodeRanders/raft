@@ -45,7 +45,7 @@ class RaftClientKnownPeersTest {
 
     @Test
     void broadcastReturnsKnownPeerAsUnreachableAfterExplicitRegistration() throws Exception {
-        log.info("TC: Explicit known-peer broadcast path: verifies registered peers are tracked and reported unreachable when connect fails");
+        announce("Explicit known-peer broadcast path: verifies registered peers are tracked and reported unreachable when connect fails");
         RaftClient client = new RaftClient("test", null);
         try {
             Peer peer = new Peer("B", new InetSocketAddress("127.0.0.1", 1));

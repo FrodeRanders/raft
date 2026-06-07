@@ -24,8 +24,13 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReferenceDataStateMachineTest {
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
+
     @Test
     void appliesStructuredProductAndVariantCommands() {
+        announce("Application demo: applies reference data (product and product variant)");
         ReferenceDataStateMachine stateMachine = new ReferenceDataStateMachine();
 
         stateMachine.apply(1L, ReferenceDataCommand.upsertProduct("p1", "Widget").encode());
@@ -40,6 +45,7 @@ class ReferenceDataStateMachineTest {
 
     @Test
     void queryReturnsVariantsForProduct() {
+        announce("Application demo: query returns reference data (product variants for product)");
         ReferenceDataStateMachine stateMachine = new ReferenceDataStateMachine();
         stateMachine.apply(1L, ReferenceDataCommand.upsertProduct("p1", "Widget").encode());
         stateMachine.apply(1L, ReferenceDataCommand.upsertVariant("p1", "v1", "Blue").encode());
@@ -56,6 +62,7 @@ class ReferenceDataStateMachineTest {
 
     @Test
     void snapshotRoundtripPreservesNestedVariants() {
+        announce("Application demo: snapshot round trip preserves reference data structure (nested product variants)");
         ReferenceDataStateMachine stateMachine = new ReferenceDataStateMachine();
         stateMachine.apply(1L, ReferenceDataCommand.upsertProduct("p1", "Widget").encode());
         stateMachine.apply(1L, ReferenceDataCommand.upsertVariant("p1", "v1", "Blue").encode());

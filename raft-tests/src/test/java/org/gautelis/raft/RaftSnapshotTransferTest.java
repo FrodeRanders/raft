@@ -109,7 +109,7 @@ class RaftSnapshotTransferTest {
 
     @Test
     void leaderFallsBackToInstallSnapshotForLaggingFollower() {
-        log.info("TC: Snapshot fallback replication: verifies leader switches from AppendEntries to InstallSnapshot when follower is behind compacted prefix");
+        announce("Snapshot fallback replication: verifies leader switches from AppendEntries to InstallSnapshot when follower is behind compacted prefix");
         Peer a = new Peer("A", null);
         Peer b = new Peer("B", null);
         MutableTime time = new MutableTime(0);

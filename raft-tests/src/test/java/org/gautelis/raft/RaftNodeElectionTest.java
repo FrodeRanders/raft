@@ -33,6 +33,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class RaftNodeElectionTest {
     private static final Logger log = LogManager.getLogger(RaftNodeElectionTest.class);
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
 
     static final class CountingRandom extends Random {
         private int count;
@@ -181,8 +184,7 @@ class RaftNodeElectionTest {
 
     @Test
     void staleHeartbeatDoesNotRefreshTimeout() {
-        log.info("TC: Stale heartbeat does not refresh timeout");
-
+        announce("Stale heartbeat does not refresh timeout");
         MutableTime time = new MutableTime(10_000);
 
         Peer me = peer("A");
@@ -205,7 +207,7 @@ class RaftNodeElectionTest {
 
     @Test
     void staleLogCandidateCannotWin() {
-        log.info("TC: Stale log candidate cannot win");
+        announce("Stale log candidate cannot win");
         MutableTime time = new MutableTime(0);
 
         Peer a = peer("A");
@@ -237,8 +239,7 @@ class RaftNodeElectionTest {
 
     @Test
     void voteGrantedOncePerTermUnlessSameCandidate() {
-        log.info("TC: Vote granted once per term unless same candidate");
-
+        announce("Vote granted once per term unless same candidate");
         MutableTime time = new MutableTime(0);
 
         Peer a = peer("A");
@@ -262,8 +263,7 @@ class RaftNodeElectionTest {
 
     @Test
     void staleVoteResponsesAreIgnored() {
-        log.info("TC: Stale vote responses are ignored");
-
+        announce("Stale vote responses are ignored");
         MutableTime time = new MutableTime(0);
 
         Peer a = peer("A");
@@ -292,8 +292,7 @@ class RaftNodeElectionTest {
 
     @Test
     void majorityRequiredToBecomeLeader() {
-        log.info("TC: Majority required to become leader");
-
+        announce("Majority required to become leader");
         MutableTime time = new MutableTime(0);
 
         Peer a = peer("A");
@@ -332,8 +331,7 @@ class RaftNodeElectionTest {
 
     @Test
     void leaderElectionAppendsAndCommitsNoopEntry() {
-        log.info("TC: Leader election appends and commits a no-op entry");
-
+        announce("Leader election appends and commits a no-op entry");
         MutableTime time = new MutableTime(0);
 
         Peer a = peer("A");
@@ -388,8 +386,7 @@ class RaftNodeElectionTest {
 
     @Test
     void candidateStepsDownOnSameTermHeartbeat() {
-        log.info("TC: Candidate steps down on same term heartbeat");
-
+        announce("Candidate steps down on same term heartbeat");
         MutableTime time = new MutableTime(0);
 
         Peer a = peer("A");
@@ -433,8 +430,7 @@ class RaftNodeElectionTest {
 
     @Test
     void higherTermInVoteResponsesForcesStepDownEvenIfVoteGranted() {
-        log.info("TC: Higher term in vote responses forces stepdown even if vote is granted");
-
+        announce("Higher term in vote responses forces stepdown even if vote is granted");
         MutableTime time = new MutableTime(0);
 
         Peer a = peer("A");
@@ -463,8 +459,7 @@ class RaftNodeElectionTest {
 
     @Test
     void higherTermInRejectedVoteResponseForcesStepDown() {
-        log.info("TC: Higher term in rejected vote response forces stepdown");
-
+        announce("Higher term in rejected vote response forces stepdown");
         MutableTime time = new MutableTime(0);
 
         Peer a = peer("A");
@@ -488,8 +483,7 @@ class RaftNodeElectionTest {
 
     @Test
     void unknownPeerAppendEntriesIsRejected() {
-        log.info("TC: Unknown peer AppendEntries is rejected");
-
+        announce("Unknown peer AppendEntries is rejected");
         MutableTime time = new MutableTime(0);
 
         Peer a = peer("A");
@@ -513,9 +507,9 @@ class RaftNodeElectionTest {
 
     @Test
     void selfAppendEntriesIsRejected() {
-        log.info("TC: Self-origin AppendEntries is rejected");
-
+        announce("Self-origin AppendEntries is rejected");
         MutableTime time = new MutableTime(0);
+
         Peer a = peer("A");
         Peer b = peer("B");
 
@@ -536,8 +530,7 @@ class RaftNodeElectionTest {
 
     @Test
     void electionTimeoutJitterIsSampledOncePerTimeoutWindow() {
-        log.info("TC: Election timeout jitter sampled once per timeout window");
-
+        announce("Election timeout jitter sampled once per timeout window");
         MutableTime time = new MutableTime(0);
         CountingRandom rng = new CountingRandom(0.5);
 
@@ -565,8 +558,7 @@ class RaftNodeElectionTest {
 
     @Test
     void threeNodeElectionEventuallyElectsSingleLeader() {
-        log.info("TC: Three nodes, election eventually elects single leader");
-
+        announce("Three nodes, election eventually elects single leader");
         MutableTime time = new MutableTime(0);
 
         Peer a = peer("A");

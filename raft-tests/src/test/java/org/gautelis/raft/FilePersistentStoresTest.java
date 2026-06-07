@@ -74,7 +74,7 @@ class FilePersistentStoresTest {
 
     @Test
     void persistentStateStoreSurvivesReload(@TempDir Path tmp) {
-        log.info("TC: Persistent state reload: verifies term and votedFor survive FilePersistentStateStore restart");
+        announce("Persistent state reload: verifies term and votedFor survive FilePersistentStateStore restart");
         Path stateFile = tmp.resolve("state.properties");
 
         FilePersistentStateStore store = new FilePersistentStateStore(stateFile);
@@ -88,7 +88,7 @@ class FilePersistentStoresTest {
 
     @Test
     void fileLogStoreSurvivesReload(@TempDir Path tmp) {
-        log.info("TC: File log reload: verifies appended entries and terms survive FileLogStore restart");
+        announce("File log reload: verifies appended entries and terms survive FileLogStore restart");
         Path logFile = tmp.resolve("log.bin");
 
         FileLogStore store = new FileLogStore(logFile);
@@ -106,7 +106,7 @@ class FilePersistentStoresTest {
 
     @Test
     void fileLogStoreCompactionMetadataSurvivesReload(@TempDir Path tmp) {
-        log.info("TC: Compaction metadata reload: verifies snapshot index/term metadata survives FileLogStore restart");
+        announce("Compaction metadata reload: verifies snapshot index/term metadata survives FileLogStore restart");
         Path logFile = tmp.resolve("log.bin");
 
         FileLogStore store = new FileLogStore(logFile);
@@ -127,7 +127,7 @@ class FilePersistentStoresTest {
 
     @Test
     void raftNodeLoadsTermVoteAndLogAfterRestart(@TempDir Path tmp) {
-        log.info("TC: Node restart continuity: verifies RaftNode restores persisted term, vote, and log entries after restart");
+        announce("Node restart continuity: verifies RaftNode restores persisted term, vote, and log entries after restart");
         Path stateFile = tmp.resolve("node.state");
         Path logFile = tmp.resolve("node.log");
 

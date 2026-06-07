@@ -93,7 +93,7 @@ class RaftCompactionPolicyTest {
 
     @Test
     void compactionPolicyCreatesSnapshotWhenThresholdReached() {
-        log.info("TC: Automatic compaction policy: verifies reaching snapshot threshold creates local snapshot metadata and payload");
+        announce("Automatic compaction policy: verifies reaching snapshot threshold creates local snapshot metadata and payload");
         String prev = System.getProperty("raft.snapshot.min.entries");
         System.setProperty("raft.snapshot.min.entries", "1");
 

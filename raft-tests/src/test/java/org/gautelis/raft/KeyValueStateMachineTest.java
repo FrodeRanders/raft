@@ -37,10 +37,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KeyValueStateMachineTest {
     private static final Logger log = LoggerFactory.getLogger(KeyValueStateMachineTest.class);
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
 
     @Test
     void applyAndSnapshotRestoreRoundtrip() {
-        log.info("TC: KeyValue state machine roundtrip: verifies apply mutations survive snapshot/restore with deterministic state");
+        announce("KeyValue state machine roundtrip: verifies apply mutations survive snapshot/restore with deterministic state");
         KeyValueStateMachine sm = new KeyValueStateMachine();
         sm.apply(1, StateMachineCommand.put("a", "1").encode());
         sm.apply(1, StateMachineCommand.put("b", "hello").encode());
@@ -59,7 +62,7 @@ class KeyValueStateMachineTest {
 
     @Test
     void queryReturnsTypedGetResult() {
-        log.info("TC: KeyValue query result: verifies structured get query returns found/value state");
+        announce("KeyValue query result: verifies structured get query returns found/value state");
         KeyValueStateMachine sm = new KeyValueStateMachine();
         sm.apply(1, StateMachineCommand.put("a", "1").encode());
 
@@ -74,7 +77,7 @@ class KeyValueStateMachineTest {
 
     @Test
     void casAppliesAndReturnsTypedSuccessResult() {
-        log.info("TC: KeyValue CAS success: verifies matching compare-and-set mutates state and returns structured result");
+        announce("KeyValue CAS success: verifies matching compare-and-set mutates state and returns structured result");
         KeyValueStateMachine sm = new KeyValueStateMachine();
         sm.apply(1, StateMachineCommand.put("a", "1").encode());
 
@@ -95,7 +98,7 @@ class KeyValueStateMachineTest {
 
     @Test
     void casMismatchReturnsCurrentValueWithoutMutatingState() {
-        log.info("TC: KeyValue CAS mismatch: verifies non-matching compare-and-set returns current value and preserves state");
+        announce("KeyValue CAS mismatch: verifies non-matching compare-and-set returns current value and preserves state");
         KeyValueStateMachine sm = new KeyValueStateMachine();
         sm.apply(1, StateMachineCommand.put("a", "1").encode());
 
@@ -114,7 +117,7 @@ class KeyValueStateMachineTest {
 
     @Test
     void casMissingCanCreateValueWhenKeyIsAbsent() {
-        log.info("TC: KeyValue CAS missing: verifies missing-key compare-and-set can insert a new value");
+        announce("KeyValue CAS missing: verifies missing-key compare-and-set can insert a new value");
         KeyValueStateMachine sm = new KeyValueStateMachine();
 
         StateMachineCommandResult result = StateMachineCommandResult.decode(

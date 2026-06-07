@@ -25,8 +25,13 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class SeedProviderTest {
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
+
     @Test
     void dnsSrvSeedProviderDerivesPeerIdsFromSrvTargets() {
+        announce("Cluster bootstrap: seed provider derives peer IDs from DNS SRV record");
         DnsSrvResolver resolver = service -> List.of(
                 new DnsSrvResolver.SrvRecord(10, 10, 7000, "raft-2.raft.local."),
                 new DnsSrvResolver.SrvRecord(10, 10, 7000, "raft-1.raft.local.")
@@ -34,7 +39,7 @@ class SeedProviderTest {
 
         List<SeedEndpoint> seeds = new DnsSrvSeedProvider("_raft._tcp.raft.local", resolver).seeds();
 
-        assertEquals("raft-1", seeds.get(0).peerId());
+        assertEquals("raft-1", seeds.getFirst().peerId());
         assertEquals("raft-1.raft.local.", seeds.get(0).host());
         assertEquals(7000, seeds.get(0).port());
         assertEquals("raft-2", seeds.get(1).peerId());
@@ -42,6 +47,7 @@ class SeedProviderTest {
 
     @Test
     void jndiSrvParserAcceptsStandardSrvRecordShape() {
+        announce("Cluster bootstrap: JNDI DNS SRV resolver can parse standard SRV record");
         DnsSrvResolver.SrvRecord record = JndiDnsSrvResolver.parseSrvRecord("10 33 7000 raft-0.raft.default.svc.cluster.local.");
 
         assertEquals(10, record.priority());
@@ -52,13 +58,14 @@ class SeedProviderTest {
 
     @Test
     void staticSeedProviderPreservesExplicitPeerSpecs() {
+        announce("Cluster bootstrap: static seed provider preserves explicit peer specs");
         Peer voter = new Peer("n1", new InetSocketAddress("localhost", 10080));
         Peer learner = new Peer("n2", new InetSocketAddress("localhost", 10081), Peer.Role.LEARNER);
 
         List<SeedEndpoint> seeds = new StaticSeedProvider(List.of(voter, learner)).seeds();
 
-        assertEquals("n1", seeds.get(0).peerId());
-        assertEquals("localhost", seeds.get(0).host());
+        assertEquals("n1", seeds.getFirst().peerId());
+        assertEquals("localhost", seeds.getFirst().host());
         assertEquals(10080, seeds.get(0).port());
         assertEquals(Peer.Role.VOTER, seeds.get(0).role());
         assertEquals("n2", seeds.get(1).peerId());

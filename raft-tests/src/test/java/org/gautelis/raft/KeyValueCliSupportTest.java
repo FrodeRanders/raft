@@ -26,9 +26,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KeyValueCliSupportTest {
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
 
     @Test
     void commandResponseJsonIncludesLeaderAndMessage() {
+        announce("Command response json includes leader and message");
         ClientCommandResponse response = new ClientCommandResponse(
                 5L,
                 "A",
@@ -52,6 +56,7 @@ class KeyValueCliSupportTest {
 
     @Test
     void casCommandResponseJsonIncludesDecodedResult() {
+        announce("CAS command response json includes decoded result");
         ClientCommandResponse response = new ClientCommandResponse(
                 5L,
                 "A",
@@ -80,6 +85,7 @@ class KeyValueCliSupportTest {
 
     @Test
     void casCommandResponseTextIncludesDecodedResult() {
+        announce("CAS command response text includes decoded result");
         ClientCommandResponse response = new ClientCommandResponse(
                 5L,
                 "A",
@@ -104,6 +110,7 @@ class KeyValueCliSupportTest {
 
     @Test
     void queryResponseJsonIncludesDecodedGetResult() {
+        announce("Query response json includes decoded get result");
         ClientQueryResponse response = new ClientQueryResponse(
                 5L,
                 "A",
@@ -130,6 +137,7 @@ class KeyValueCliSupportTest {
 
     @Test
     void failedQueryResponseJsonUsesNullResult() {
+        announce("Failed query response json uses null result");
         ClientQueryResponse response = new ClientQueryResponse(
                 5L,
                 "B",

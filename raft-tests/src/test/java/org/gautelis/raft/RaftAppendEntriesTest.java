@@ -65,7 +65,7 @@ class RaftAppendEntriesTest {
 
     @Test
     void staleTermAppendEntriesIsRejected() {
-        log.info("TC: AppendEntries stale-term rejection: verifies follower rejects append requests from lower terms");
+        announce("AppendEntries stale-term rejection: verifies follower rejects append requests from lower terms");
         Peer a = peer("A");
         Peer b = peer("B");
         RaftNode nodeB = newTestNode(b, List.of(a), new InMemoryLogStore());
@@ -84,7 +84,7 @@ class RaftAppendEntriesTest {
 
     @Test
     void prevLogMismatchIsRejected() {
-        log.info("TC: AppendEntries prev-log mismatch: verifies follower rejects append when prevLogIndex/prevLogTerm do not match local log");
+        announce("AppendEntries prev-log mismatch: verifies follower rejects append when prevLogIndex/prevLogTerm do not match local log");
         Peer a = peer("A");
         Peer b = peer("B");
         InMemoryLogStore store = new InMemoryLogStore();
@@ -104,7 +104,7 @@ class RaftAppendEntriesTest {
 
     @Test
     void conflictingSuffixIsTruncatedAndReplaced() {
-        log.info("TC: AppendEntries conflict resolution: verifies follower truncates conflicting suffix and appends leader entries");
+        announce("AppendEntries conflict resolution: verifies follower truncates conflicting suffix and appends leader entries");
         Peer a = peer("A");
         Peer b = peer("B");
         InMemoryLogStore store = new InMemoryLogStore();
@@ -131,7 +131,7 @@ class RaftAppendEntriesTest {
 
     @Test
     void selfLeaderIdAppendEntriesIsRejected() {
-        log.info("TC: Self-origin append rejection: verifies follower rejects AppendEntries claiming itself as leader");
+        announce("Self-origin append rejection: verifies follower rejects AppendEntries claiming itself as leader");
         Peer a = peer("A");
         Peer b = peer("B");
         InMemoryLogStore store = new InMemoryLogStore();
@@ -149,7 +149,7 @@ class RaftAppendEntriesTest {
 
     @Test
     void installSnapshotUpdatesFollowerSnapshotState() {
-        log.info("TC: InstallSnapshot follower update: verifies snapshot metadata/data, commitIndex, and lastApplied advance after install");
+        announce("InstallSnapshot follower update: verifies snapshot metadata/data, commitIndex, and lastApplied advance after install");
         Peer a = peer("A");
         Peer b = peer("B");
         InMemoryLogStore store = new InMemoryLogStore();
@@ -198,7 +198,7 @@ class RaftAppendEntriesTest {
 
     @Test
     void appendEntriesBelowSnapshotIsRejected() {
-        log.info("TC: Append below snapshot boundary: verifies follower rejects AppendEntries that reference compacted prefix");
+        announce("Append below snapshot boundary: verifies follower rejects AppendEntries that reference compacted prefix");
         Peer a = peer("A");
         Peer b = peer("B");
         InMemoryLogStore store = new InMemoryLogStore();

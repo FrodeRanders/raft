@@ -37,22 +37,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JepsenMavenIntegrationTest {
     private static final Pattern RESULTS_PATTERN = Pattern.compile("Wrote (.+/results\\.edn)");
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
 
     @Test
     @Timeout(value = 3, unit = TimeUnit.MINUTES)
     void smokeRunPassesUnderSurefire() throws Exception {
+        announce("Jepsen: Smoke tests");
         runJepsen("smoke", false, 17080, List.of());
     }
 
     @Test
     @Timeout(value = 3, unit = TimeUnit.MINUTES)
     void crashRestartRunPassesUnderSurefire() throws Exception {
+        announce("Jepsen: Crash/restart tests");
         runJepsen("crash", false, 17180, List.of("--nemesis", "crash-restart", "--nemesis-interval", "3"));
     }
 
     @Test
     @Timeout(value = 3, unit = TimeUnit.MINUTES)
     void partitionRunPassesUnderSurefire() throws Exception {
+        announce("Jepsen: Partition tests");
         runJepsen("partition", true, 17280, List.of("--nemesis", "partition-one", "--nemesis-interval", "3"));
     }
 

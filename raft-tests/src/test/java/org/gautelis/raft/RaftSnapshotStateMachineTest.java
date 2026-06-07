@@ -107,7 +107,7 @@ class RaftSnapshotStateMachineTest {
 
     @Test
     void installSnapshotRestoresStateMachineAndSubsequentCommitAppliesCommands() {
-        log.info("TC: Snapshot restore + post-snapshot apply: verifies InstallSnapshot restores state machine and later committed log entries still apply");
+        announce("Snapshot restore + post-snapshot apply: verifies InstallSnapshot restores state machine and later committed log entries still apply");
         Peer a = peer("A");
         Peer b = peer("B");
 

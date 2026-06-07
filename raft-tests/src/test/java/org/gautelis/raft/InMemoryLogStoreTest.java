@@ -33,6 +33,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class InMemoryLogStoreTest {
     private static final Logger log = LoggerFactory.getLogger(InMemoryLogStoreTest.class);
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
 
     @Test
     void emptyLogDefaults() {
@@ -46,7 +49,7 @@ class InMemoryLogStoreTest {
 
     @Test
     void appendUpdatesLastIndexAndTerm() {
-        log.info("TC: Append updates last index/term and termAt");
+        announce("Append updates last index/term and termAt");
 
         InMemoryLogStore store = new InMemoryLogStore();
         store.append(List.of(
@@ -62,7 +65,7 @@ class InMemoryLogStoreTest {
 
     @Test
     void termAtOutOfBoundsThrows() {
-        log.info("TC: termAt throws for out-of-bounds index");
+        announce("termAt throws for out-of-bounds index");
 
         InMemoryLogStore store = new InMemoryLogStore();
         store.append(List.of(new LogEntry(1, "A")));
@@ -72,7 +75,7 @@ class InMemoryLogStoreTest {
 
     @Test
     void compactionMaintainsSnapshotMetadataAndGlobalIndexing() {
-        log.info("TC: In-memory compaction indexing: verifies snapshot metadata and global index continuity after prefix compaction");
+        announce("In-memory compaction indexing: verifies snapshot metadata and global index continuity after prefix compaction");
         InMemoryLogStore store = new InMemoryLogStore();
         store.append(List.of(
                 new LogEntry(1, "A"),

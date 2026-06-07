@@ -36,10 +36,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PeerTest {
     private static final Logger log = LoggerFactory.getLogger(PeerTest.class);
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
 
     @Test
     void peersWithSameAddressAndRoleAreEqualAndShareHashCode() {
-        log.info("TC: Peer identity equality: verifies peers with same id, address, and role compare equal and share hash code");
+        announce("Peer identity equality: verifies peers with same id, address, and role compare equal and share hash code");
         Peer first = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
         Peer second = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
 
@@ -49,7 +52,7 @@ class PeerTest {
 
     @Test
     void mapLookupWorksAcrossEquivalentPeerInstances() {
-        log.info("TC: Peer map-key behavior: verifies fully equivalent peer instances resolve the same map entry");
+        announce("Peer map-key behavior: verifies fully equivalent peer instances resolve the same map entry");
         Peer key = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
         Peer equivalent = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
 
@@ -62,7 +65,7 @@ class PeerTest {
 
     @Test
     void peerRejectsNullOrBlankId() {
-        log.info("TC: Peer id validation: verifies peer construction rejects null or blank ids");
+        announce("Peer id validation: verifies peer construction rejects null or blank ids");
         assertThrows(IllegalArgumentException.class, () -> new Peer(null, new InetSocketAddress("127.0.0.1", 10080)));
         assertThrows(IllegalArgumentException.class, () -> new Peer("   ", new InetSocketAddress("127.0.0.1", 10080)));
     }

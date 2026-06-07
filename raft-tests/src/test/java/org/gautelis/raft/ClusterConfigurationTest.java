@@ -26,6 +26,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClusterConfigurationTest {
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
 
     private static Peer peer(String id) {
         return new Peer(id, null);
@@ -37,6 +40,7 @@ class ClusterConfigurationTest {
 
     @Test
     void stableConfigurationUsesSingleMajority() {
+        announce("Stable configuration uses single majority");
         ClusterConfiguration configuration = ClusterConfiguration.stable(List.of(peer("A"), peer("B"), peer("C")));
 
         assertTrue(configuration.hasJointMajority(List.of("A", "B")));
@@ -45,6 +49,7 @@ class ClusterConfigurationTest {
 
     @Test
     void jointConsensusRequiresBothOldAndNewMajorities() {
+        announce("Joint consensus requires both old and new majorities");
         ClusterConfiguration configuration = ClusterConfiguration
                 .stable(List.of(peer("A"), peer("B"), peer("C")))
                 .transitionTo(List.of(peer("B"), peer("C"), peer("D")));
@@ -57,6 +62,7 @@ class ClusterConfigurationTest {
 
     @Test
     void finalizedConfigurationUsesNewMembershipOnly() {
+        announce("Finalized configuration uses new membership only");
         ClusterConfiguration configuration = ClusterConfiguration
                 .stable(List.of(peer("A"), peer("B"), peer("C")))
                 .transitionTo(List.of(peer("B"), peer("C"), peer("D")))
@@ -68,6 +74,7 @@ class ClusterConfigurationTest {
 
     @Test
     void learnerMembersDoNotAffectVotingMajorities() {
+        announce("Learner members do not affect voting majorities");
         ClusterConfiguration configuration = ClusterConfiguration.stable(List.of(peer("A"), peer("B"), learner("L")));
 
         assertTrue(configuration.contains("L"));
@@ -79,6 +86,7 @@ class ClusterConfigurationTest {
 
     @Test
     void joinCommandIsRecognizedAsInternalMembershipCommand() {
+        announce("Join command is recognized as internal membership command");
         byte[] command = ClusterConfigurationCommand.join(new Peer("D", null, Peer.Role.VOTER));
 
         var parsed = ClusterConfigurationCommand.parse(command).orElseThrow();

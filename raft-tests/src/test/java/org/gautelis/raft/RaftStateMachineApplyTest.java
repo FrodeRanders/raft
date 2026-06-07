@@ -37,6 +37,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftStateMachineApplyTest {
     private static final Logger log = LoggerFactory.getLogger(RaftStateMachineApplyTest.class);
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
 
     private static Peer peer(String id) {
         return new Peer(id, null);
@@ -57,7 +60,7 @@ class RaftStateMachineApplyTest {
 
     @Test
     void entryIsNotAppliedBeforeCommit() {
-        log.info("TC: Apply gate before commit: verifies replicated entries are not applied until commitIndex advances");
+        announce("Apply gate before commit: verifies replicated entries are not applied until commitIndex advances");
         Peer a = peer("A");
         Peer b = peer("B");
         List<String> applied = new ArrayList<>();
@@ -83,7 +86,7 @@ class RaftStateMachineApplyTest {
 
     @Test
     void committedEntryIsAppliedExactlyOnce() {
-        log.info("TC: Idempotent apply on commit: verifies committed entries are applied exactly once and not re-applied on duplicate commit notifications");
+        announce("Idempotent apply on commit: verifies committed entries are applied exactly once and not re-applied on duplicate commit notifications");
         Peer a = peer("A");
         Peer b = peer("B");
         List<String> applied = new ArrayList<>();
@@ -131,7 +134,7 @@ class RaftStateMachineApplyTest {
 
     @Test
     void applyUsesEntryTermNotCurrentNodeTerm() {
-        log.info("TC: Apply term source correctness: verifies applied commands use log-entry term rather than node current term");
+        announce("Apply term source correctness: verifies applied commands use log-entry term rather than node current term");
         Peer a = peer("A");
         Peer b = peer("B");
         List<String> applied = new ArrayList<>();

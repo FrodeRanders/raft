@@ -309,7 +309,7 @@ class BasicAdapterCommandTest {
 
     @Test
     void leaderAcceptsValidClusterCommandAndAppliesThroughLog() {
-        log.info("TC: Leader command ingestion: verifies typed client commands are submitted through Raft log and applied to state machine");
+        announce("Leader command ingestion: verifies typed client commands are submitted through Raft log and applied to state machine");
         Peer me = peer("A");
         MutableTime time = new MutableTime(0);
         KeyValueStateMachine kv = new KeyValueStateMachine();
@@ -337,7 +337,7 @@ class BasicAdapterCommandTest {
 
     @Test
     void leaderAcceptsCasCommandAndReturnsTypedResult() {
-        log.info("TC: Leader CAS command: verifies adapter applies CAS through the normal client command API and returns typed result payload");
+        announce("Leader CAS command: verifies adapter applies CAS through the normal client command API and returns typed result payload");
         Peer me = peer("A");
         MutableTime time = new MutableTime(0);
         KeyValueStateMachine kv = new KeyValueStateMachine();
@@ -371,7 +371,7 @@ class BasicAdapterCommandTest {
 
     @Test
     void leaderReturnsSuccessfulCasResponseWhenCompareFails() {
-        log.info("TC: Leader CAS mismatch: verifies applied CAS mismatch is reported through typed result while preserving state");
+        announce("Leader CAS mismatch: verifies applied CAS mismatch is reported through typed result while preserving state");
         Peer me = peer("A");
         MutableTime time = new MutableTime(0);
         KeyValueStateMachine kv = new KeyValueStateMachine();
@@ -405,7 +405,7 @@ class BasicAdapterCommandTest {
 
     @Test
     void invalidClusterCommandIsRejected() {
-        log.info("TC: Command validation reject path: verifies malformed typed client commands are rejected without log mutation");
+        announce("Command validation reject path: verifies malformed typed client commands are rejected without log mutation");
         Peer me = peer("A");
         MutableTime time = new MutableTime(0);
         KeyValueStateMachine kv = new KeyValueStateMachine();
@@ -689,7 +689,7 @@ class BasicAdapterCommandTest {
 
     @Test
     void followerRejectsValidClusterCommand() {
-        log.info("TC: Follower command rejection: verifies non-leader nodes reject typed client commands");
+        announce("Follower command rejection: verifies non-leader nodes reject typed client commands");
         Peer me = peer("A");
         KeyValueStateMachine kv = new KeyValueStateMachine();
         InMemoryLogStore store = new InMemoryLogStore();

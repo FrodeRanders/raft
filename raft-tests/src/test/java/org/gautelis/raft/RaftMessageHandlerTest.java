@@ -36,13 +36,13 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 import java.util.Arrays;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 class RaftMessageHandlerTest {
     private static final Logger log = LoggerFactory.getLogger(RaftMessageHandlerTest.class);
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
 
     static class CapturingMessageHandler implements MessageHandler {
         String correlationId;
@@ -70,7 +70,7 @@ class RaftMessageHandlerTest {
 
     @Test
     void voteRequestProducesVoteResponse() throws Exception {
-        log.info("TC: VoteRequest yields VoteResponse");
+        announce("VoteRequest yields VoteResponse");
 
         Peer a = new Peer("A", null);
         Peer b = new Peer("B", null);
@@ -102,7 +102,7 @@ class RaftMessageHandlerTest {
 
     @Test
     void appendEntriesHeartbeatWritesResponseAndUpdatesTerm() throws Exception {
-        log.info("TC: Empty AppendEntries heartbeat updates term and returns AppendEntriesResponse");
+        announce("Empty AppendEntries heartbeat updates term and returns AppendEntriesResponse");
 
         Peer a = new Peer("A", null);
         Peer b = new Peer("B", null);
@@ -132,7 +132,7 @@ class RaftMessageHandlerTest {
 
     @Test
     void unknownTypeDelegatesToMessageHandler() throws Exception {
-        log.info("TC: Unknown type delegates to message handler");
+        announce("Unknown type delegates to message handler");
 
         Peer a = new Peer("A", null);
         Peer b = new Peer("B", null);
@@ -147,7 +147,7 @@ class RaftMessageHandlerTest {
         assertEquals("corr-3", handler.correlationId);
         assertEquals("CustomType", handler.type);
         assertNotNull(handler.payload);
-        assertTrue(Arrays.equals(payload, handler.payload));
+        assertArrayEquals(payload, handler.payload);
         assertNull(channel.readOutbound());
         channel.finishAndReleaseAll();
     }

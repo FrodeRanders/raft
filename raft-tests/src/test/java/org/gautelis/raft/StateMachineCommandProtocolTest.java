@@ -25,9 +25,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class StateMachineCommandProtocolTest {
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
 
     @Test
     void casCommandRoundTripsThroughProtocolEncoding() {
+        announce("CAS command round trips through protocol encoding");
         StateMachineCommand decoded = StateMachineCommand.decode(
                 StateMachineCommand.cas("x", "1", "2").encode()
         ).orElseThrow();
@@ -41,6 +45,7 @@ class StateMachineCommandProtocolTest {
 
     @Test
     void casMissingCommandRoundTripsThroughProtocolEncoding() {
+        announce("CAS missing command round trips through protocol encoding");
         StateMachineCommand decoded = StateMachineCommand.decode(
                 StateMachineCommand.casMissing("x", "2").encode()
         ).orElseThrow();
@@ -53,6 +58,7 @@ class StateMachineCommandProtocolTest {
 
     @Test
     void casResultRoundTripsThroughProtocolEncoding() {
+        announce("CAS result round trips through protocol encoding");
         StateMachineCommandResult decoded = StateMachineCommandResult.decode(
                 StateMachineCommandResult.cas("x", true, "1", "2", false, true, "1").encode()
         ).orElseThrow();

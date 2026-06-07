@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.gautelis.raft;
+package org.gautelis.raft; // No, this does not match directory structure
 
 import org.gautelis.raft.app.reference.ReferenceDataAdapter;
 import org.gautelis.raft.app.reference.ReferenceDataCommand;
@@ -38,6 +38,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReferenceDataAdapterTest {
+    private static void announce(String message) {
+        System.out.println("TC: " + message);
+    }
+
     static final class MutableTime implements RaftNode.TimeSource {
         private long now;
 
@@ -91,6 +95,7 @@ class ReferenceDataAdapterTest {
 
     @Test
     void leaderAcceptsReferenceDataCommandsAndServesReferenceQuery() {
+        announce("Application demo: leader accepts commands and serves reference data");
         Peer me = new Peer("A", null);
         MutableTime time = new MutableTime(0L);
         ReferenceDataStateMachine stateMachine = new ReferenceDataStateMachine();
