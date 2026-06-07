@@ -133,7 +133,7 @@ public class RaftNode {
     protected final RaftTransportClient raftClient; // or similar
 
     @FunctionalInterface
-    interface TimeSource {
+    public interface TimeSource {
         long nowMillis();
     }
 

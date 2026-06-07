@@ -27,7 +27,7 @@
 
 namespace graft {
     namespace {
-        std::int64_t current_time_millis() {
+        std::int64_t system_time_millis() {
             return std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::system_clock::now().time_since_epoch())
                     .count();
@@ -46,8 +46,12 @@ namespace graft {
           application_(std::move(config.application)),
           previous_log_index_(config.last_log_index),
           previous_log_term_(config.last_log_term),
+          time_source_(std::move(config.time_source)),
           last_activity_(std::chrono::steady_clock::now()),
           voting_peers_(std::move(config.voting_peers)) {
+        if (!time_source_) {
+            time_source_ = system_time_millis;
+        }
         if (!application_) {
             // The KV state machine is the built-in demo/default. Library users should
             // inject their own ApplicationStateMachine through Config.
@@ -274,6 +278,10 @@ namespace graft {
     bool RaftNode::has_joint_majority(const std::unordered_set<std::string> &peer_ids) const {
         std::scoped_lock lock(mu_);
         return has_joint_majority_locked(peer_ids);
+    }
+
+    std::int64_t RaftNode::current_time_millis() const {
+        return time_source_ ? time_source_() : system_time_millis();
     }
 
     std::vector<raft::PeerSpec> RaftNode::current_member_specs() const {

@@ -178,6 +178,7 @@ public class BasicAdapter {
                 .withClient(raftClient)
                 .withLogStore(logStore)
                 .withPersistentStateStore(persistentStateStore)
+                .withTimeSource(() -> System.currentTimeMillis() + runtimeConfiguration.clockOffsetMillis())
                 .build();
         if (joinSeed != null) {
             // Join mode keeps the new node passive until the existing cluster admits it.

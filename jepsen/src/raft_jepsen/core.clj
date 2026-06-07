@@ -51,6 +51,7 @@
                :concurrency 10
                :nemesis-mode "none"
                :nemesis-interval 5
+               :clock-skew-millis 5000
                :workload-mode "single-key"
                :key-count 3
                :snapshot-min-entries nil
@@ -85,6 +86,7 @@
                                   rest))
           "--nemesis" (recur (assoc opts :nemesis-mode value) rest)
           "--nemesis-interval" (recur (assoc opts :nemesis-interval (parse-long-arg value)) rest)
+          "--clock-skew-millis" (recur (assoc opts :clock-skew-millis (parse-long-arg value)) rest)
           "--workdir" (recur (assoc opts :workdir (.getCanonicalPath (io/file value))) rest)
           "--help" (assoc opts :help true)
           (throw (ex-info "Unknown option" {:flag flag :remaining remaining})))))))
@@ -111,8 +113,9 @@
     "  --snapshot-min-entries <n>  Override raft.snapshot.min.entries"
     "  --snapshot-chunk-bytes <n>  Override raft.snapshot.chunk.bytes"
     "  --node-count <n>      Number of local nodes, default 5"
-    "  --nemesis <mode>      none|crash-restart|persistence-loss-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower|membership-remove-leader|membership-remove-follower-partition-leader, default none"
+    "  --nemesis <mode>      none|crash-restart|process-pause|clock-skew|persistence-loss-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower|membership-remove-leader|membership-remove-follower-partition-leader, default none"
     "  --nemesis-interval <sec> Nemesis interval, default 5"
+    "  --clock-skew-millis <ms> Logical clock offset for clock-skew nemesis, default 5000"
     "  --workdir <path>      Local work directory, default ./work"]))
 
 (defn- normalize-opts [opts]
@@ -150,12 +153,13 @@
                       {:node-count (:node-count opts)})))
     (when (and (= :docker-srv backend)
                (#{"persistence-loss-restart"
+                  "clock-skew"
                   "membership-join-promote"
                   "membership-demote"
                   "membership-remove-follower"
                   "membership-remove-leader"
                   "membership-remove-follower-partition-leader"} (:nemesis-mode opts)))
-      (throw (ex-info "Docker/SRV backend supports baseline, crash-restart, and partition nemeses; dynamic membership needs a generated SRV zone"
+      (throw (ex-info "Docker/SRV backend supports baseline, crash-restart, process-pause, and partition nemeses; clock skew and dynamic membership need generated service definitions"
                       {:nemesis-mode (:nemesis-mode opts)})))
     (when-not (= (count nodes) (count impls))
       (throw (ex-info "--node-impls count must match --node-count"
@@ -293,6 +297,8 @@
   (case (:nemesis-mode opts)
     "none" nemesis/noop
     "crash-restart" (raft-nemesis/crash-restart)
+    "process-pause" (raft-nemesis/process-pause)
+    "clock-skew" (raft-nemesis/clock-skew)
     "persistence-loss-restart" (raft-nemesis/persistence-loss-restart)
     "partition-one" (raft-nemesis/partition-one)
     "partition-leader" (raft-nemesis/partition-leader)
@@ -338,7 +344,20 @@
       (gen/once {:f :stop})
       (gen/sleep (:nemesis-interval opts))
       (gen/once {:f :start})
-      (gen/sleep (:nemesis-interval opts))))))
+     (gen/sleep (:nemesis-interval opts))))))
+
+(defn- heal-before-final-read-generator [opts]
+  ;; Cyclic fault nemeses use :stop to inject the fault and :start to heal it.
+  ;; Ensure the final read phase observes a settled cluster instead of leaving a
+  ;; node crashed, paused, or partitioned until teardown.
+  (when (#{"crash-restart"
+           "process-pause"
+           "clock-skew"
+           "persistence-loss-restart"
+           "partition-one"
+           "partition-leader"
+           "partition-leader-minority"} (:nemesis-mode opts))
+    (gen/nemesis (gen/once {:f :start}))))
 
 (defn- generator [opts]
   ;; The full generator combines client load and optional nemesis activity:
@@ -356,13 +375,15 @@
                        (->> base
                             (gen/nemesis n-gen))
                        base)]
-    (gen/phases
-     (gen/time-limit (:time-limit opts) with-nemesis)
-     (gen/log "Waiting for cluster to settle")
-     (gen/sleep 5)
-     (gen/clients
-      (gen/each-thread
-       (gen/once {:f :read :value nil}))))))
+    (apply gen/phases
+           (remove nil?
+                   [(gen/time-limit (:time-limit opts) with-nemesis)
+                    (heal-before-final-read-generator opts)
+                    (gen/log "Waiting for cluster to settle")
+                    (gen/sleep 5)
+                    (gen/clients
+                     (gen/each-thread
+                      (gen/once {:f :read :value nil})))]))))
 
 (defn raft-test [opts]
   ;; This is the Jepsen test map. jepsen/run! treats it as the complete
@@ -395,6 +416,7 @@
     :node-impls (:node-impls opts)
     :client-impl (:client-impl opts)
     :joining-impl (:joining-impl opts)
+    :clock-skew-millis (:clock-skew-millis opts)
     :backend (:backend opts)
     :srv-mode (:srv-mode opts)
     :compose-project (:compose-project opts)

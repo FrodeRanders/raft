@@ -97,6 +97,75 @@
           (raft-db/start-node! test node true)
           (reset! disrupted-node nil))))))
 
+(defn process-pause []
+  ;; Pause/resume models stop-the-world behavior: the process remains alive and
+  ;; keeps its memory and sockets, but it stops making progress. This is closer
+  ;; to long JVM GC pauses or scheduler starvation than crash/restart.
+  (let [paused-node (atom nil)]
+    (reify
+      jepsen.nemesis/Nemesis
+      (setup! [this _test] this)
+      (invoke! [_ test op]
+        (locking paused-node
+          (case (:f op)
+            :start (if-let [node @paused-node]
+                     (do
+                       (raft-db/resume-node! test node)
+                       (observer/capture-safe! test "nemesis-process-pause" {:node node :op {:f :start}})
+                       (reset! paused-node nil)
+                       (assoc op :type :info :value {node :resumed}))
+                     (assoc op :type :info :value :not-paused))
+            :stop (if @paused-node
+                    (assoc op :type :info :value :already-paused)
+                    (if-let [node (random-node test (:nodes test))]
+                      (do
+                        (observer/capture-safe! test "nemesis-process-pause" {:node node :op {:f :stop}})
+                        (raft-db/pause-node! test node)
+                        (reset! paused-node node)
+                        (assoc op :type :info :value {node :paused}))
+                      (assoc op :type :info :value :no-target)))
+            (assoc op :type :info :error :unsupported-nemesis-op))))
+      (teardown! [_ test]
+        (when-let [node @paused-node]
+          (raft-db/resume-node! test node)
+          (reset! paused-node nil))))))
+
+(defn clock-skew []
+  ;; Clock skew is implemented through the Raft logical clock hook. The node is
+  ;; restarted with a configured offset so leases/election deadlines experience
+  ;; skew without changing the host clock for the whole test machine.
+  (let [skewed-node (atom nil)]
+    (reify
+      jepsen.nemesis/Nemesis
+      (setup! [this _test] this)
+      (invoke! [_ test op]
+        (locking skewed-node
+          (case (:f op)
+            :start (if-let [node @skewed-node]
+                     (do
+                       (raft-db/clear-node-clock-offset! test node)
+                       (observer/capture-safe! test "nemesis-clock-skew" {:node node :op {:f :start}})
+                       (reset! skewed-node nil)
+                       (assoc op :type :info :value {node :clock-restored}))
+                     (assoc op :type :info :value :not-skewed))
+            :stop (if @skewed-node
+                    (assoc op :type :info :value :already-skewed)
+                    (if-let [node (random-node test (:nodes test))]
+                      (let [offset (long (get test :clock-skew-millis 5000))]
+                        (observer/capture-safe! test "nemesis-clock-skew"
+                                                {:node node
+                                                 :op {:f :stop}
+                                                 :extra {:clockOffsetMillis offset}})
+                        (raft-db/set-node-clock-offset! test node offset)
+                        (reset! skewed-node node)
+                        (assoc op :type :info :value {node {:clock-offset-millis offset}}))
+                      (assoc op :type :info :value :no-target)))
+            (assoc op :type :info :error :unsupported-nemesis-op))))
+      (teardown! [_ test]
+        (when-let [node @skewed-node]
+          (raft-db/clear-node-clock-offset! test node)
+          (reset! skewed-node nil))))))
+
 (defn- partition-script [test]
   (.getAbsolutePath (io/file (:repo-root test) "jepsen" "scripts" "partition.sh")))
 

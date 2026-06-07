@@ -52,6 +52,8 @@ Optional overrides:
 ./run-local.sh --time-limit 60 --concurrency 12 --base-port 11080
 ./run-local.sh --node-count 3
 ./run-local.sh --node-count 5 --nemesis crash-restart
+./run-local.sh --node-count 5 --nemesis process-pause
+./run-local.sh --node-count 5 --nemesis clock-skew --clock-skew-millis 5000
 ./run-local.sh --node-count 5 --nemesis persistence-loss-restart --snapshot-min-entries 5
 ./run-local.sh --node-count 5 --nemesis partition-leader
 ./run-local.sh --node-count 5 --nemesis partition-leader-minority
@@ -82,8 +84,9 @@ Supported options:
 - `--concurrency <n>`: Jepsen client concurrency
 - `--base-port <port>`: first node port, default `10080`
 - `--node-count <n>`: number of local nodes, default `5`
-- `--nemesis <mode>`: `none`, `crash-restart`, `persistence-loss-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, `membership-join-promote`, `membership-demote`, `membership-remove-follower`, `membership-remove-leader`, or `membership-remove-follower-partition-leader`
+- `--nemesis <mode>`: `none`, `crash-restart`, `process-pause`, `clock-skew`, `persistence-loss-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, `membership-join-promote`, `membership-demote`, `membership-remove-follower`, `membership-remove-leader`, or `membership-remove-follower-partition-leader`
 - `--nemesis-interval <seconds>`: delay between crash/restart actions
+- `--clock-skew-millis <ms>`: logical Raft clock offset for `clock-skew`, default `5000`
 - `--workdir <path>`: local node state/log directory
 
 ## Scenario Guide
@@ -94,6 +97,10 @@ These Jepsen scenarios are meant to approximate concrete runtime conditions rath
   This is the "healthy system" reference point.
 - `crash-restart`: stops a node process without deleting its state directory, then starts it again from the same persisted data.
   This emulates JVM crash, host reboot, or process supervisor restart where the node's local Raft state survives.
+- `process-pause`: pauses one node process and later resumes it without process restart.
+  This emulates long JVM GC pauses, scheduler starvation, or an overloaded C++ process that keeps memory and sockets but stops making Raft progress.
+- `clock-skew`: restarts one local node with an offset applied to the Raft logical clock, then later restarts it without that offset.
+  This stresses read leases, election timing, and stale-leader behavior without changing the host operating-system clock for the whole test machine.
 - `persistence-loss-restart`: stops one non-leader follower, deletes its local `data` directory, then restarts it from empty state.
   This emulates disk replacement, volume loss, or state-directory corruption recovery where the node must rejoin from replicated log or snapshot transfer.
 - `partition-one`: isolates one random node by blocking its local TCP port.
@@ -187,7 +194,7 @@ Docker/SRV Jepsen mode currently uses the fixed three-node Compose topology:
 
 The Docker DB starts and stops Compose services rather than local processes, maps Jepsen node names to Compose service names (`raft-1`, `raft-2`, `raft-3`), captures `docker compose logs` into each node work directory, and applies network partitions by disconnecting/reconnecting containers from the Compose network.
 
-Supported Docker/SRV Jepsen scenarios are baseline, `crash-restart`, `partition-one`, `partition-leader`, and `partition-leader-minority`.
+Supported Docker/SRV Jepsen scenarios are baseline, `crash-restart`, `process-pause`, `partition-one`, `partition-leader`, and `partition-leader-minority`.
 Dynamic membership and persistence-loss scenarios remain local-harness scenarios for now because they need a generated SRV zone/Compose topology and explicit Docker volume manipulation for nodes beyond the static three SRV records.
 
 ## Layout

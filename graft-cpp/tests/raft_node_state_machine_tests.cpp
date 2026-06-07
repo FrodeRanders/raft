@@ -344,6 +344,24 @@ TEST_CASE("Client query RPC requires read barrier in multi-node leader mode", "[
     REQUIRE(leased_response->success());
     REQUIRE(leased_response->status() == "OK");
 
+    std::int64_t logical_time = 1'000;
+    auto skewed_node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
+        .peer_id = "n1",
+        .current_term = 1,
+        .last_log_index = 0,
+        .last_log_term = 0,
+        .commit_index = 0,
+        .snapshot_index = 0,
+        .snapshot_term = 0,
+        .voting_peers = {"n2"},
+        .time_source = [&logical_time] { return logical_time; },
+    });
+    skewed_node->become_leader();
+    REQUIRE(skewed_node->handle_append_entries_response("n2", successful_response));
+    REQUIRE(skewed_node->can_serve_linearizable_read(750));
+    logical_time += 751;
+    REQUIRE_FALSE(skewed_node->can_serve_linearizable_read(750));
+
     auto fallback_node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
         .peer_id = "n1",
         .current_term = 1,

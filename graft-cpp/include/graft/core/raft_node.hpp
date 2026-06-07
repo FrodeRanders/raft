@@ -17,6 +17,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -55,6 +56,7 @@ namespace graft {
             std::int64_t snapshot_term{0};
             std::vector<std::string> voting_peers;
             std::shared_ptr<ApplicationStateMachine> application;
+            std::function<std::int64_t()> time_source;
         };
 
         // Leader-side view of one peer. next_index/match_index are the classic Raft
@@ -264,6 +266,8 @@ namespace graft {
 
         bool has_joint_majority_locked(const std::unordered_set<std::string> &peer_ids) const;
 
+        std::int64_t current_time_millis() const;
+
         std::size_t cluster_size_locked() const;
 
         std::size_t quorum_size_locked() const;
@@ -334,6 +338,7 @@ namespace graft {
         std::int64_t previous_log_term_;
         std::string last_entry_data_;
         std::vector<LogEntryRecord> log_entries_;
+        std::function<std::int64_t()> time_source_;
         std::chrono::steady_clock::time_point last_activity_;
         std::vector<std::string> voting_peers_;
         std::vector<raft::PeerSpec> current_members_;

@@ -41,7 +41,8 @@ public record RuntimeConfiguration(
         String advertiseHost,
         int advertisePort,
         String clusterSrv,
-        boolean bootstrapNewCluster
+        boolean bootstrapNewCluster,
+        long clockOffsetMillis
 ) {
     public static RuntimeConfiguration load() {
         return new RuntimeConfiguration(
@@ -63,7 +64,8 @@ public record RuntimeConfiguration(
                 configured("raft.advertise.host", "RAFT_ADVERTISE_HOST", "").trim(),
                 configuredInt("raft.advertise.port", "RAFT_ADVERTISE_PORT", 0),
                 configured("raft.cluster.srv", "RAFT_CLUSTER_SRV", "").trim(),
-                configuredBoolean("raft.bootstrap.new-cluster", "RAFT_BOOTSTRAP_NEW_CLUSTER", false)
+                configuredBoolean("raft.bootstrap.new-cluster", "RAFT_BOOTSTRAP_NEW_CLUSTER", false),
+                configuredLong("raft.clock.offset.millis", "RAFT_CLOCK_OFFSET_MILLIS", 0L)
         );
     }
 
@@ -101,6 +103,14 @@ public record RuntimeConfiguration(
             return defaultValue;
         }
         return Integer.parseInt(value.trim());
+    }
+
+    private static long configuredLong(String propertyName, String environmentName, long defaultValue) {
+        String value = configured(propertyName, environmentName, "");
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        return Long.parseLong(value.trim());
     }
 
     private static boolean configuredBoolean(String propertyName, String environmentName, boolean defaultValue) {

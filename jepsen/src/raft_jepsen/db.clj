@@ -15,8 +15,9 @@
 (defonce docker-state (atom {:started? false
                              :teardown-nodes #{}
                              :isolated-nodes #{}}))
+(defonce clock-offsets (atom {}))
 
-(declare await-port! resolved-jar-path)
+(declare await-port! resolved-jar-path start-node!)
 
 (defn node-index [test node]
   ;; Jepsen node names are strings like "n1". The local harness maps them to
@@ -197,11 +198,61 @@
     (docker-compose! test "stop" (str node))
     (local-stop-node! test node)))
 
+(defn- signal-local-node! [node signal]
+  (if-let [^Process process (get @processes node)]
+    (let [pid (.pid process)
+          {:keys [exit out err]} (sh/sh "kill" (str signal) (str pid))]
+      (when-not (zero? exit)
+        (throw (ex-info "Failed to signal local node process"
+                        {:node node :pid pid :signal signal :exit exit :out out :err err}))))
+    (throw (ex-info "No local process for node"
+                    {:node node}))))
+
+(defn pause-node! [test node]
+  (if (docker-backend? test)
+    (try
+      (docker-compose! test "pause" (str node))
+      (catch Throwable t
+        (if (str/includes? (or (:err (ex-data t)) "") "is already paused")
+          nil
+          (throw t))))
+    (signal-local-node! node "-STOP")))
+
+(defn resume-node! [test node]
+  (if (docker-backend? test)
+    (try
+      (docker-compose! test "unpause" (str node))
+      (catch Throwable t
+        (if (str/includes? (or (:err (ex-data t)) "") "is not paused")
+          nil
+          (throw t))))
+    (signal-local-node! node "-CONT")))
+
+(defn set-node-clock-offset! [test node offset-millis]
+  ;; Clock skew is injected through the Raft logical clock, not the host clock.
+  ;; Restarting the process is enough because both Java and C++ startup paths
+  ;; read RAFT_CLOCK_OFFSET_MILLIS into their RaftNode time source.
+  (when (docker-backend? test)
+    (throw (ex-info "Docker/SRV clock skew needs generated service environment updates"
+                    {:node node :backend (:backend test)})))
+  (stop-node! test node)
+  (swap! clock-offsets assoc node (long offset-millis))
+  (start-node! test node true))
+
+(defn clear-node-clock-offset! [test node]
+  (when (docker-backend? test)
+    (throw (ex-info "Docker/SRV clock skew needs generated service environment updates"
+                    {:node node :backend (:backend test)})))
+  (stop-node! test node)
+  (swap! clock-offsets dissoc node)
+  (start-node! test node true))
+
 (defn wipe-node! [test node]
   ;; Normal DB teardown removes the whole node work directory. That gives each
   ;; Jepsen test run a fresh cluster unless a nemesis intentionally preserves
   ;; or deletes selected state.
   (local-stop-node! test node)
+  (swap! clock-offsets dissoc node)
   (delete-recursively! (node-root test node)))
 
 (defn wipe-node-data! [test node]
@@ -249,6 +300,11 @@
                   (.directory (repo-root test))
                   (.redirectErrorStream true)
                   (.redirectOutput (ProcessBuilder$Redirect/appendTo log-file)))
+        env (.environment builder)
+        offset (long (get @clock-offsets node 0))
+        _ (if (zero? offset)
+            (.remove env "RAFT_CLOCK_OFFSET_MILLIS")
+            (.put env "RAFT_CLOCK_OFFSET_MILLIS" (str offset)))
         process (.start builder)]
     (swap! processes assoc node process)
     (when-not (await-port! (node-port test node) 15000)

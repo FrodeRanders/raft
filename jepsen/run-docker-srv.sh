@@ -82,6 +82,7 @@ run_smoke() {
 
 run_partition() {
   run_case docker-srv-java-partition-one java --time-limit 12 --concurrency 4 --nemesis partition-one --nemesis-interval 3
+  run_case docker-srv-mixed-process-pause mixed --time-limit 12 --concurrency 4 --client-impl mixed --nemesis process-pause --nemesis-interval 3
   run_case docker-srv-mixed-partition-leader mixed --time-limit 12 --concurrency 4 --client-impl mixed --nemesis partition-leader --nemesis-interval 3
 }
 

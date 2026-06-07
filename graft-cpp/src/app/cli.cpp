@@ -250,6 +250,15 @@ namespace {
         return std::chrono::milliseconds(std::max<std::int64_t>(1, value));
     }
 
+    std::function<std::int64_t()> raft_time_source_from_env() {
+        const auto offset_millis = parse_int64_env("RAFT_CLOCK_OFFSET_MILLIS").value_or(0);
+        return [offset_millis] {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                    .count() + offset_millis;
+        };
+    }
+
     bool parse_bool(const std::string &text, const std::string &field_name) {
         if (text == "true" || text == "1") {
             return true;
@@ -1110,6 +1119,7 @@ namespace {
                 .snapshot_index = 0,
                 .snapshot_term = 0,
                 .voting_peers = std::move(peer_ids),
+                .time_source = raft_time_source_from_env(),
             }
         );
         configure_handler_endpoints(handler, bind_host, port, peers);
@@ -1403,6 +1413,7 @@ namespace {
             .snapshot_index = 0,
             .snapshot_term = 0,
             .voting_peers = {},
+            .time_source = raft_time_source_from_env(),
         });
         auto handler = std::make_shared<graft::InMemoryRpcHandler>(node);
         run_active_server(bind_host, port, peer_id, std::move(node), std::move(handler), std::move(peers));
@@ -1432,6 +1443,7 @@ namespace {
                 .snapshot_index = 0,
                 .snapshot_term = 0,
                 .voting_peers = {},
+                .time_source = raft_time_source_from_env(),
             }
         );
         run_active_server(
@@ -1473,6 +1485,7 @@ namespace {
                 .snapshot_index = 0,
                 .snapshot_term = 0,
                 .voting_peers = {},
+                .time_source = raft_time_source_from_env(),
             }
         );
         run_active_server(
