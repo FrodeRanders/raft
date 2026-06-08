@@ -29,13 +29,29 @@ that sends `SIGSTOP`/`SIGCONT` to local node processes and Docker containers.
 
 ## Priority 3: Snapshot Boundary Failures
 
-Status: post-compaction restart implemented; creation/transfer crash hooks still open
+Status: post-compaction restart implemented but not yet deterministic on all
+developer machines; creation/transfer crash hooks still open
 
 Existing snapshot stress lowers thresholds, but does not deliberately crash at
 snapshot creation, snapshot installation, or immediately after compaction.
+The MacBook Pro M2 quality analysis showed that `snapshot-boundary-restart` can
+time out even when the workload remains linearizable. Treat that as a harness
+precondition failure, not a Raft safety failure: the nemesis did not prove that a
+non-leader node had actually compacted before trying to restart it.
 
 Useful directions:
 
+- split `snapshot-boundary-restart` into a deterministic warm-up and the actual
+  restart fault
+- explicitly drive enough unique writes before the nemesis runs, instead of
+  relying on the bounded random workload to happen to trigger compaction
+- wait for and require observed `snapshotIndex > 0` on a non-leader before
+  claiming the test reached a snapshot boundary
+- return first-class timeout diagnostics when the precondition is not met:
+  include recent per-node telemetry samples, observed leader, snapshot index and
+  term, telemetry success/failure, and the required predicate (implemented)
+- reinterpret `snapshot-partition-leader` as "leader partition with low snapshot
+  thresholds configured" until it also requires an observed snapshot boundary
 - crash during snapshot creation
 - crash during snapshot transfer/install
 - restart just after compaction
@@ -72,6 +88,48 @@ Status: open
 
 Reference-data use is read-dominant. Add longer-running read-heavy tests with
 low write rate, high read rate, periodic restarts/partitions, and snapshot churn.
+
+## Priority 8: Stronger Workload Evidence
+
+Status: unique operation values and operation-limit CLI implemented;
+regression/stress defaults still open
+
+Current smoke/regression histories often contain only tens of successful
+operations, and the value domain is intentionally tiny (`v0` through `v4`).
+That is useful for quick feedback, but it weakens Jepsen evidence because
+repeated values make stale reads easier to linearize.
+
+Useful directions:
+
+- add a `--unique-values` mode for extended/stress runs
+- generate values that identify the operation, and identify the process when
+  Jepsen generator context exposes it, for example `p7-op42` or structured
+  equivalents encoded by the client
+- add an `--operation-limit` option so smoke tests can remain bounded while
+  regression/stress profiles can run much longer or be time-limited only
+- keep the small value set available for fast smoke runs where readability and
+  speed matter more than maximum checker discrimination
+
+## Priority 9: Suite Profiles And Reproducibility
+
+Status: open
+
+The suite currently behaves mostly like a local smoke/regression suite. Split
+the intended uses so failures and runtime expectations are easier to interpret
+across Apple Silicon, older Intel macOS, and Docker/SRV runs.
+
+Useful directions:
+
+- define `smoke` as quick feedback: 10-20 seconds, low concurrency, small value
+  set, bounded operations
+- define `regression` as normal confidence: 60-120 seconds, higher operation
+  count, unique values, all supported nemeses
+- define `stress` as long-form validation: 10-60 minutes, high concurrency,
+  repeated seeds, and heavier snapshot/read workloads
+- print and persist the random seed for each run so timing-sensitive failures
+  can be reproduced
+- record profile, seed, operation limit, value mode, node implementations, and
+  nemesis settings in the Jepsen store metadata or run log
 
 ## Additional Network Faults
 

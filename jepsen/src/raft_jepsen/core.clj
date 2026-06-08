@@ -18,6 +18,12 @@
 (defn- parse-long-arg [value]
   (Long/parseLong (str value)))
 
+(defn- parse-bool-arg [value]
+  (case (str/lower-case (str value))
+    "true" true
+    "false" false
+    (throw (ex-info "Expected boolean value" {:value value}))))
+
 (defn- node-names [node-count]
   (mapv #(str "n" %) (range 1 (inc node-count))))
 
@@ -54,6 +60,8 @@
                :clock-skew-millis 5000
                :workload-mode "single-key"
                :key-count 3
+               :operation-limit 100
+               :unique-values false
                :snapshot-min-entries nil
                :snapshot-chunk-bytes nil
                :node-count 5
@@ -77,6 +85,8 @@
           "--base-port" (recur (assoc opts :base-port (parse-long-arg value)) rest)
           "--workload" (recur (assoc opts :workload-mode value) rest)
           "--key-count" (recur (assoc opts :key-count (parse-long-arg value)) rest)
+          "--operation-limit" (recur (assoc opts :operation-limit (parse-long-arg value)) rest)
+          "--unique-values" (recur (assoc opts :unique-values (parse-bool-arg value)) rest)
           "--snapshot-min-entries" (recur (assoc opts :snapshot-min-entries (parse-long-arg value)) rest)
           "--snapshot-chunk-bytes" (recur (assoc opts :snapshot-chunk-bytes (parse-long-arg value)) rest)
           "--node-count" (let [count (parse-long-arg value)]
@@ -110,6 +120,8 @@
     "  --base-port <port>    First node port, default 10080"
     "  --workload <mode>     single-key|multi-key, default single-key"
     "  --key-count <n>       Keys for multi-key workload, default 3"
+    "  --operation-limit <n> Maximum generated client operations, default 100"
+    "  --unique-values <bool> Generate unique write/CAS values, default false"
     "  --snapshot-min-entries <n>  Override raft.snapshot.min.entries"
     "  --snapshot-chunk-bytes <n>  Override raft.snapshot.chunk.bytes"
     "  --node-count <n>      Number of local nodes, default 5"
@@ -189,11 +201,28 @@
 
 (def cas-values ["v0" "v1" "v2" "v3" "v4"])
 
-(defn- random-value []
-  (rand-nth cas-values))
+(defn- next-unique-value [value-state process]
+  (let [process-id (if (nil? process) "p" (str "p" process))
+        value (str process-id "-op" (swap! (:counter value-state) inc))]
+    (swap! (:seen value-state) conj value)
+    value))
 
-(defn- random-expected []
-  (rand-nth (vec (cons nil cas-values))))
+(defn- generator-process [args]
+  (let [candidate (first (filter integer? args))]
+    candidate))
+
+(defn- random-value [opts value-state process]
+  (if (:unique-values opts)
+    (next-unique-value value-state process)
+    (rand-nth cas-values)))
+
+(defn- random-expected [opts value-state]
+  (if (:unique-values opts)
+    (let [seen @(:seen value-state)]
+      (if (seq seen)
+        (rand-nth (vec (cons nil seen)))
+        nil))
+    (rand-nth (vec (cons nil cas-values)))))
 
 (defn- workload-keys [opts]
   (if (= "multi-key" (:workload-mode opts))
@@ -206,24 +235,26 @@
 (defn- op-with-key [opts op]
   (assoc op :key (random-key opts)))
 
-(defn- write-op [opts & _]
+(defn- write-op [opts value-state & args]
   ;; Generators emit operation maps. Jepsen will pass each map to the client
   ;; invoke! method and record the returned map in the history.
-  (op-with-key opts
-  {:type :invoke
-   :f :write
-   :value (random-value)}))
+  (let [process (generator-process args)]
+    (op-with-key opts
+    {:type :invoke
+     :f :write
+     :value (random-value opts value-state process)})))
 
 (defn- read-op [opts & _]
   (op-with-key opts
   {:type :invoke
    :f :read}))
 
-(defn- cas-op [opts & _]
-  (let [expected (random-expected)
-        next-value (loop [candidate (random-value)]
+(defn- cas-op [opts value-state & args]
+  (let [process (generator-process args)
+        expected (random-expected opts value-state)
+        next-value (loop [candidate (random-value opts value-state process)]
                      (if (= candidate expected)
-                       (recur (random-value))
+                       (recur (random-value opts value-state process))
                        candidate))]
     (op-with-key opts
     {:type :invoke
@@ -281,7 +312,9 @@
   ;; client operations, and a checker that judges the completed history. This
   ;; function returns those two pieces so raft-test can merge them into the
   ;; final test map.
-  (let [keys (workload-keys opts)]
+  (let [keys (workload-keys opts)
+        value-state {:counter (atom 0)
+                     :seen (atom [])}]
     {:checker (checker/compose
                {:linearizable (if (= "multi-key" (:workload-mode opts))
                                 (independent-key-checker keys)
@@ -290,10 +323,10 @@
                                  #(not= :nemesis (:process %))))
                 :nemesis-errors (nemesis-error-checker)
                 :timeline (timeline/html)})
-     :generator (->> (gen/mix [(partial write-op opts)
+     :generator (->> (gen/mix [(partial write-op opts value-state)
                                (partial read-op opts)
-                               (partial cas-op opts)])
-                     (gen/limit 100))}))
+                               (partial cas-op opts value-state)])
+                     (gen/limit (:operation-limit opts)))}))
 
 (defn- nemesis-object [opts]
   ;; The nemesis object is the imperative part: Jepsen calls its invoke! method
@@ -421,6 +454,8 @@
     :node-count (:node-count opts)
     :time-limit (:time-limit opts)
     :concurrency (:concurrency opts)
+    :operation-limit (:operation-limit opts)
+    :unique-values (:unique-values opts)
     :snapshot-min-entries (:snapshot-min-entries opts)
     :snapshot-chunk-bytes (:snapshot-chunk-bytes opts)
     :node-impls (:node-impls opts)

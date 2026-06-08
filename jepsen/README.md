@@ -50,6 +50,7 @@ Optional overrides:
 
 ```text
 ./run-local.sh --time-limit 60 --concurrency 12 --base-port 11080
+./run-local.sh --time-limit 60 --operation-limit 1000 --unique-values true
 ./run-local.sh --node-count 3
 ./run-local.sh --node-count 5 --nemesis crash-restart
 ./run-local.sh --node-count 5 --nemesis process-pause
@@ -85,6 +86,8 @@ Supported options:
 - `--concurrency <n>`: Jepsen client concurrency
 - `--base-port <port>`: first node port, default `10080`
 - `--node-count <n>`: number of local nodes, default `5`
+- `--operation-limit <n>`: maximum generated client operations, default `100`
+- `--unique-values <bool>`: generate unique write/CAS values, default `false`
 - `--nemesis <mode>`: `none`, `crash-restart`, `process-pause`, `clock-skew`, `persistence-loss-restart`, `snapshot-boundary-restart`, `partition-one`, `partition-leader`, `partition-leader-minority`, `membership-join-promote`, `membership-demote`, `membership-remove-follower`, `membership-remove-leader`, or `membership-remove-follower-partition-leader`
 - `--nemesis-interval <seconds>`: delay between crash/restart actions
 - `--clock-skew-millis <ms>`: logical Raft clock offset for `clock-skew`, default `5000`
@@ -127,6 +130,7 @@ The workload layer can also be varied:
 
 - single-key CAS register: strongest focused signal for strict linearizability on one hot key
 - multi-key workload: independent per-key histories to catch routing or state-application errors that do not appear on a single key
+- unique value mode: values include a unique operation sequence, and include the Jepsen process when generator context exposes one, which makes stale reads easier for Knossos to distinguish in longer runs
 - aggressive snapshot settings: lower `--snapshot-min-entries` and smaller `--snapshot-chunk-bytes` to force snapshot creation and transfer during fault runs
 
 ## Mixed Java/C++ Runs

@@ -7,7 +7,7 @@
             [raft-jepsen.db :as raft-db]
             [raft-jepsen.observer :as observer]))
 
-(declare leader-node telemetry-detail wait-for!)
+(declare leader-node telemetry-detail)
 
 (defn- random-node
   ;; Nemeses choose targets from Jepsen's logical :nodes list. Keeping target
@@ -97,27 +97,59 @@
           (raft-db/start-node! test node true)
           (reset! disrupted-node nil))))))
 
-(defn- snapshot-boundary-node [test]
+(defn- snapshot-telemetry-sample [test leader node]
+  (try
+    (let [summary (telemetry-detail test node)]
+      {:node node
+       :success (:success summary)
+       :status (:status summary)
+       :state (:state summary)
+       :leaderId (:leaderId summary)
+       :currentLeader leader
+       :snapshotIndex (long (or (:snapshotIndex summary) 0))
+       :snapshotTerm (long (or (:snapshotTerm summary) 0))
+       :commitIndex (long (or (:commitIndex summary) 0))
+       :lastApplied (long (or (:lastApplied summary) 0))
+       :lastLogIndex (long (or (:lastLogIndex summary) 0))
+       :eligible? (and (:success summary)
+                       (pos? (long (or (:snapshotIndex summary) 0)))
+                       (not= node leader))})
+    (catch Throwable t
+      {:node node
+       :currentLeader leader
+       :success false
+       :error (or (:err (ex-data t)) (.getMessage t) (str t))
+       :eligible? false})))
+
+(defn- snapshot-boundary-observation [test timeout-ms interval-ms]
   ;; A snapshot-boundary fault should be aimed at a node that has actually
   ;; compacted. Telemetry gives us the externally visible snapshot index, so the
   ;; nemesis waits for a real boundary rather than guessing from write counts.
-  (wait-for! 90000 500
-             #(let [leader (leader-node test)
-                    candidates (shuffle (:nodes test))]
-                (some (fn [node]
-                        (try
-                          (let [summary (telemetry-detail test node)
-                                snapshot-index (long (or (:snapshotIndex summary) 0))]
-                            (when (and (:success summary)
-                                       (pos? snapshot-index)
-                                       (not= node leader))
-                              {:node node
-                               :snapshot-index snapshot-index
-                               :snapshot-term (long (or (:snapshotTerm summary) 0))
-                               :leader leader}))
-                          (catch Throwable _
-                            nil)))
-                      candidates))))
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop [recent []]
+      (let [leader (leader-node test)
+            samples (mapv #(snapshot-telemetry-sample test leader %) (:nodes test))]
+        (if-let [sample (first (filter :eligible? (shuffle samples)))]
+          {:found {:node (:node sample)
+                   :snapshot-index (:snapshotIndex sample)
+                   :snapshot-term (:snapshotTerm sample)
+                   :leader leader
+                   :sample sample}}
+          (if (< (System/currentTimeMillis) deadline)
+            (do
+              (Thread/sleep interval-ms)
+              (recur (->> (conj recent {:observedAtMillis (System/currentTimeMillis)
+                                        :leader leader
+                                        :samples samples})
+                          (take-last 8)
+                          vec)))
+            {:timeout {:required {:success true
+                                  :snapshotIndex "> 0"
+                                  :notLeader true}
+                       :lastObserved {:observedAtMillis (System/currentTimeMillis)
+                                      :leader leader
+                                      :samples samples}
+                       :recentObservations recent}}))))))
 
 (defn snapshot-boundary-restart []
   ;; Restart immediately after observing compaction. This covers the common
@@ -129,27 +161,33 @@
     (setup! [this _test] this)
     (invoke! [_ test op]
       (case (:f op)
-        :start (if-let [{:keys [node snapshot-index snapshot-term leader]} (snapshot-boundary-node test)]
-                 (do
-                   (observer/capture-safe! test "nemesis-snapshot-boundary-restart"
-                                           {:node node
-                                            :op {:f :start}
-                                            :extra {:phase :before-restart
-                                                    :snapshotIndex snapshot-index
-                                                    :snapshotTerm snapshot-term
-                                                    :leader leader}})
-                   (raft-db/stop-node! test node)
-                   (raft-db/start-node! test node true)
-                   (observer/capture-safe! test "nemesis-snapshot-boundary-restart"
-                                           {:node node
-                                            :op {:f :start}
-                                            :extra {:phase :after-restart
-                                                    :snapshotIndex snapshot-index
-                                                    :snapshotTerm snapshot-term
-                                                    :leader leader}})
-                   (assoc op :type :info :value {node {:restarted-after-snapshot-index snapshot-index
-                                                        :snapshot-term snapshot-term}}))
-                 (assoc op :type :info :error :snapshot-boundary-timeout))
+        :start (let [observation (snapshot-boundary-observation test 90000 500)]
+                 (if-let [{:keys [node snapshot-index snapshot-term leader sample]} (:found observation)]
+                   (do
+                     (observer/capture-safe! test "nemesis-snapshot-boundary-restart"
+                                             {:node node
+                                              :op {:f :start}
+                                              :extra {:phase :before-restart
+                                                      :snapshotIndex snapshot-index
+                                                      :snapshotTerm snapshot-term
+                                                      :leader leader
+                                                      :sample sample}})
+                     (raft-db/stop-node! test node)
+                     (raft-db/start-node! test node true)
+                     (observer/capture-safe! test "nemesis-snapshot-boundary-restart"
+                                             {:node node
+                                              :op {:f :start}
+                                              :extra {:phase :after-restart
+                                                      :snapshotIndex snapshot-index
+                                                      :snapshotTerm snapshot-term
+                                                      :leader leader
+                                                      :sample sample}})
+                     (assoc op :type :info :value {node {:restarted-after-snapshot-index snapshot-index
+                                                          :snapshot-term snapshot-term}}))
+                   (assoc op
+                          :type :info
+                          :error :snapshot-boundary-timeout
+                          :value (:timeout observation))))
         (assoc op :type :info :error :unsupported-nemesis-op)))
     (teardown! [_ _test])))
 
