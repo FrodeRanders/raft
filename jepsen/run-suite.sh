@@ -11,6 +11,7 @@ Suites:
   smoke     baseline + crash-restart + partition-one
   extended  richer validated local scenarios
   mixed     static Java/C++ interop smoke cases
+  stress    high-concurrency long-running stress profiles
   all       smoke + extended
 
 Examples:
@@ -24,7 +25,7 @@ EOF
 suite="all"
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    smoke|extended|mixed|all)
+    smoke|extended|mixed|stress|all)
       suite="$1"
       shift
       ;;
@@ -73,20 +74,22 @@ run_smoke() {
 }
 
 run_extended() {
-  run_case persistence-loss-restart 20380 --time-limit 20 --concurrency 10 --node-count 5 --nemesis persistence-loss-restart --nemesis-interval 5 --snapshot-min-entries 5 --snapshot-chunk-bytes 1024
-  run_case process-pause 20390 --time-limit 20 --concurrency 10 --node-count 5 --nemesis process-pause --nemesis-interval 5
-  run_case clock-skew 20440 --time-limit 20 --concurrency 10 --node-count 5 --nemesis clock-skew --nemesis-interval 5 --clock-skew-millis 5000
-  run_case snapshot-boundary-restart 20460 --time-limit 60 --concurrency 10 --node-count 5 --nemesis snapshot-boundary-restart --nemesis-interval 5 --snapshot-min-entries 3 --snapshot-chunk-bytes 1024
-  run_case partition-leader 20480 --time-limit 20 --concurrency 10 --node-count 5 --nemesis partition-leader --nemesis-interval 5
-  run_case partition-leader-minority 20580 --time-limit 20 --concurrency 10 --node-count 5 --nemesis partition-leader-minority --nemesis-interval 5
-  run_case membership-join-promote 20680 --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-join-promote --nemesis-interval 3
-  run_case membership-demote 20780 --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-demote --nemesis-interval 3
-  run_case membership-remove-follower 20880 --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-remove-follower --nemesis-interval 3
-  run_case membership-remove-leader 20980 --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-remove-leader --nemesis-interval 3
-  run_case membership-remove-follower-partition-leader 21080 --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-remove-follower-partition-leader --nemesis-interval 3
-  run_case multi-key-partition-leader 21180 --time-limit 20 --concurrency 10 --node-count 5 --workload multi-key --key-count 3 --nemesis partition-leader --nemesis-interval 5
-  run_case snapshot-partition-leader 21280 --time-limit 20 --concurrency 10 --node-count 5 --nemesis partition-leader --nemesis-interval 5 --snapshot-min-entries 5 --snapshot-chunk-bytes 1024
-  run_case seven-node-partition-leader-minority 21380 --time-limit 20 --concurrency 10 --node-count 7 --nemesis partition-leader-minority --nemesis-interval 5
+  run_case persistence-loss-restart 20380 --time-limit 20 --concurrency 10 --node-count 5 --nemesis persistence-loss-restart --nemesis-interval 5 --snapshot-min-entries 5 --snapshot-chunk-bytes 1024 --unique-values true
+  run_case process-pause 20390 --time-limit 20 --concurrency 10 --node-count 5 --nemesis process-pause --nemesis-interval 5 --unique-values true
+  run_case clock-skew 20440 --time-limit 20 --concurrency 10 --node-count 5 --nemesis clock-skew --nemesis-interval 5 --clock-skew-millis 5000 --unique-values true
+  run_case snapshot-boundary-restart 20460 --time-limit 60 --concurrency 10 --node-count 5 --nemesis snapshot-boundary-restart --nemesis-interval 5 --snapshot-min-entries 3 --snapshot-chunk-bytes 1024 --operation-limit 500 --unique-values true
+  run_case partition-leader 20480 --time-limit 20 --concurrency 10 --node-count 5 --nemesis partition-leader --nemesis-interval 5 --unique-values true
+  run_case partition-leader-minority 20580 --time-limit 20 --concurrency 10 --node-count 5 --nemesis partition-leader-minority --nemesis-interval 5 --unique-values true
+  run_case membership-join-promote 20680 --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-join-promote --nemesis-interval 3 --unique-values true
+  run_case membership-demote 20780 --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-demote --nemesis-interval 3 --unique-values true
+  run_case membership-remove-follower 20880 --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-remove-follower --nemesis-interval 3 --unique-values true
+  run_case membership-remove-leader 20980 --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-remove-leader --nemesis-interval 3 --unique-values true
+  run_case membership-remove-follower-partition-leader 21080 --time-limit 20 --concurrency 10 --node-count 5 --nemesis membership-remove-follower-partition-leader --nemesis-interval 3 --unique-values true
+  run_case multi-key-partition-leader 21180 --time-limit 20 --concurrency 10 --node-count 5 --workload multi-key --key-count 3 --nemesis partition-leader --nemesis-interval 5 --unique-values true
+  run_case snapshot-partition-leader 21280 --time-limit 20 --concurrency 10 --node-count 5 --nemesis partition-leader --nemesis-interval 5 --snapshot-min-entries 5 --snapshot-chunk-bytes 1024 --unique-values true
+  run_case snapshot-creation-crash 21400 --time-limit 60 --concurrency 10 --node-count 5 --nemesis snapshot-creation-crash --nemesis-interval 5 --snapshot-min-entries 3 --snapshot-chunk-bytes 1024 --operation-limit 500 --unique-values true
+  run_case snapshot-transfer-crash 21420 --time-limit 60 --concurrency 10 --node-count 5 --nemesis snapshot-transfer-crash --nemesis-interval 3 --snapshot-min-entries 5 --snapshot-chunk-bytes 1024 --operation-limit 500 --unique-values true
+  run_case seven-node-partition-leader-minority 21380 --time-limit 20 --concurrency 10 --node-count 7 --nemesis partition-leader-minority --nemesis-interval 5 --unique-values true
 }
 
 run_mixed() {
@@ -104,6 +107,18 @@ run_mixed() {
   run_case mixed-remove-leader 22480 --time-limit 12 --concurrency 4 --node-count 3 --node-impls cpp,java,java --nemesis membership-remove-leader --nemesis-interval 3
 }
 
+run_stress() {
+  run_case stress-baseline 22580 --time-limit 300 --concurrency 20 --node-count 5 --operation-limit 5000 --unique-values true
+  run_case stress-crash-restart 22680 --time-limit 300 --concurrency 20 --node-count 5 --nemesis crash-restart --nemesis-interval 10 --operation-limit 5000 --unique-values true
+  run_case stress-partition-leader 22780 --time-limit 300 --concurrency 20 --node-count 5 --nemesis partition-leader --nemesis-interval 10 --operation-limit 5000 --unique-values true
+  run_case stress-snapshot-boundary-restart 22880 --time-limit 300 --concurrency 20 --node-count 5 --nemesis snapshot-boundary-restart --nemesis-interval 5 --snapshot-min-entries 3 --snapshot-chunk-bytes 1024 --operation-limit 5000 --unique-values true
+  run_case stress-membership-join-promote 22980 --time-limit 300 --concurrency 20 --node-count 5 --nemesis membership-join-promote --nemesis-interval 5 --operation-limit 5000 --unique-values true
+  run_case stress-membership-remove-follower 23080 --time-limit 300 --concurrency 20 --node-count 5 --nemesis membership-remove-follower --nemesis-interval 5 --operation-limit 5000 --unique-values true
+  run_case stress-partition-leader-minority 23180 --time-limit 300 --concurrency 20 --node-count 5 --nemesis partition-leader-minority --nemesis-interval 10 --operation-limit 5000 --unique-values true
+  run_case stress-snapshot-creation-crash 23280 --time-limit 300 --concurrency 20 --node-count 5 --nemesis snapshot-creation-crash --nemesis-interval 10 --snapshot-min-entries 3 --snapshot-chunk-bytes 1024 --operation-limit 5000 --unique-values true
+  run_case stress-snapshot-transfer-crash 23380 --time-limit 300 --concurrency 20 --node-count 5 --nemesis snapshot-transfer-crash --nemesis-interval 3 --snapshot-min-entries 5 --snapshot-chunk-bytes 1024 --operation-limit 5000 --unique-values true
+}
+
 case "${suite}" in
   smoke)
     run_smoke
@@ -113,6 +128,9 @@ case "${suite}" in
     ;;
   mixed)
     run_mixed
+    ;;
+  stress)
+    run_stress
     ;;
   all)
     run_smoke

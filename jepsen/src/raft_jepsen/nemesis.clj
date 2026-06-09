@@ -161,7 +161,7 @@
     (setup! [this _test] this)
     (invoke! [_ test op]
       (case (:f op)
-        :start (let [observation (snapshot-boundary-observation test 90000 500)]
+         :start (let [observation (snapshot-boundary-observation test 120000 15000)]
                  (if-let [{:keys [node snapshot-index snapshot-term leader sample]} (:found observation)]
                    (do
                      (observer/capture-safe! test "nemesis-snapshot-boundary-restart"
@@ -190,6 +190,109 @@
                           :value (:timeout observation))))
         (assoc op :type :info :error :unsupported-nemesis-op)))
     (teardown! [_ _test])))
+
+(defn snapshot-creation-crash []
+  ;; Crash a follower repeatedly during sustained write load with aggressive
+  ;; snapshot thresholds. Each crash records whether the target had compacted,
+  ;; so the history shows how often crashes overlapped with snapshot creation.
+  (let [target-node (atom nil)]
+    (reify
+      jepsen.nemesis/Nemesis
+      (setup! [this _test] this)
+      (invoke! [_ test op]
+        (locking target-node
+          (case (:f op)
+            :start (if-let [node @target-node]
+                     (do
+                       (raft-db/start-node! test node true)
+                       (observer/capture-safe! test "nemesis-snapshot-creation-crash"
+                                               {:node node :op {:f :start}})
+                       (reset! target-node nil)
+                       (assoc op :type :info :value {node :restarted}))
+                     (assoc op :type :info :value :not-started))
+            :stop (if @target-node
+                    (assoc op :type :info :value :already-stopped)
+                    (if-let [node (follower-node test)]
+                    (let [leader (leader-node test)
+                          sample (snapshot-telemetry-sample test leader node)]
+                      (raft-db/stop-node! test node)
+                      (observer/capture-safe! test "nemesis-snapshot-creation-crash"
+                                              {:node node :op {:f :stop}
+                                               :extra {:had-compacted (:eligible? sample)
+                                                       :snapshotIndex (:snapshotIndex sample)
+                                                       :snapshotTerm (:snapshotTerm sample)}})
+                      (reset! target-node node)
+                      (assoc op :type :info :value {node {:stopped true
+                                                            :had-compacted (:eligible? sample)}}))
+                    (assoc op :type :info :value :no-target)))
+            (assoc op :type :info :error :unsupported-nemesis-op))))
+      (teardown! [_ test]
+        (when-let [node @target-node]
+          (raft-db/start-node! test node true)
+          (reset! target-node nil))))))
+
+(defn snapshot-transfer-crash []
+  ;; Wipe a follower, restart it to trigger InstallSnapshot, then crash it
+  ;; during the transfer. The nemesis tracks three phases: init, transfer, and
+  ;; cycling. Repeated stop/start cycles stress recovery from interrupted
+  ;; snapshot installation.
+  (let [target-node (atom nil)
+        phase (atom :init)]
+    (reify
+      jepsen.nemesis/Nemesis
+      (setup! [this _test] this)
+      (invoke! [_ test op]
+        (locking target-node
+          (case (:f op)
+            :start (cond
+                     (= :transfer @phase)
+                     (do
+                       (raft-db/start-node! test @target-node false)
+                       (observer/capture-safe! test "nemesis-snapshot-transfer-crash"
+                                               {:node @target-node :op {:f :start}
+                                                :extra {:phase :transfer-started}})
+                       (reset! phase :cycling)
+                       (assoc op :type :info :value {@target-node :transfer-started}))
+                     (= :cycling @phase)
+                     (if @target-node
+                       (do
+                         (raft-db/start-node! test @target-node true)
+                         (observer/capture-safe! test "nemesis-snapshot-transfer-crash"
+                                                 {:node @target-node :op {:f :start}
+                                                  :extra {:phase :restarted-after-crash}})
+                         (reset! target-node nil)
+                         (assoc op :type :info :value {@target-node :restarted}))
+                       (assoc op :type :info :value :not-started))
+                     :else
+                     (assoc op :type :info :value :not-started))
+            :stop (cond
+                    (and @target-node (= :cycling @phase))
+                    (do
+                      (raft-db/stop-node! test @target-node)
+                      (observer/capture-safe! test "nemesis-snapshot-transfer-crash"
+                                              {:node @target-node :op {:f :stop}
+                                               :extra {:phase :crashed-during-transfer}})
+                      (assoc op :type :info :value {@target-node :crashed-during-transfer}))
+                    @target-node
+                    (assoc op :type :info :value :unexpected-state)
+                    :else
+                    (if-let [node (follower-node test)]
+                      (do
+                        (raft-db/wipe-node-data! test node)
+                        (observer/capture-safe! test "nemesis-snapshot-transfer-crash"
+                                                {:node node :op {:f :stop}
+                                                 :extra {:phase :data-wiped}})
+                        (reset! target-node node)
+                        (reset! phase :transfer)
+                        (assoc op :type :info :value {node :data-wiped}))
+                      (assoc op :type :info :value :no-target)))
+            (assoc op :type :info :error :unsupported-nemesis-op))))
+      (teardown! [_ test]
+        (when @target-node
+          (try (raft-db/start-node! test @target-node true)
+               (catch Throwable _))
+          (reset! target-node nil)
+          (reset! phase :init))))))
 
 (defn process-pause []
   ;; Pause/resume models stop-the-world behavior: the process remains alive and
@@ -355,7 +458,22 @@
     (when-not (zero? exit)
       (throw (ex-info "Telemetry detail command failed"
                       {:node node :exit exit :out out :err err})))
-    response))
+    ;; When parse-json returns nil despite exit=0, capture the raw output as
+    ;; diagnostic data so timeouts are debuggable.
+    (or response
+        (do
+          (observer/capture-safe! test "telemetry-parse-failure"
+                                  {:node node
+                                   :extra {:raw-stdout-prefix (some-> out str/trim (subs 0 (min 200 (count out))))
+                                           :raw-stderr-prefix (some-> err str/trim (subs 0 (min 200 (count err))))
+                                           :raw-stdout-bytes (count (str out))}})
+          {:success false
+           :status "PARSE_FAILURE"
+           :snapshotIndex 0
+           :snapshotTerm 0
+           :commitIndex 0
+           :lastApplied 0
+            :lastLogIndex 0}))))
 
 (defn- reconfiguration-status [test node]
   (let [{:keys [exit out err]}

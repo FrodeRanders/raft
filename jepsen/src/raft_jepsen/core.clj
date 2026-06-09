@@ -125,7 +125,7 @@
     "  --snapshot-min-entries <n>  Override raft.snapshot.min.entries"
     "  --snapshot-chunk-bytes <n>  Override raft.snapshot.chunk.bytes"
     "  --node-count <n>      Number of local nodes, default 5"
-    "  --nemesis <mode>      none|crash-restart|process-pause|clock-skew|persistence-loss-restart|snapshot-boundary-restart|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower|membership-remove-leader|membership-remove-follower-partition-leader, default none"
+     "  --nemesis <mode>      none|crash-restart|process-pause|clock-skew|persistence-loss-restart|snapshot-boundary-restart|snapshot-creation-crash|snapshot-transfer-crash|partition-one|partition-leader|partition-leader-minority|membership-join-promote|membership-demote|membership-remove-follower|membership-remove-leader|membership-remove-follower-partition-leader, default none"
     "  --nemesis-interval <sec> Nemesis interval, default 5"
     "  --clock-skew-millis <ms> Logical clock offset for clock-skew nemesis, default 5000"
     "  --workdir <path>      Local work directory, default ./work"]))
@@ -164,10 +164,12 @@
       (throw (ex-info "Docker/SRV backend currently uses the fixed three-node Compose topology"
                       {:node-count (:node-count opts)})))
     (when (and (= :docker-srv backend)
-               (#{"persistence-loss-restart"
-                  "clock-skew"
-                  "snapshot-boundary-restart"
-                  "membership-join-promote"
+                (#{"persistence-loss-restart"
+                   "clock-skew"
+                   "snapshot-boundary-restart"
+                   "snapshot-creation-crash"
+                   "snapshot-transfer-crash"
+                   "membership-join-promote"
                   "membership-demote"
                   "membership-remove-follower"
                   "membership-remove-leader"
@@ -190,9 +192,9 @@
       (throw (ex-info "Unsupported client implementation"
                       {:impl client-impl :allowed #{:java :cpp :mixed}})))
     (-> opts
-        (cond-> (= "snapshot-boundary-restart" (:nemesis-mode opts))
+        (cond-> (#{"snapshot-boundary-restart" "snapshot-creation-crash" "snapshot-transfer-crash"} (:nemesis-mode opts))
           (update :snapshot-min-entries #(or % 5))
-          (= "snapshot-boundary-restart" (:nemesis-mode opts))
+          (#{"snapshot-boundary-restart" "snapshot-creation-crash" "snapshot-transfer-crash"} (:nemesis-mode opts))
           (update :snapshot-chunk-bytes #(or % 1024)))
         (assoc :node-impls (zipmap nodes impls))
         (assoc :backend backend
@@ -339,6 +341,8 @@
     "clock-skew" (raft-nemesis/clock-skew)
     "persistence-loss-restart" (raft-nemesis/persistence-loss-restart)
     "snapshot-boundary-restart" (raft-nemesis/snapshot-boundary-restart)
+    "snapshot-creation-crash" (raft-nemesis/snapshot-creation-crash)
+    "snapshot-transfer-crash" (raft-nemesis/snapshot-transfer-crash)
     "partition-one" (raft-nemesis/partition-one)
     "partition-leader" (raft-nemesis/partition-leader)
     "partition-leader-minority" (raft-nemesis/partition-leader-minority)
@@ -372,6 +376,27 @@
     (gen/phases
      (gen/sleep (:nemesis-interval opts))
      (gen/once {:f :start}))
+    "snapshot-creation-crash"
+    (gen/cycle
+     (gen/phases
+      (gen/once {:f :stop})
+      (gen/sleep (:nemesis-interval opts))
+      (gen/once {:f :start})
+      (gen/sleep (:nemesis-interval opts))))
+    "snapshot-transfer-crash"
+    (gen/phases
+     (gen/sleep (:nemesis-interval opts))
+     (gen/once {:f :stop})       ;; wipe follower data
+     (gen/sleep 3)
+     (gen/once {:f :start})      ;; start, trigger InstallSnapshot
+     (gen/sleep 5)
+     (gen/once {:f :stop})       ;; crash during transfer
+     (gen/sleep 3)
+     (gen/once {:f :start})      ;; restart, resume transfer
+     (gen/sleep 5)
+     (gen/once {:f :stop})       ;; crash again
+     (gen/sleep 3)
+     (gen/once {:f :start}))     ;; final restart, let recover
     "membership-remove-leader"
     (gen/phases
      (gen/sleep (:nemesis-interval opts))
@@ -389,6 +414,19 @@
       (gen/once {:f :start})
      (gen/sleep (:nemesis-interval opts))))))
 
+(defn- snapshot-write-prelude [opts]
+  ;; Deterministic write burst to guarantee compaction before the snapshot-boundary
+  ;; nemesis starts polling. Without this, a fast machine may finish the mixed
+  ;; workload before any follower has applied enough entries to compact.
+  (let [key (:key opts)
+        n 50
+        write-phases (mapv (fn [i]
+                             (gen/once {:type :invoke :f :write :value (str "snap-prelude-" i) :key key}))
+                           (range n))]
+    (gen/clients
+     (apply gen/phases
+            (conj write-phases (gen/sleep 10))))))
+
 (defn- heal-before-final-read-generator [opts]
   ;; Cyclic fault nemeses use :stop to inject the fault and :start to heal it.
   ;; Ensure the final read phase observes a settled cluster instead of leaving a
@@ -397,6 +435,7 @@
            "process-pause"
            "clock-skew"
            "persistence-loss-restart"
+           "snapshot-creation-crash"
            "partition-one"
            "partition-leader"
            "partition-leader-minority"} (:nemesis-mode opts))
@@ -417,10 +456,13 @@
         with-nemesis (if-let [n-gen (nemesis-generator opts)]
                        (->> base
                             (gen/nemesis n-gen))
-                       base)]
+                       base)
+        snapshot-prelude (when (= "snapshot-boundary-restart" (:nemesis-mode opts))
+                          (snapshot-write-prelude opts))]
     (apply gen/phases
            (remove nil?
-                   [(gen/time-limit (:time-limit opts) with-nemesis)
+                   [snapshot-prelude
+                    (gen/time-limit (:time-limit opts) with-nemesis)
                     (heal-before-final-read-generator opts)
                     (gen/log "Waiting for cluster to settle")
                     (gen/sleep 5)
@@ -469,22 +511,47 @@
     :repo-root (:repo-root opts)
     :workdir (:workdir opts)
     :jar-path (:jar-path opts)
-    :key (:key opts)}))
+    :key (:key opts)
+    :seed (:seed opts)}))
 
 (defn -main [& args]
   ;; jepsen/run! is the entry point: it sets up the DB on every node, opens
   ;; clients, runs the generator, tears everything down, saves logs/history, and
   ;; invokes the checker.
-  (let [opts (normalize-opts (parse-args args))]
+  (let [seed (unchecked-int (System/nanoTime))
+        opts (normalize-opts (parse-args args))]
     (if (:help opts)
       (println (usage))
       (do
-        (let [opts (assoc opts :jar-path (raft-db/resolved-jar-path opts))]
+        (let [opts (assoc opts :jar-path (raft-db/resolved-jar-path opts) :seed seed)]
           (println "Running Raft Jepsen harness with options:" (pr-str (dissoc opts :help)))
+          (println (str "Jepsen random seed: " seed))
           (try
-            (let [result (jepsen/run! (raft-test opts))
+            (let [test-map (raft-test opts)
+                  result (jepsen/run! test-map)
                   valid? (or (:valid? result)
-                             (get-in result [:results :valid?]))]
+                              (get-in result [:results :valid?]))]
+              (try
+                (spit (io/file (:workdir opts) "metadata.edn")
+                      (pr-str {:seed seed
+                               :time-limit (:time-limit opts)
+                               :concurrency (:concurrency opts)
+                               :operation-limit (:operation-limit opts)
+                               :unique-values (:unique-values opts)
+                               :nemesis-mode (:nemesis-mode opts)
+                               :nemesis-interval (:nemesis-interval opts)
+                               :node-count (:node-count opts)
+                               :node-impls (:node-impls opts)
+                               :client-impl (:client-impl opts)
+                               :joining-impl (:joining-impl opts)
+                               :backend (:backend opts)
+                               :srv-mode (:srv-mode opts)
+                               :snapshot-min-entries (:snapshot-min-entries opts)
+                               :snapshot-chunk-bytes (:snapshot-chunk-bytes opts)
+                               :workload-mode (:workload-mode opts)
+                               :key-count (:key-count opts)
+                               :clock-skew-millis (:clock-skew-millis opts)}))
+                (catch Throwable _))
               (when-not valid?
                 (System/exit 1)))
             (finally

@@ -83,7 +83,8 @@
         base-event {:observedAtMillis (System/currentTimeMillis)
                     :context context
                     :focusNode node
-                    :op op}
+                    :op op
+                    :seed (:seed test)}
         events (for [current-node nodes]
                  (merge
                   base-event

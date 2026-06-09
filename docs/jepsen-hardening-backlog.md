@@ -29,33 +29,33 @@ that sends `SIGSTOP`/`SIGCONT` to local node processes and Docker containers.
 
 ## Priority 3: Snapshot Boundary Failures
 
-Status: post-compaction restart implemented but not yet deterministic on all
-developer machines; creation/transfer crash hooks still open
+Status: deterministic warm-up and snapshot creation/transfer crash nemeses
+implemented; `snapshot-partition-leader` interpretation documented
 
-Existing snapshot stress lowers thresholds, but does not deliberately crash at
-snapshot creation, snapshot installation, or immediately after compaction.
-The MacBook Pro M2 quality analysis showed that `snapshot-boundary-restart` can
-time out even when the workload remains linearizable. Treat that as a harness
-precondition failure, not a Raft safety failure: the nemesis did not prove that a
-non-leader node had actually compacted before trying to restart it.
+The harness now drives a deterministic burst of 50 unique-valued writes before
+the `snapshot-boundary-restart` nemesis begins polling. This guarantees that
+enough entries exist to trigger compaction (with `--snapshot-min-entries 3`),
+eliminating the Apple Silicon timeout caused by the bounded random workload
+completing before any follower compacted.
 
 Useful directions:
 
-- split `snapshot-boundary-restart` into a deterministic warm-up and the actual
+- [x] split `snapshot-boundary-restart` into a deterministic warm-up and the actual
   restart fault
-- explicitly drive enough unique writes before the nemesis runs, instead of
+- [x] explicitly drive enough unique writes before the nemesis runs, instead of
   relying on the bounded random workload to happen to trigger compaction
-- wait for and require observed `snapshotIndex > 0` on a non-leader before
+- [x] wait for and require observed `snapshotIndex > 0` on a non-leader before
   claiming the test reached a snapshot boundary
-- return first-class timeout diagnostics when the precondition is not met:
+- [x] return first-class timeout diagnostics when the precondition is not met:
   include recent per-node telemetry samples, observed leader, snapshot index and
-  term, telemetry success/failure, and the required predicate (implemented)
-- reinterpret `snapshot-partition-leader` as "leader partition with low snapshot
+  term, telemetry success/failure, and the required predicate
+- [ ] reinterpret `snapshot-partition-leader` as "leader partition with low snapshot
   thresholds configured" until it also requires an observed snapshot boundary
-- crash during snapshot creation
-- crash during snapshot transfer/install
-- restart just after compaction
-- verify catch-up and reads after the boundary
+  (interpretation documented in `docs/jepsen-quality-analysis.md`)
+- [x] crash during snapshot creation
+- [x] crash during snapshot transfer/install
+- [x] restart just after compaction
+- [x] verify catch-up and reads after the boundary
 
 ## Priority 4: Mixed Java/C++ Extended Matrix
 
@@ -91,44 +91,51 @@ low write rate, high read rate, periodic restarts/partitions, and snapshot churn
 
 ## Priority 8: Stronger Workload Evidence
 
-Status: unique operation values and operation-limit CLI implemented;
-regression/stress defaults still open
+Status: unique values enabled in extended suite defaults; stress profile with
+high operation limits configured
 
-Current smoke/regression histories often contain only tens of successful
-operations, and the value domain is intentionally tiny (`v0` through `v4`).
-That is useful for quick feedback, but it weakens Jepsen evidence because
-repeated values make stale reads easier to linearize.
+The extended suite now uses `--unique-values true` across all 14 cases, generating
+values like `p7-op42` that identify both the Jepsen process and the operation
+counter. This gives Knossos much stronger discriminating power against stale reads.
+Smoke tests retain the small value set for fast, readable feedback. The stress
+profile uses 5000-operation limits with unique values for long-form validation.
 
 Useful directions:
 
-- add a `--unique-values` mode for extended/stress runs
-- generate values that identify the operation, and identify the process when
+- [x] add a `--unique-values` mode for extended/stress runs
+- [x] generate values that identify the operation, and identify the process when
   Jepsen generator context exposes it, for example `p7-op42` or structured
   equivalents encoded by the client
-- add an `--operation-limit` option so smoke tests can remain bounded while
+- [x] add an `--operation-limit` option so smoke tests can remain bounded while
   regression/stress profiles can run much longer or be time-limited only
-- keep the small value set available for fast smoke runs where readability and
+- [x] keep the small value set available for fast smoke runs where readability and
   speed matter more than maximum checker discrimination
 
 ## Priority 9: Suite Profiles And Reproducibility
 
-Status: open
+Status: smoke/regression/stress profiles defined; random seed reported and persisted
+in observer events; run metadata saved to `metadata.edn` in workdir
 
-The suite currently behaves mostly like a local smoke/regression suite. Split
-the intended uses so failures and runtime expectations are easier to interpret
-across Apple Silicon, older Intel macOS, and Docker/SRV runs.
+Profiles are now clearly separated:
+
+- `smoke`: 10s, concurrency 10, small value set, 3 cases (baseline, crash-restart, partition-one)
+- `extended` (regression): 20-60s, concurrency 10, unique values, 16 cases covering all local nemeses
+- `stress`: 300s (5min), concurrency 20, unique values, 5000 operation limit, 9 cases
+
+The random seed is generated from `System/nanoTime` at startup, printed to stdout,
+and persisted in every JSONL observer event for post-mortem correlation.
 
 Useful directions:
 
-- define `smoke` as quick feedback: 10-20 seconds, low concurrency, small value
+- [x] define `smoke` as quick feedback: 10-20 seconds, low concurrency, small value
   set, bounded operations
-- define `regression` as normal confidence: 60-120 seconds, higher operation
+- [x] define `regression` as normal confidence: 60-120 seconds, higher operation
   count, unique values, all supported nemeses
-- define `stress` as long-form validation: 10-60 minutes, high concurrency,
+- [x] define `stress` as long-form validation: 10-60 minutes, high concurrency,
   repeated seeds, and heavier snapshot/read workloads
-- print and persist the random seed for each run so timing-sensitive failures
+- [x] print and persist the random seed for each run so timing-sensitive failures
   can be reproduced
-- record profile, seed, operation limit, value mode, node implementations, and
+- [x] record profile, seed, operation limit, value mode, node implementations, and
   nemesis settings in the Jepsen store metadata or run log
 
 ## Additional Network Faults

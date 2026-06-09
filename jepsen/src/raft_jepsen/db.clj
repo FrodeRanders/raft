@@ -347,9 +347,12 @@
 (defn- java-props [test node]
   ;; Per-node JVM properties are part of the DB command line because Jepsen
   ;; treats each node as a separate process with its own data directory.
+  ;; Jepsen control-plane operations must not be throttled: the nemesis and
+  ;; observer poll telemetry to make fault-injection decisions.
   (vec
    (concat
-    [(str "-Draft.data.dir=" (.getAbsolutePath (node-data-dir test node)))]
+    [(str "-Draft.data.dir=" (.getAbsolutePath (node-data-dir test node)))
+     "-Draft.telemetry.rate.limit.per.minute=3600"]
     (when-let [min-entries (:snapshot-min-entries test)]
       [(str "-Draft.snapshot.min.entries=" (long min-entries))])
     (when-let [chunk-bytes (:snapshot-chunk-bytes test)]
