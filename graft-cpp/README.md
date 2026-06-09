@@ -107,7 +107,7 @@ The C++ implementation mirrors the same conceptual layers, but in a smaller CMak
 - `raft_runtime.hpp/.cpp`: outbound election, heartbeat, replication, and snapshot catch-up runtime
 - `rpc_handler.hpp/.cpp`: inbound protocol handlers, request authentication, write authorization, and adapter boundary
 - `persistent_state_store.hpp/.cpp`: current file-backed persistence
-- `cli.cpp`: command-line surface for direct and mixed-language validation
+- `cli.cpp`: command-line interface for direct and mixed-language validation
 
 The current design goal is not source-level parity. It is behavioral parity at the protocol boundary first, followed by gradual convergence of internal layering where the Java modules already show the intended seams. The C++ side should therefore keep moving toward explicit `wire`, `core`, `storage`, `state-machine`, `runtime`, `transport`, and `app` boundaries as the implementation grows.
 
@@ -510,7 +510,7 @@ The C++ implementation now has a real consensus core for the shared behaviors li
 - `include/graft/transport/`
   - Boost.Asio client/server transport over the shared envelope protocol
 - `include/graft/app/`
-  - CLI entrypoint surface for direct and mixed-language validation
+  - CLI entrypoint for direct and mixed-language validation
 - `graft_transport` CMake target
   - reusable implementation target containing the layered C++ sources for now
 - `java-probe/`

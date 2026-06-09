@@ -45,11 +45,10 @@ services:
     dns:
       - 10.77.0.10
     environment:
+      RAFT_CLUSTER_SRV: _raft._tcp.raft.local
       RAFT_NODE_ID: raft-2
       RAFT_BIND_HOST: 0.0.0.0
       RAFT_BIND_PORT: 7000
-      RAFT_CLUSTER_SRV: _raft._tcp.raft.local
-      RAFT_DATA_DIR: /data
     ports:
       - "17002:7000"
     volumes:
@@ -62,7 +61,10 @@ services:
       - raft-1
 
   raft-3:
-    image: graft-cpp:local
+    build:
+      context: ..
+      dockerfile: docker/raft-rust.Dockerfile
+    image: graft-rust:local
     container_name: raft-3
     dns:
       - 10.77.0.10
@@ -70,7 +72,7 @@ services:
       RAFT_NODE_ID: raft-3
       RAFT_BIND_HOST: 0.0.0.0
       RAFT_BIND_PORT: 7000
-      RAFT_CLUSTER_SRV: _raft._tcp.raft.local
+      RAFT_PEERS: raft-1@raft-1.raft.local:7000,raft-2@raft-2.raft.local:7000
       RAFT_DATA_DIR: /data
     ports:
       - "17003:7000"
@@ -82,7 +84,6 @@ services:
     depends_on:
       - dns
       - raft-1
-      - raft-2
 
 networks:
   raft-net:

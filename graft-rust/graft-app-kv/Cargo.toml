@@ -1,0 +1,26 @@
+[package]
+name = "graft-app-kv"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "graft-kv"
+path = "src/main.rs"
+
+[dependencies]
+graft-proto = { path = "../graft-proto" }
+graft-core = { path = "../graft-core" }
+graft-storage = { path = "../graft-storage" }
+graft-transport = { path = "../graft-transport" }
+graft-runtime = { path = "../graft-runtime" }
+prost.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true

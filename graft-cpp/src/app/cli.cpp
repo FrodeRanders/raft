@@ -37,7 +37,7 @@
 #include "graft/transport/raft_server.hpp"
 
 namespace {
-    // The CLI is intentionally a broad integration surface: it drives direct
+    // The CLI is intentionally a broad integration entrypoint: it drives direct
     // request/response probes, passive servers, active Raft nodes, persistence
     // exercises, and mixed Java/C++ smoke tests.  The core library does not
     // depend on this file; application developers should read it as a worked
@@ -437,7 +437,7 @@ namespace {
     template<typename HandlerPtr>
     void configure_handler_operational_policy(const HandlerPtr &handler) {
         // These knobs affect observability and read behavior, not Raft safety:
-        // telemetry rate limiting protects the operational surface, while the
+        // telemetry rate limiting protects the operational endpoint, while the
         // read lease duration controls how recent leader contact must be before
         // a local read can be treated as linearizable.
         const auto limit = parse_int32_env("RAFT_TELEMETRY_RATE_LIMIT_PER_MINUTE");

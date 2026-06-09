@@ -1,0 +1,300 @@
+\section{Getting Started}
+\label{sec:GettingStarted}
+
+This section walks through bringing up a three-node Raft cluster and issuing
+the first commands. It is intended as an orientation for both application
+developers evaluating the library and machinery developers who need a working
+cluster to test against.
+
+All three implementations (Java, C++, Rust) are covered. Pick the one that
+matches your build toolchain, or mix them using the Docker Compose files
+described in \S\ref{sec:GettingStartedDocker}.
+
+\subsection{Building from source}
+
+\subsubsection{Java}
+
+\begin{lstlisting}[language=bash,caption={Java build}]
+# Build all Java modules, run unit tests, produce raft-dist/target/raft-*.jar
+mvn -q package
+\end{lstlisting}
+
+The distributable JAR lives at \filepath{raft-dist/target/raft-1.0-SNAPSHOT.jar}.
+It bundles all runtime dependencies and can be invoked directly:
+
+\begin{lstlisting}[language=bash,caption={Java CLI}]
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar n1@127.0.0.1:11081
+\end{lstlisting}
+
+\subsubsection{C++}
+
+\begin{lstlisting}[language=bash,caption={C++ build}]
+cmake -S graft-cpp -B graft-cpp/build
+cmake --build graft-cpp/build
+\end{lstlisting}
+
+Produces \filepath{graft-cpp/build/graft\_smoke}, a single binary covering
+all server, client and probe commands.
+
+\subsubsection{Rust}
+
+\begin{lstlisting}[language=bash,caption={Rust build}]
+cd graft-rust
+cargo build -p graft-app-kv
+\end{lstlisting}
+
+Produces \filepath{graft-rust/target/debug/graft-kv} (or
+\filepath{target/release/graft-kv} with \texttt{--release}). The binary
+provides 26 subcommands covering server, client, operational and smoke modes.
+
+\subsection{Starting a local cluster}
+
+The simplest way to start a cluster is with the active persistent server mode.
+Each node needs a unique port and a peer list containing all other nodes.
+
+\subsubsection{Java cluster}
+
+Start three terminals (or background processes):
+
+\begin{lstlisting}[language=bash,caption={Java 3-node cluster}]
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar \
+  n1@127.0.0.1:11081 n2@127.0.0.1:11082 n3@127.0.0.1:11083
+
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar \
+  n2@127.0.0.1:11082 n1@127.0.0.1:11081 n3@127.0.0.1:11083
+
+java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar \
+  n3@127.0.0.1:11083 n1@127.0.0.1:11081 n2@127.0.0.1:11082
+\end{lstlisting}
+
+\subsubsection{Rust cluster}
+
+The Rust CLI uses explicit \texttt{serve-active-persistent} with positional
+arguments instead of a combined peer-spec/as-argument convention:
+
+\begin{lstlisting}[language=bash,caption={Rust 3-node cluster}]
+graft-rust/target/debug/graft-kv serve-active-persistent \
+  127.0.0.1 11081 n1 /tmp/n1.state 0 0 0 \
+  n2@127.0.0.1:11082 n3@127.0.0.1:11083
+
+graft-rust/target/debug/graft-kv serve-active-persistent \
+  127.0.0.1 11082 n2 /tmp/n2.state 0 0 0 \
+  n1@127.0.0.1:11081 n3@127.0.0.1:11083
+
+graft-rust/target/debug/graft-kv serve-active-persistent \
+  127.0.0.1 11083 n3 /tmp/n3.state 0 0 0 \
+  n1@127.0.0.1:11081 n2@127.0.0.1:11082
+\end{lstlisting}
+
+\subsubsection{Verifying cluster health}
+
+Once all nodes are started, one will be elected leader within a few seconds.
+Verify with the telemetry or cluster-summary commands (both work against any
+implementation since they share the same wire protocol):
+
+\begin{lstlisting}[language=bash,caption={Cluster health check (C++ probe)}]
+graft-cpp/build/graft_smoke cluster-summary 127.0.0.1 11081 cpp-cli
+graft-cpp/build/graft_smoke telemetry 127.0.0.1 11082 true
+\end{lstlisting}
+
+Or using the Rust binary:
+
+\begin{lstlisting}[language=bash,caption={Cluster health check (Rust probe)}]
+graft-rust/target/debug/graft-kv cluster-summary 127.0.0.1 11081
+graft-rust/target/debug/graft-kv telemetry 127.0.0.1 11082 \
+  --require-leader-summary
+\end{lstlisting}
+
+Look for \texttt{state: LEADER} on one node and \texttt{state: FOLLOWER} on
+the others.
+
+\subsection{First commands}
+
+Put a value and read it back. The client must target the leader; followers
+redirect.
+
+\begin{lstlisting}[language=bash,caption={Put and get (C++ probe)}]
+graft-cpp/build/graft_smoke client-put 127.0.0.1 11081 greeting hello my-client
+graft-cpp/build/graft_smoke client-get 127.0.0.1 11081 greeting my-client
+\end{lstlisting}
+
+Or with Rust:
+
+\begin{lstlisting}[language=bash,caption={Put and get (Rust probe)}]
+graft-rust/target/debug/graft-kv client-put 127.0.0.1 11081 \
+  greeting hello my-client
+graft-rust/target/debug/graft-kv client-get 127.0.0.1 11081 \
+  greeting my-client
+\end{lstlisting}
+
+If you send a client-get to a follower, the response will include
+\texttt{status: REDIRECT} with the leader's address.
+
+\subsection{Docker deployment}
+\label{sec:GettingStartedDocker}
+
+For multi-language clusters or reproducible testing, use Docker Compose.
+Four Compose files are provided:
+
+\begin{itemize}
+\item \filepath{docker/compose-srv-java.yml} --- 3 Java nodes + CoreDNS
+\item \filepath{docker/compose-srv-cpp.yml} --- 3 C++ nodes + CoreDNS
+\item \filepath{docker/compose-srv-rust.yml} --- 3 Rust nodes + CoreDNS
+\item \filepath{docker/compose-srv-mixed.yml} --- 1 Java + 1 C++ + 1 Rust
+\end{itemize}
+
+Start a cluster with:
+
+\begin{lstlisting}[language=bash,caption={Docker smoke test}]
+docker/run-srv-smoke.sh java          # or cpp, rust, mixed
+docker/run-srv-suite.sh               # all four in sequence
+\end{lstlisting}
+
+The smoke script builds images, starts containers, waits for leader election,
+probes all three nodes, and tears down on exit. All nodes share a CoreDNS
+container resolving the \texttt{raft.local} zone. Host ports 17001--17003
+map to container port 7000.
+
+\subsection{DNS SRV bootstrapping}
+\label{sec:DnsSrvBootstrapping}
+
+The local cluster examples above use explicit peer lists
+(\texttt{n2@127.0.0.1:11082,n3@...}) so each node knows its peers at startup.
+In containerized deployments---Docker Compose, Kubernetes, OpenShift---this
+becomes unwieldy. DNS SRV records let nodes discover peers from a single
+service name instead of a static list.
+
+\subsubsection{Why DNS SRV?}
+
+A DNS SRV record maps a service name to multiple \emph{target} entries, each
+specifying a hostname and port. This matches the problem of cluster
+bootstrapping: a new node needs to contact \emph{any} existing member, and
+the DNS zone is the natural place to publish the current member set.
+
+SRV records are used natively in Kubernetes and OpenShift via headless
+Services. A StatefulSet-backed Raft cluster can publish SRV records
+automatically, giving each node a stable identity
+(\texttt{raft-0.raft.\textless ns\textgreater .svc.cluster.local}) and a
+discoverable service endpoint (\texttt{\_raft.\_tcp.raft.\textless
+ns\textgreater .svc.cluster.local}). The same mechanism works in Docker
+Compose with a CoreDNS sidecar.
+
+The startup contract is intentionally minimal. A node needs only three
+pieces of information:
+
+\begin{itemize}
+\item \texttt{RAFT\_NODE\_ID} --- its logical Raft identity,
+\item \texttt{RAFT\_BIND\_HOST}/\texttt{RAFT\_BIND\_PORT} --- its listen address,
+\item \texttt{RAFT\_CLUSTER\_SRV} --- the SRV service name to resolve.
+\end{itemize}
+
+Everything else---current membership, leader identity, cluster metadata---is
+learned from the first contacted peer via the Raft protocol itself.
+
+\subsubsection{SRV record format}
+
+An SRV record has the form:
+
+\begin{lstlisting}[caption={SRV record format}]
+_service._proto.name. TTL IN SRV priority weight port target.
+\end{lstlisting}
+
+For a three-node Raft cluster in the \texttt{raft.local} zone:
+
+\begin{lstlisting}[caption={Example SRV zone entries}]
+_raft._tcp.raft.local. IN SRV 10 10 7000 raft-1.raft.local.
+_raft._tcp.raft.local. IN SRV 10 10 7000 raft-2.raft.local.
+_raft._tcp.raft.local. IN SRV 10 10 7000 raft-3.raft.local.
+\end{lstlisting}
+
+All three entries have equal priority (10) and weight (10) since all Raft
+voters are equally valid bootstrap contacts. The port (7000) is the Raft
+TCP port each node listens on.
+
+\subsubsection{Startup sequence}
+
+When a node starts with \texttt{RAFT\_CLUSTER\_SRV} set, it executes the
+following sequence:
+
+\begin{enumerate}
+\item Bind the local Raft port.
+\item Resolve \texttt{RAFT\_CLUSTER\_SRV} via DNS (using libresolv in C++,
+JNDI in Java, system \texttt{dig} in Rust).
+\item Shuffle the returned SRV targets to avoid all nodes contacting the
+same seed.
+\item Connect to each target in turn until one responds with a valid Raft
+handshake.
+\item From that contacted peer, learn: the current term, the current leader,
+and the committed cluster membership.
+\item Stop treating DNS as authoritative---subsequent peer discovery is
+driven by Raft membership log entries, not repeated SRV lookups.
+\end{enumerate}
+
+If no seed answers and \texttt{RAFT\_BOOTSTRAP\_NEW\_CLUSTER} is not set,
+the node fails fast. This prevents a transient DNS failure from
+accidentally forming a split-brain cluster. Bootstrapping a new cluster
+must be explicit.
+
+\subsubsection{Implementation across languages}
+
+All three implementations support DNS SRV bootstrapping, though the
+resolution mechanism differs:
+
+\begin{description}
+\item[Java] \texttt{DnsSrvSeedProvider} resolves via JNDI DNS lookups
+(\texttt{javax.naming.directory}). Set \texttt{RAFT\_CLUSTER\_SRV} as a
+system property or environment variable. The Java adapter reads it from
+\texttt{RuntimeConfiguration}.
+\item[C++] \texttt{DnsSrvSeedProvider} uses the system resolver
+(\texttt{res\_query} from libresolv). The C++ CLI reads
+\texttt{RAFT\_CLUSTER\_SRV} from the environment. The CMake build links
+\texttt{resolv} on Unix.
+\item[Rust] \texttt{DnsSrvSeedProvider} shells out to \texttt{dig +short SRV}
+with a fallback to \texttt{nslookup -type=SRV}. The Docker entrypoint
+(\filepath{entrypoint-rust.sh}) reads \texttt{RAFT\_CLUSTER\_SRV} and calls
+\texttt{dig} to build the peer list before launching \texttt{graft-kv}.
+\end{description}
+
+In Docker Compose, the Rust entrypoint is used with explicit
+\texttt{RAFT\_PEERS} by default, which avoids the \texttt{dig} dependency
+in the container. Adding \texttt{dnsutils} to the Rust Dockerfile enables
+the SRV path. The Java and C++ images support SRV natively without extra
+packages.
+
+\subsubsection{Kubernetes / OpenShift alignment}
+
+The DNS SRV model maps directly to Kubernetes headless Services:
+
+\begin{lstlisting}[language=yaml,caption={Kubernetes headless Service}]
+apiVersion: v1
+kind: Service
+metadata:
+  name: raft
+spec:
+  clusterIP: None        # headless
+  selector:
+    app: raft
+  ports:
+    - name: raft
+      protocol: TCP
+      port: 7000
+      targetPort: 7000
+\end{lstlisting}
+
+With a StatefulSet backing this Service, Kubernetes creates SRV records
+automatically. Each node sets
+\texttt{RAFT\_CLUSTER\_SRV=\_raft.\_tcp.raft.\textless ns\textgreater .svc.cluster.local}
+and the platform handles DNS propagation. This gives a clean portability
+boundary: locally you own the CoreDNS zone file; in OpenShift, the
+platform owns the DNS records.
+
+\subsection{Where to go next}
+
+\begin{itemize}
+\item Section~\ref{sec:ApplicationDeveloper} for the domain application boundary.
+\item Section~\ref{sec:JavaLibrary}, \ref{sec:CppLibrary}, or \ref{sec:RustLibrary}
+for language-specific integration details.
+\item Section~\ref{sec:TestingAndOperations} for test workflows and mixed-smoke checks.
+\item \filepath{raft-app-kv/}, \filepath{graft-cpp/src/app/}, or
+\filepath{graft-rust/graft-app-kv/} for reference implementations.
+\end{itemize}

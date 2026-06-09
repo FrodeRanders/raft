@@ -10,7 +10,9 @@ The project uses several layers of verification:
 adapter and storage behavior.
 \item[Java transport tests] Netty client/server behavior and response handling.
 \item[C++ unit tests] C++ core, membership, state-machine, snapshot and RPC behavior.
-\item[Mixed smoke tests] Java/C++ interoperability at the shared wire boundary.
+\item[Rust integration tests] Rust core, membership, state-machine, snapshot,
+replication and file persistence behavior.
+\item[Mixed smoke tests] Java/C++/Rust interoperability at the shared wire boundary.
 \item[Jepsen] Fault-injection and workload checks for stronger system-level confidence.
 \end{description}
 
@@ -42,18 +44,33 @@ When CMake finds the wrong protobuf tools, pin \texttt{protoc}. If Boost.Asio
 fails around removed standard-library traits, check the C++ compatibility macro
 described in Section~\ref{sec:CppLibrary}.
 
-\subsection{Mixed Java/C++ checks}
+\subsection{Rust test workflow}
 
-The mixed smoke scripts validate that both implementations agree on the shared
+\begin{lstlisting}[language=bash,caption={Rust test workflow}]
+cd graft-rust
+cargo test -p graft-tests          # integration tests
+cargo test --workspace             # all tests across all crates
+cargo build -p graft-app-kv        # build the CLI binary
+\end{lstlisting}
+
+The integration tests use in-memory stores and exercise elections, log
+replication, snapshot install, joint-consensus membership transitions,
+and file-based persistence round-tripping. No external dependencies are required
+for tests---the entire suite runs offline.
+
+\subsection{Mixed Java/C++/Rust checks}
+
+The mixed smoke scripts validate that all implementations agree on the shared
 protocol:
 
 \begin{lstlisting}[language=bash,caption={Mixed implementation checks}]
-graft-cpp/run-mixed-smoke.sh
-graft-cpp/run-mixed-smoke-java-leader.sh
-graft-cpp/run-mixed-membership-smoke.sh
-graft-cpp/run-mixed-membership-cpp-leader-smoke.sh
-graft-cpp/run-mixed-snapshot-smoke.sh
-graft-cpp/run-mixed-suite.sh
+graft-cpp/run-mixed-smoke.sh                         # C++ leader + Java follower
+graft-cpp/run-mixed-smoke-java-leader.sh             # Java leader + C++ follower
+graft-cpp/run-mixed-membership-smoke.sh              # membership with C++ learner
+graft-cpp/run-mixed-membership-cpp-leader-smoke.sh   # membership with C++ leader
+graft-cpp/run-mixed-snapshot-smoke.sh                # snapshot catch-up
+graft-cpp/run-mixed-suite.sh                         # all C++ mixed scenarios
+graft-rust/tests/scripts/run-mixed-suite.sh          # Rust↔Java smoke suite
 \end{lstlisting}
 
 Run these after changing:
@@ -77,7 +94,7 @@ network partitions. In particular, run or update Jepsen scenarios for:
 \item commit-index changes,
 \item read-lease/read-barrier changes,
 \item membership changes,
-\item mixed Java/C++ cluster behavior,
+\item mixed Java/C++/Rust cluster behavior,
 \item client workload semantics such as CAS.
 \end{itemize}
 
@@ -104,3 +121,91 @@ Operators should monitor:
 \item stuck reconfiguration age,
 \item snapshot install events.
 \end{itemize}
+
+\subsection{Cross-language parity}
+
+The three implementations (Java, C++, Rust) are intended to be functionally
+equivalent at the Raft boundary. When changing one, verify the others against
+this checklist:
+
+\begin{itemize}
+\item Status strings must be identical across implementations: \texttt{ACCEPTED},
+\texttt{REDIRECT}, \texttt{RETRY}, \texttt{NOT\_LEADER}, \texttt{INVALID},
+\texttt{UNAUTHORIZED}, \texttt{RATE\_LIMITED}.
+\item Vote-granting rules (term comparison, log up-to-date check) must be
+identical.
+\item AppendEntries conflict resolution (backtracking, truncation, match-index
+advancement) must be identical.
+\item Snapshot install and restore semantics (chunk assembly, metadata wrapping)
+must be identical.
+\item Joint-consensus majority rules must use the same quorum formula in all
+three.
+\item Membership admission and finalization (JOIN↦JOINT↦FINALIZE) must be
+identical.
+\item Read barriers must contact a joint-consensus quorum of voters before
+serving.
+\item Client redirect behavior (leader-id, leader-host, leader-port in
+responses) must be identical.
+\item Differences in domain examples (key-value store vs. reference-data) are
+acceptable.
+\end{itemize}
+
+\subsection{Codebase navigation}
+
+For machinery developers who need to find specific Raft behaviors across
+implementations:
+
+\begin{longtable}{p{48mm}p{36mm}p{36mm}p{36mm}}
+\toprule
+Behavior & Java & C++ & Rust \\
+\midrule
+Election timeout / jitter & \filepath{raft-core/.../RaftNode.java} &
+\filepath{graft-cpp/src/core/raft\_node.cpp} &
+\filepath{graft-rust/graft-core/src/raft\_node.rs} \\
+\midrule
+AppendEntries follower & RaftNode.java &
+raft\_node.cpp & raft\_node.rs \\
+\midrule
+Commit advancement & RaftNode.java &
+raft\_node.cpp & raft\_node.rs \\
+\midrule
+Snapshot install (follower) & RaftNode.java &
+raft\_node.cpp & raft\_node.rs \\
+\midrule
+Joint-consensus majority & \filepath{raft-membership/.../ClusterConfiguration.java} &
+\filepath{graft-cpp/src/core/cluster\_membership.cpp} &
+\filepath{graft-rust/graft-core/src/membership.rs} \\
+\midrule
+Active runtime loop & \filepath{raft-runtime/.../BasicAdapter.java} &
+\filepath{graft-cpp/src/runtime/raft\_runtime.cpp} &
+\filepath{graft-rust/graft-runtime/src/runtime.rs} \\
+\midrule
+RPC handler dispatch & \filepath{raft-transport-netty/.../RaftMessageHandler.java} &
+\filepath{graft-cpp/src/runtime/rpc\_handler.cpp} &
+\filepath{graft-rust/graft-runtime/src/handlers.rs} \\
+\midrule
+Transport framing & \filepath{raft-transport-netty/.../ProtobufLiteEncoder.java} &
+\filepath{graft-cpp/include/graft/wire/envelope\_codec.hpp} &
+\filepath{graft-rust/graft-proto/src/lib.rs} \\
+\midrule
+Membership encoders & ClusterConfigurationCommand.java &
+rpc\_handler.cpp (inline) &
+\filepath{graft-rust/graft-runtime/src/membership.rs} \\
+\midrule
+Auth / admission hooks & \filepath{raft-runtime/.../ClientWriteAdmissionPolicy.java} &
+rpc\_handler.cpp (Authenticator) &
+\filepath{graft-rust/graft-runtime/src/policy.rs} \\
+\midrule
+State machine interface & \filepath{raft-state-machine/.../SnapshotStateMachine.java} &
+\filepath{graft-cpp/include/graft/core/application\_state\_machine.hpp} &
+\filepath{graft-rust/graft-core/src/state\_machine.rs} \\
+\midrule
+Example KV application & \filepath{raft-app-kv/} &
+\filepath{graft-cpp/src/core/key\_value\_state\_machine.cpp} &
+\filepath{graft-rust/graft-app-kv/src/lib.rs} \\
+\bottomrule
+\end{longtable}
+
+Changes that affect Raft behavior should be made in all three files at the same
+row of this table. Unit tests and mixed-smoke scripts should be run for each
+affected implementation.

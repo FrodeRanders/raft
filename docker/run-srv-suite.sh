@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-for mode in java cpp mixed; do
+for mode in java cpp rust mixed; do
   echo
   echo "==> Running Docker SRV smoke: ${mode}"
   docker/run-srv-smoke.sh "${mode}" "$@"

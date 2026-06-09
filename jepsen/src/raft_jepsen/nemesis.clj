@@ -694,7 +694,7 @@
 
 (defn- demote-member! [test leader member]
   ;; Membership changes are injected through the public raft-dist CLI. That is
-  ;; intentional: Jepsen should exercise the same administrative surface an
+  ;; intentional: Jepsen should exercise the same administrative interface an
   ;; operator or integration test would use, not private in-process hooks.
   (let [{:keys [exit out err]}
         (shell! (:repo-root test)

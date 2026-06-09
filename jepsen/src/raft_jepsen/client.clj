@@ -57,6 +57,9 @@
 (defn- cpp-command [cpp-bin & args]
   (vec (concat [cpp-bin] args)))
 
+(defn- rust-command [rust-bin & args]
+  (vec (concat [rust-bin] args)))
+
 (defn- client-impl-for-node [test node]
   ;; In Jepsen, each client instance is opened against one logical node. The
   ;; :mixed mode uses that target node's implementation to choose the CLI,
@@ -64,6 +67,7 @@
   (case (get test :client-impl :java)
     :java :java
     :cpp :cpp
+    :rust :rust
     :mixed (raft-db/node-impl test node)))
 
 (defn- run-command [repo-root command]
@@ -125,7 +129,7 @@
                                   :type (:type result)}
                              :extra {:rawResponse (:raw-response result)}})))
 
-(defrecord RaftCliClient [node repo-root jar-path cpp-bin]
+(defrecord RaftCliClient [node repo-root jar-path cpp-bin rust-bin]
   ;; Client is Jepsen's per-worker handle for driving the system. Jepsen calls:
   ;; open! once per worker/node pairing, setup! before the run, invoke! for each
   ;; generated operation, and teardown!/close! at the end.
@@ -147,29 +151,31 @@
           value (some-> (:value op) str)]
       (try
         (case (:f op)
-          :write (let [{:keys [exit out err]}
-                       (run-command repo-root
-                                    (case impl
-                                      :java (java-command jar-path "command" "--json" "put" target cli-key value)
-                                      :cpp (cpp-command cpp-bin "client-put" host port cli-key value "jepsen-cpp-client")))
-                       response (or (case impl
-                                      :java (parse-json out)
-                                      :cpp (parse-cpp-lines out))
+           :write (let [{:keys [exit out err]}
+                        (run-command repo-root
+                                     (case impl
+                                       :java (java-command jar-path "command" "--json" "put" target cli-key value)
+                                       :cpp (cpp-command cpp-bin "client-put" host port cli-key value "jepsen-cpp-client")
+                                       :rust (rust-command rust-bin "client-put" host port cli-key value "jepsen-rust-client")))
+                        response (or (case impl
+                                       :java (parse-json out)
+                                       (:cpp :rust) (parse-cpp-lines out))
                                     {})]
                    (let [result (-> op
                                     (classify-write exit response key value)
                                     (assoc :raw-response response :stderr err))]
                      (maybe-capture! test node op result)
                      result))
-          :read (let [{:keys [exit out err]}
-                      (run-command repo-root
-                                   (case impl
-                                     :java (java-command jar-path "query" "--json" "get" target cli-key)
-                                     :cpp (cpp-command cpp-bin "client-get" host port cli-key "jepsen-cpp-client")))
-                      response (or (case impl
-                                     :java (parse-json out)
-                                     :cpp (parse-cpp-lines out))
-                                   {})]
+           :read (let [{:keys [exit out err]}
+                       (run-command repo-root
+                                    (case impl
+                                      :java (java-command jar-path "query" "--json" "get" target cli-key)
+                                      :cpp (cpp-command cpp-bin "client-get" host port cli-key "jepsen-cpp-client")
+                                      :rust (rust-command rust-bin "client-get" host port cli-key "jepsen-rust-client")))
+                       response (or (case impl
+                                      :java (parse-json out)
+                                      (:cpp :rust) (parse-cpp-lines out))
+                                    {})]
                   (let [result (-> op
                                     (classify-read exit response key)
                                     (assoc :raw-response response :stderr err))]
@@ -181,13 +187,14 @@
                      expected-value (if (nil? expected) "" (str expected))
                      new-value (str new-value)
                      {:keys [exit out err]}
-                     (run-command repo-root
-                                  (case impl
-                                    :java (java-command jar-path "command" "--json" "cas" target cli-key expected-arg new-value)
-                                    :cpp (cpp-command cpp-bin "client-cas" host port cli-key expected-present expected-value new-value "jepsen-cpp-client")))
-                     response (or (case impl
-                                    :java (parse-json out)
-                                    :cpp (parse-cpp-lines out))
+                      (run-command repo-root
+                                   (case impl
+                                     :java (java-command jar-path "command" "--json" "cas" target cli-key expected-arg new-value)
+                                     :cpp (cpp-command cpp-bin "client-cas" host port cli-key expected-present expected-value new-value "jepsen-cpp-client")
+                                     :rust (rust-command rust-bin "client-cas" host port cli-key expected-present expected-value new-value "jepsen-rust-client")))
+                      response (or (case impl
+                                     :java (parse-json out)
+                                     (:cpp :rust) (parse-cpp-lines out))
                                   {})]
                  (let [result (-> op
                                   (classify-cas exit response)
@@ -209,7 +216,9 @@
   ;; through open!, so mutable per-worker state should be attached there rather
   ;; than hidden globally.
   (->RaftCliClient nil
-                   (:repo-root opts)
-                   (raft-db/resolved-jar-path opts)
-                   (when (#{:cpp :mixed} (:client-impl opts))
-                     (raft-db/resolved-cpp-bin opts))))
+                    (:repo-root opts)
+                    (raft-db/resolved-jar-path opts)
+                    (when (#{:cpp :mixed} (:client-impl opts))
+                      (raft-db/resolved-cpp-bin opts))
+                    (when (#{:rust :mixed} (:client-impl opts))
+                      (raft-db/resolved-rust-bin opts))))

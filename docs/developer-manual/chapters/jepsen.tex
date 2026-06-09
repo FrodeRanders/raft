@@ -1,0 +1,158 @@
+\section{Jepsen Testing}
+\label{sec:JepsenTesting}
+
+Jepsen is the system-level fault-injection and linearizability verification
+framework. It exercises the cluster under hostile conditions: process crashes,
+network partitions, clock skew, membership changes, and snapshot boundary
+exercises. This section describes the Jepsen architecture so machinery
+developers can add new scenarios and debug failures.
+
+\subsection{Architecture}
+
+The Jepsen harness lives under \filepath{jepsen/}. It is a Clojure project
+that orchestrates local OS processes or Docker containers, generates
+randomized workloads, injects faults through a \emph{nemesis}, and checks
+results against a Knossos linearizability model.
+
+Key source files:
+
+\begin{description}
+\item[\filepath{src/raft\_jepsen/core.clj}] CLI parsing, test map construction,
+generator, checker, and workload definitions.
+\item[\filepath{src/raft\_jepsen/db.clj}] Node lifecycle: start, stop, kill, wipe,
+port resolution, and implementation-specific command-lines (Java, C++, Rust).
+\item[\filepath{src/raft\_jepsen/client.clj}] Workload executor: translates Jepsen
+operations (\texttt{:write}, \texttt{:read}, \texttt{:cas}) into CLI commands,
+parses responses, and classifies outcomes.
+\item[\filepath{src/raft\_jepsen/nemesis.clj}] Fault injection: crash-restart,
+process-pause, clock-skew, persistence-loss, network partitions, snapshot-boundary
+exercises, and membership changes.
+\item[\filepath{src/raft\_jepsen/observer.clj}] Observability: captures telemetry
+and cluster-summary snapshots at interesting points for offline analysis.
+\end{description}
+
+\subsection{Node implementations}
+
+The \texttt{--node-impls} flag controls which implementation each Jepsen node
+uses. For a three-node mixed cluster:
+
+\begin{lstlisting}[language=bash,caption={Mixed Jepsen run}]
+cd jepsen
+clojure -M:run mixed-all-three-java-leader \
+  --time-limit 8 --concurrency 4 --node-count 3 \
+  --node-impls java,cpp,rust \
+  --client-impl mixed \
+  --cpp-bin ../graft-cpp/build/graft_smoke \
+  --rust-bin ../graft-rust/target/debug/graft-kv
+\end{lstlisting}
+
+Each node's implementation is determined by its position in the
+\texttt{--node-impls} list. The \texttt{--client-impl mixed} flag means each
+Jepsen worker uses the CLI matching its target node's implementation.
+
+\subsection{Workload model}
+
+Jepsen generates operations against a CAS (compare-and-set) register model.
+The register can hold one value at a time; CAS compare-and-swap means
+``if the current value is X, set it to Y.'' Knossos checks that every
+read returns a value from a linearizable history.
+
+Three operation types are generated:
+
+\begin{description}
+\item[\texttt{:write}] Put a key to a value (sent as \texttt{client-put}).
+\item[\texttt{:read}] Read the current value of a key (sent as \texttt{client-get}).
+\item[\texttt{:cas}] Conditionally write: supply expected and new values
+(sent as \texttt{client-cas}).
+\end{description}
+
+\subsection{Nemesis catalog}
+
+Each nemesis mode exercises a different failure domain:
+
+\begin{longtable}{p{42mm}p{112mm}}
+\toprule
+Nemesis & Behavior \\
+\midrule
+\texttt{crash-restart} & Kill a node and restart it after a configurable interval. \\
+\texttt{process-pause} & Send SIGSTOP/SIGCONT to freeze and resume a node process. \\
+\texttt{clock-skew} & Inject a clock offset into a node's Raft time source. \\
+\texttt{persistence-loss-restart} & Wipe a node's durable state and restart, checking catch-up. \\
+\texttt{partition-one} & Isolate one node from the network. \\
+\texttt{partition-leader} & Isolate the current leader. \\
+\texttt{partition-leader-minority} & Isolate the leader plus one follower (minority partition). \\
+\texttt{snapshot-boundary-restart} & Write a deterministic prelude, crash a node, advance the
+log past the snapshot threshold, then restart the node. \\
+\texttt{snapshot-creation-crash} & Cyclic crash of a follower during snapshot creation. \\
+\texttt{snapshot-transfer-crash} & Kill/restart cycle during InstallSnapshot transfer. \\
+\texttt{membership-join-promote} & Admit a new learner, promote to voter, finalize. \\
+\texttt{membership-demote} & Demote a voter to learner. \\
+\texttt{membership-remove-follower} & Remove a follower from the configuration. \\
+\texttt{membership-remove-leader} & Remove the current leader. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Adding a nemesis}
+
+To add a new nemesis:
+
+\begin{enumerate}
+\item Define a nemesis mode string in \filepath{core.clj} under the allowed
+nemesis set and snapshot defaults.
+\item Implement the nemesis logic in \filepath{nemesis.clj}:
+  \begin{itemize}
+  \item \texttt{invoke!} --- apply the fault to a node or the network,
+  \item \texttt{teardown!} --- restore normal operation,
+  \item \texttt{setup!} --- optional pre-fault preparation.
+  \end{itemize}
+\item Register the mode in \filepath{core.clj}'s \texttt{normalize-opts}
+so snapshot-min-entries and snapshot-chunk-bytes are set if needed.
+\item Add test cases to \filepath{run-suite.sh} with appropriate port bases.
+\item Run the new nemesis in isolation first, then as part of the extended
+or stress suite.
+\end{enumerate}
+
+\subsection{Reading failure output}
+
+Jepsen produces several artifacts in the work directory:
+
+\begin{description}
+\item[\filepath{history.edn}] The full operation history with timing and outcomes.
+\item[\filepath{results.edn}] The checker verdict (\texttt{:valid? true/false})
+and per-worker statistics.
+\item[\filepath{timeline.html}] A visual timeline of operations and nemesis actions.
+\item[\filepath{store/}] Jepsen's own durable store for the checker.
+\item[\filepath{observations/}] Observer-captured JSONL files with telemetry
+and cluster-summary snapshots at failure points.
+\end{description}
+
+When a test fails, check the \texttt{client-anomaly} and
+\texttt{telemetry-parse-failure} entries in the observer JSONL for the
+cluster state at the moment of failure. The Jepsen log
+(\filepath{jepsen.log}) contains the full process output.
+
+\subsection{Suite structure}
+
+The test suites in \filepath{run-suite.sh} are organized by confidence level:
+
+\begin{description}
+\item[\texttt{smoke}] Fast baseline tests with no nemesis (port bases 10080--10180).
+\item[\texttt{extended}] 14 cases covering all nemesis modes (port bases 10080--21420).
+\item[\texttt{mixed}] 25 cases covering Java↔C++, Java↔Rust, and three-way
+Java+C+++Rust clusters (port bases 21480--24130).
+\item[\texttt{stress}] 9 cases with 300-second runs, concurrency 20, 5000 operations
+(port bases 22580--23380).
+\end{description}
+
+\subsection{Docker/SRV Jepsen}
+
+The Jepsen harness also supports a Docker backend (\texttt{--backend docker-srv})
+that orchestrates clusters through Docker Compose instead of spawning local
+OS processes. This is useful for testing DNS SRV-based bootstrapping and for
+reproducing failures in a containerized environment.
+
+Supported nemeses in Docker mode are limited to \texttt{crash-restart},
+\texttt{process-pause}, and \texttt{partition-*} (network disconnect/connect
+via \texttt{docker network}). Filesystem-based nemeses (persistence-loss,
+snapshot-boundary) and clock-skew are not supported in Docker mode because
+they require direct host filesystem access or process-level clock adjustment.

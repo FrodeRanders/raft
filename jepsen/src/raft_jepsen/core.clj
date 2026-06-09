@@ -49,9 +49,10 @@
                ;; Mixed Java/C++ support is explicit per node so peer ids and
                ;; port assignments stay independent from implementation type.
                :node-impl-list nil
-               :client-impl :java
-               :joining-impl :java
-               :cpp-bin nil
+                :client-impl :java
+                :joining-impl :java
+                :cpp-bin nil
+                :rust-bin nil
                :base-port 10080
                :time-limit 30
                :concurrency 10
@@ -74,6 +75,7 @@
         (case flag
           "--jar" (recur (assoc opts :jar-path (.getCanonicalPath (io/file value))) rest)
           "--cpp-bin" (recur (assoc opts :cpp-bin (.getCanonicalPath (io/file value))) rest)
+          "--rust-bin" (recur (assoc opts :rust-bin (.getCanonicalPath (io/file value))) rest)
           "--node-impls" (recur (assoc opts :node-impl-list (parse-node-impls value)) rest)
           "--client-impl" (recur (assoc opts :client-impl (keyword (str/lower-case value))) rest)
           "--joining-impl" (recur (assoc opts :joining-impl (keyword (str/lower-case value))) rest)
@@ -109,11 +111,12 @@
     "Options:"
     "  --jar <path>          Path to raft-dist jar"
     "  --cpp-bin <path>      Path to graft_smoke for C++ nodes"
-    "  --node-impls <list>   Comma-separated node implementations, e.g. java,cpp,java"
-    "  --client-impl <impl>  Client CLI implementation, java|cpp|mixed"
-    "  --joining-impl <impl> Implementation for membership-join-promote joining node, java|cpp"
+    "  --rust-bin <path>     Path to graft-kv for Rust nodes"
+    "  --node-impls <list>   Comma-separated node implementations, e.g. java,cpp,rust"
+    "  --client-impl <impl>  Client CLI implementation, java|cpp|rust|mixed"
+    "  --joining-impl <impl> Implementation for membership-join-promote joining node, java|cpp|rust"
     "  --backend <backend>   local|docker-srv, default local"
-    "  --srv-mode <mode>     Docker/SRV Compose mode, java|cpp|mixed"
+    "  --srv-mode <mode>     Docker/SRV Compose mode, java|cpp|rust|mixed"
     "  --compose-project <p> Docker Compose project name for docker-srv"
     "  --time-limit <sec>    Workload duration, default 30"
     "  --concurrency <n>     Client concurrency, default 10"
@@ -152,13 +155,13 @@
                     (vec (repeat (count nodes) :java))))
         joining-impl (:joining-impl opts)
         client-impl (:client-impl opts)
-        allowed #{:java :cpp}]
+         allowed #{:java :cpp :rust}]
     (when-not (#{:local :docker-srv} backend)
       (throw (ex-info "Unsupported backend"
                       {:backend backend :allowed #{:local :docker-srv}})))
-    (when-not (#{:java :cpp :mixed} srv-mode)
+    (when-not (#{:java :cpp :rust :mixed} srv-mode)
       (throw (ex-info "Unsupported Docker/SRV mode"
-                      {:srv-mode srv-mode :allowed #{:java :cpp :mixed}})))
+                       {:srv-mode srv-mode :allowed #{:java :cpp :rust :mixed}})))
     (when (and (= :docker-srv backend)
                (not (#{3} (:node-count opts))))
       (throw (ex-info "Docker/SRV backend currently uses the fixed three-node Compose topology"
@@ -188,9 +191,9 @@
     (when-not (allowed joining-impl)
       (throw (ex-info "Unsupported joining node implementation"
                       {:impl joining-impl :allowed allowed})))
-    (when-not (#{:java :cpp :mixed} client-impl)
+    (when-not (#{:java :cpp :rust :mixed} client-impl)
       (throw (ex-info "Unsupported client implementation"
-                      {:impl client-impl :allowed #{:java :cpp :mixed}})))
+                       {:impl client-impl :allowed #{:java :cpp :rust :mixed}})))
     (-> opts
         (cond-> (#{"snapshot-boundary-restart" "snapshot-creation-crash" "snapshot-transfer-crash"} (:nemesis-mode opts))
           (update :snapshot-min-entries #(or % 5))
@@ -507,7 +510,8 @@
     :backend (:backend opts)
     :srv-mode (:srv-mode opts)
     :compose-project (:compose-project opts)
-    :cpp-bin (:cpp-bin opts)
+     :cpp-bin (:cpp-bin opts)
+     :rust-bin (:rust-bin opts)
     :repo-root (:repo-root opts)
     :workdir (:workdir opts)
     :jar-path (:jar-path opts)

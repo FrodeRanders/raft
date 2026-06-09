@@ -1,0 +1,166 @@
+\section{Rust Library}
+\label{sec:RustLibrary}
+
+The Rust implementation lives under \filepath{graft-rust}. It is a Cargo
+workspace built with \texttt{cargo} so Rust deployments do not depend on the
+Maven reactor or CMake. It shares the protobuf schema and envelope protocol with
+Java and C++.
+
+\subsection{Build model}
+
+The Rust workspace contains seven crates:
+
+\begin{itemize}
+\item \texttt{graft-proto}: shared protobuf generated types plus varint32
+envelope framing (byte-compatible with the Java
+\texttt{ProtobufLiteEncoder}/\texttt{ProtobufLiteDecoder} and the C++
+\texttt{envelope\_codec.hpp}),
+\item \texttt{graft-core}: transport-agnostic Raft consensus engine (elections,
+log replication, commit/apply, snapshots, joint-consensus membership, read
+barriers),
+\item \texttt{graft-storage}: in-memory and file-based log and persistent state
+stores,
+\item \texttt{graft-transport}: async TCP client and server with varint-length-prefixed
+envelope framing,
+\item \texttt{graft-runtime}: active event loop (\texttt{RaftRuntime}), message
+handler, membership encoders, seed providers, policy hooks,
+\item \texttt{graft-app-kv}: demo key-value state machine and the
+\texttt{graft-kv} CLI binary,
+\item \texttt{graft-tests}: integration tests covering elections, log
+replication, snapshots, membership, and file persistence.
+\end{itemize}
+
+Basic workflow:
+
+\begin{lstlisting}[language=bash,caption={Rust build workflow}]
+cd graft-rust
+cargo build -p graft-app-kv     # build the CLI binary
+cargo test -p graft-tests       # run the integration tests
+cargo check                     # type-check the entire workspace
+\end{lstlisting}
+
+The code targets stable Rust (edition 2021). The build fetches crate dependencies
+automatically from crates.io. The shared \filepath{raft-wire/src/main/proto/raft.proto}
+is compiled by the \texttt{graft-proto} crate's \texttt{build.rs} using
+\texttt{prost-build}.
+
+\subsection{Application boundary}
+
+The Rust application boundary mirrors the Java state-machine boundary:
+
+\begin{itemize}
+\item \texttt{StateMachine} trait with \texttt{apply}, \texttt{snapshot}, and
+\texttt{restore},
+\item \texttt{QueryableStateMachine} extension for read queries,
+\item \texttt{ResultStateMachine} extension for client-visible results,
+\item \texttt{LogStore} and \texttt{PersistentStateStore} traits for storage
+backends.
+\end{itemize}
+
+The demo \texttt{KeyValueStateMachine} implements \texttt{StateMachine} and
+\texttt{QueryableStateMachine}. Commands and queries are JSON-serialized into the
+Raft log entry data field. Domain application developers should implement these
+traits and register their state machine with a \texttt{RaftNode}.
+
+\subsection{Runtime and transport}
+
+Tokio provides async client and server transport over the shared envelope
+protocol. The \texttt{RaftRuntime} is the active event loop: it runs
+randomized election timers (1500--3000\,ms), broadcasts heartbeats every 750\,ms,
+and processes responses to update \texttt{matchIndex}/\texttt{nextIndex} and
+advance the commit index.
+
+The \texttt{RaftHandler} dispatches all 11 Raft RPC types and enforces
+configurable authentication, authorization, admission, and rate-limiting policies
+through the policy traits in \texttt{graft-runtime/src/policy.rs}.
+
+The active server modes wire a local Rust \texttt{RaftNode} to the RPC handler
+and transport server. The smoke CLI can also act as a client for Java, C++, or
+Rust peers.
+
+Use Rust smoke commands to validate boundary behavior:
+
+\begin{lstlisting}[language=bash,caption={Selected Rust probe commands}]
+graft-rust/target/debug/graft-kv client-put 127.0.0.1 11082 k v1 rust-client
+graft-rust/target/debug/graft-kv client-get 127.0.0.1 11082 k rust-client
+graft-rust/target/debug/graft-kv cluster-summary 127.0.0.1 11082
+graft-rust/target/debug/graft-kv reconfiguration-status 127.0.0.1 11082
+\end{lstlisting}
+
+\subsection{Cross-language mixed smoke tests}
+
+Rust↔Java mixed smoke scripts mirror the existing C++↔Java scripts:
+
+\begin{lstlisting}[language=bash,caption={Rust mixed smoke tests}]
+graft-rust/tests/scripts/run-mixed-smoke-rust-leader.sh
+graft-rust/tests/scripts/run-mixed-smoke-java-leader.sh
+graft-rust/tests/scripts/run-interop-smoke.sh
+graft-rust/tests/scripts/run-mixed-suite.sh
+\end{lstlisting}
+
+These reuse the Java probe from \filepath{graft-cpp/java-probe} and exercise
+elections, log replication, telemetry, and client redirects across Rust and Java
+nodes. Run these after changing protobuf messages, status strings, or any RPC
+behavior.
+
+\subsection{Protobuf toolchain}
+
+The Rust code uses the same shared \texttt{raft.proto} as Java and C++. The
+\texttt{prost} crate generates Rust types at build time. No manual code
+generation step is needed---it runs as part of \texttt{cargo build}. The
+generated types use Rust protobuf encoding that is byte-compatible with Java
+protobuf-lite and C++ libprotobuf.
+
+\subsection{Policy hooks}
+
+The Rust runtime includes pluggable policy hooks matching the Java
+\texttt{raft-runtime} interfaces:
+
+\begin{itemize}
+\item \texttt{Authenticator} --- validates client credentials (default:
+\texttt{AllowAllAuthenticator}, also includes \texttt{SharedSecretAuthenticator}),
+\item \texttt{Authorizer} --- authorizes commands against a principal (default:
+\texttt{AllowAllAuthorizer}),
+\item \texttt{AdmissionPolicy} --- decides accept/redirect/reject for writes
+(default: \texttt{AcceptAllAdmissionPolicy}, also includes
+\texttt{LeaderRedirectAdmissionPolicy}),
+\item \texttt{RateLimiter} --- sliding-window rate limiter for telemetry and
+cluster-summary requests,
+\item \texttt{StuckDetector} --- reports prolonged joint-consensus transitions.
+\end{itemize}
+
+Application modules can replace the default policy components by setting the
+\texttt{Arc} fields on \texttt{RaftHandler}.
+
+\subsection{Docker support}
+
+A multi-stage Dockerfile builds the Rust binary inside a \texttt{rust:1-bookworm}
+container and copies it into a slim \texttt{debian:bookworm-slim} runtime image.
+Compose files for Rust-only and mixed Java+C+++Rust clusters are available:
+
+\begin{lstlisting}[language=bash,caption={Docker Rust modes}]
+docker/run-srv-smoke.sh rust          # 3 Rust nodes
+docker/run-srv-smoke.sh mixed         # 1 Java + 1 C++ + 1 Rust
+docker/run-srv-suite.sh               # all 4 modes (java, cpp, rust, mixed)
+\end{lstlisting}
+
+Nodes bootstrap from explicit peer lists (\texttt{RAFT\_PEERS}) or DNS SRV
+records (\texttt{RAFT\_CLUSTER\_SRV}) via a shell entrypoint.
+
+\subsection{Parity expectations}
+
+Rust should be judged against Java and C++ at the Raft behavior boundary:
+
+\begin{itemize}
+\item status values such as \texttt{ACCEPTED}, \texttt{REDIRECT},
+\texttt{RETRY} and \texttt{NOT\_LEADER},
+\item vote and append semantics,
+\item snapshot install and restore semantics,
+\item read barrier and read-lease behavior,
+\item joint-consensus majority rules,
+\item membership admission and finalization,
+\item mixed Java/C++/Rust cluster behavior.
+\end{itemize}
+
+Differences in domain examples can be tolerated temporarily. Differences in Raft
+safety semantics should be treated as defects.

@@ -13,7 +13,11 @@ Command & Purpose \\
 \shellcmd{cmake -S graft-cpp -B graft-cpp/build} & Configure the C++ build. \\
 \shellcmd{cmake --build graft-cpp/build} & Build C++ targets. \\
 \shellcmd{ctest --test-dir graft-cpp/build --output-on-failure} & Run C++ tests. \\
+\shellcmd{cd graft-rust; cargo build -p graft-app-kv} & Build the Rust CLI binary. \\
+\shellcmd{cd graft-rust; cargo test -p graft-tests} & Run Rust integration tests. \\
+\shellcmd{cd graft-rust; cargo check} & Type-check the full Rust workspace. \\
 \shellcmd{graft-cpp/run-mixed-suite.sh} & Run mixed Java/C++ smoke checks. \\
+\shellcmd{graft-rust/tests/scripts/run-mixed-suite.sh} & Run mixed Java/Rust smoke checks. \\
 \bottomrule
 \end{longtable}
 

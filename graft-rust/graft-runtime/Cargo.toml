@@ -1,0 +1,22 @@
+[package]
+name = "graft-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+graft-proto = { path = "../graft-proto" }
+graft-core = { path = "../graft-core" }
+graft-storage = { path = "../graft-storage" }
+graft-transport = { path = "../graft-transport" }
+prost.workspace = true
+bytes.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+parking_lot.workspace = true
+rand.workspace = true

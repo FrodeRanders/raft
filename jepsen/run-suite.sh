@@ -93,6 +93,7 @@ run_extended() {
 }
 
 run_mixed() {
+  # ── Java↔C++ (existing) ──
   run_case mixed-java-leader-cpp-follower 21480 --time-limit 8 --concurrency 4 --node-count 3 --node-impls java,cpp,java
   run_case mixed-cpp-first 21580 --time-limit 8 --concurrency 4 --node-count 3 --node-impls cpp,java,java
   run_case mixed-process-pause 21590 --time-limit 12 --concurrency 4 --node-count 3 --node-impls java,cpp,java --nemesis process-pause --nemesis-interval 3
@@ -105,6 +106,23 @@ run_mixed() {
   run_case mixed-persistence-loss-restart 22280 --time-limit 12 --concurrency 4 --node-count 3 --node-impls java,cpp,java --nemesis persistence-loss-restart --nemesis-interval 3 --snapshot-min-entries 5 --snapshot-chunk-bytes 1024
   run_case mixed-remove-follower 22380 --time-limit 12 --concurrency 4 --node-count 3 --node-impls java,cpp,java --nemesis membership-remove-follower --nemesis-interval 3
   run_case mixed-remove-leader 22480 --time-limit 12 --concurrency 4 --node-count 3 --node-impls cpp,java,java --nemesis membership-remove-leader --nemesis-interval 3
+
+  # ── Java↔Rust ──
+  run_case mixed-rust-leader 23480 --time-limit 8 --concurrency 4 --node-count 3 --node-impls rust,java,java
+  run_case mixed-rust-middle 23580 --time-limit 8 --concurrency 4 --node-count 3 --node-impls java,rust,java
+  run_case mixed-rust-follower 23590 --time-limit 8 --concurrency 4 --node-count 3 --node-impls java,java,rust
+  run_case mixed-rust-client 23680 --time-limit 8 --concurrency 4 --node-count 3 --node-impls java,rust,java --client-impl rust
+  run_case mixed-rust-target-client 23780 --time-limit 8 --concurrency 4 --node-count 3 --node-impls rust,java,java --client-impl mixed
+  run_case mixed-rust-partition-leader 23880 --time-limit 12 --concurrency 4 --node-count 3 --node-impls java,rust,java --nemesis partition-leader --nemesis-interval 3
+  run_case mixed-rust-persistence-loss 23980 --time-limit 12 --concurrency 4 --node-count 3 --node-impls java,rust,java --nemesis persistence-loss-restart --nemesis-interval 3 --snapshot-min-entries 5 --snapshot-chunk-bytes 1024
+
+  # ── All three: Java + C++ + Rust in the same cluster ──
+  run_case mixed-all-three-java-leader 24080 --time-limit 8 --concurrency 4 --node-count 3 --node-impls java,cpp,rust
+  run_case mixed-all-three-cpp-leader 24090 --time-limit 8 --concurrency 4 --node-count 3 --node-impls cpp,rust,java
+  run_case mixed-all-three-rust-leader 24100 --time-limit 8 --concurrency 4 --node-count 3 --node-impls rust,java,cpp
+  run_case mixed-all-three-mixed-client 24110 --time-limit 8 --concurrency 4 --node-count 3 --node-impls java,cpp,rust --client-impl mixed
+  run_case mixed-all-three-partition-leader 24120 --time-limit 12 --concurrency 4 --node-count 3 --node-impls java,cpp,rust --nemesis partition-leader --nemesis-interval 3
+  run_case mixed-all-three-persistence-loss 24130 --time-limit 12 --concurrency 4 --node-count 3 --node-impls java,cpp,rust --nemesis persistence-loss-restart --nemesis-interval 3 --snapshot-min-entries 5 --snapshot-chunk-bytes 1024
 }
 
 run_stress() {
@@ -128,6 +146,9 @@ case "${suite}" in
     ;;
   mixed)
     run_mixed
+    ;;
+  mixed-rust)
+    run_mixed_rust
     ;;
   stress)
     run_stress

@@ -7,13 +7,13 @@ The first viewpoint is the application developer who wants to add cluster
 capability to a domain application. In that role the developer should not need
 to understand every election rule or replication edge case. The important
 questions are where application state enters the replicated log, how reads are
-made safe, how commands and snapshots are encoded, and what the Java and C++
-integration surfaces expect.
+made safe, how commands and snapshots are encoded, and what the Java, C++ and
+Rust integration surfaces expect.
 
 The second viewpoint is the Raft machinery developer who maintains the library
 itself. In that role the developer must reason about terms, voting, leader
 state, log matching, snapshots, read leases, joint consensus, wire compatibility
-and cross-language parity. The Java and C++ implementations are intended to be
+and cross-language parity. The Java, C++ and Rust implementations are intended to be
 functionally equivalent at the Raft boundary even though the language idioms,
 runtime frameworks and internal structure differ.
 
@@ -30,12 +30,14 @@ The manual is organized around the boundary between domain application code and
 Raft internals:
 
 \begin{itemize}
+\item Section~\ref{sec:GettingStarted} walks through building and running a cluster.
 \item Section~\ref{sec:SystemOverview} summarizes the architecture and module layout.
 \item Section~\ref{sec:ApplicationDeveloper} explains how an application uses the library.
-\item Sections~\ref{sec:JavaLibrary} and~\ref{sec:CppLibrary} describe the Java and C++ integration surfaces.
+\item Sections~\ref{sec:JavaLibrary},~\ref{sec:CppLibrary} and~\ref{sec:RustLibrary} describe the Java, C++ and Rust integration points.
 \item Section~\ref{sec:RaftInternals} explains the consensus machinery for maintainers.
 \item Section~\ref{sec:WireStorageSnapshots} covers protocol, persistence and snapshots.
 \item Section~\ref{sec:TestingAndOperations} explains test strategy and operational checks.
+\item Section~\ref{sec:JepsenTesting} documents the Jepsen fault-injection framework.
 \end{itemize}
 
 \subsection{Terminology}
@@ -58,10 +60,10 @@ asset is the cluster capability:
 \item preserve safety across leadership changes,
 \item expose typed client command and query requests,
 \item handle cluster membership through replicated configuration entries,
-\item support Java and C++ applications through equivalent protocol behavior.
+\item support Java, C++ and Rust applications through equivalent protocol behavior.
 \end{itemize}
 
-The Java implementation is the broader implementation surface. The C++
-implementation is developed as a peer implementation and should be brought up to
-the same behavioral maturity where differences affect Raft semantics. Domain
-examples may differ temporarily, but the Raft machinery should not.
+The Java implementation is the most comprehensive implementation. The C++ and
+Rust implementations are developed as peer implementations and should be brought
+up to the same behavioral maturity where differences affect Raft semantics.
+Domain examples may differ temporarily, but the Raft machinery should not.

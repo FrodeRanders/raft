@@ -283,7 +283,7 @@ public class BasicAdapter {
     private Map<String, RequestHandler> createRequestHandlers() {
         // Each entry follows the same safe pattern: parse protobuf payload,
         // return a typed INVALID response on malformed input, otherwise delegate
-        // to a small handler focused on one API surface.
+        // to a small handler focused on one API area.
         Map<String, RequestHandler> handlers = new HashMap<>();
         handlers.put("ClientCommandRequest", typedHandler(
                 ProtoMapper::parseClientCommandRequest,

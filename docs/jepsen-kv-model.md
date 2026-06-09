@@ -8,7 +8,7 @@ It is now historical baseline documentation. The current harness has grown beyon
 
 - System under test: `raft-dist` running the default key-value application.
 - Cluster size: 3 voters.
-- Client surface:
+- Client interface:
   - `command --json put <target> <key> <value>`
   - `command --json delete <target> <key>`
   - `query --json get <target> <key>`
@@ -151,6 +151,6 @@ These are not part of the correctness checker yet; they are for debugging failin
 The minimal KV Jepsen model is complete when:
 
 - a 3-node Jepsen run can start and stop the cluster
-- writes and reads are issued through the JSON CLI surface
+- writes and reads are issued through the JSON CLI interface
 - successful histories can be checked as a linearizable register
 - redirects and retries are handled without misclassifying operations as successful commits

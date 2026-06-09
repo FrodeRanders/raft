@@ -1,17 +1,19 @@
 \section{System Overview}
 \label{sec:SystemOverview}
 
-The repository contains one shared protocol and two implementation tracks:
+The repository contains one shared protocol and three implementation tracks:
 
 \begin{description}
 \item[Java] Maven modules implementing the main Raft runtime, storage, transport,
 state-machine contracts, example applications, telemetry and tests.
 \item[C++] A CMake subtree under \filepath{graft-cpp} implementing the same wire
 protocol and a bounded but growing Raft runtime using Boost.Asio.
+\item[Rust] A Cargo workspace under \filepath{graft-rust} implementing the same
+wire protocol and a functionally equivalent Raft runtime using Tokio.
 \item[Shared wire schema] Protobuf messages under \filepath{raft-wire/src/main/proto}
-used by Java and C++.
+used by Java, C++ and Rust.
 \item[Jepsen] Workload and fault-injection tests under \filepath{jepsen}, including
-mixed Java/C++ scenarios.
+mixed Java/C++/Rust scenarios.
 \end{description}
 
 \subsection{Java module map}
@@ -52,6 +54,20 @@ The C++ subtree is intentionally smaller but follows the same conceptual layers:
 \item[\filepath{tests}] Catch2 tests for the C++ core and runtime behaviors.
 \end{description}
 
+\subsection{Rust layout}
+
+The Rust workspace is structured as seven crates mirroring the Java module boundaries:
+
+\begin{description}
+\item[\filepath{graft-proto}] Generated protobuf types and varint32 envelope codec.
+\item[\filepath{graft-core}] Transport-agnostic Raft consensus engine.
+\item[\filepath{graft-storage}] In-memory and file-based log and persistent state stores.
+\item[\filepath{graft-transport}] Tokio-based TCP client/server with envelope framing.
+\item[\filepath{graft-runtime}] Active event loop, RPC handler, membership encoders, seed providers, policy hooks.
+\item[\filepath{graft-app-kv}] Demo key-value state machine and the \texttt{graft-kv} CLI binary.
+\item[\filepath{graft-tests}] Integration tests covering elections, replication, snapshots, membership, and persistence.
+\end{description}
+
 \subsection{Boundary principle}
 
 The central design rule is:
@@ -71,7 +87,7 @@ That has practical consequences:
 
 \subsection{Shared protocol}
 
-Java and C++ interoperate because they share:
+Java, C++ and Rust interoperate because they share:
 
 \begin{itemize}
 \item protobuf message definitions,
@@ -82,7 +98,7 @@ Java and C++ interoperate because they share:
 \item snapshot install messages.
 \end{itemize}
 
-Cross-language compatibility should be tested at the protocol boundary. If Java
-and C++ disagree about status strings, read-safety conditions, membership
+Cross-language compatibility should be tested at the protocol boundary. If Java,
+C++ or Rust disagree about status strings, read-safety conditions, membership
 majorities or snapshot metadata, that is a library bug unless the difference is
 explicitly documented as domain-specific.

@@ -72,6 +72,9 @@
 (defn- cpp-state-file [test node]
   (io/file (node-root test node) "graft.state"))
 
+(defn- rust-state-file [test node]
+  (io/file (node-root test node) "graft-rust.state"))
+
 (defn- ensure-dir! [^File dir]
   (.mkdirs dir)
   dir)
@@ -264,7 +267,8 @@
     (do
       (local-stop-node! test node)
       (delete-recursively! (node-data-dir test node))
-      (delete-recursively! (cpp-state-file test node)))))
+      (delete-recursively! (cpp-state-file test node))
+      (delete-recursively! (rust-state-file test node)))))
 
 (defn- await-port! [port timeout-ms]
   ;; setup! should not return until the node can accept client connections.
@@ -331,18 +335,25 @@
         (throw (ex-info "No raft-dist jar found; build raft-dist first"
                         {:target-dir (.getAbsolutePath target-dir)}))))))
 
+(defn resolved-rust-bin [test]
+  ;; Rust support is optional. Resolve the smoke binary lazily so Java-only runs
+  ;; do not depend on the Rust build.
+  (if-let [configured (:rust-bin test)]
+    (.getAbsolutePath (io/file configured))
+    (or (some (fn [^File f] (when (.canExecute f) (.getAbsolutePath f)))
+              [(io/file (repo-root test) "graft-rust" "target" "debug" "graft-kv")
+               (io/file (repo-root test) "graft-rust" "target" "release" "graft-kv")])
+        (throw (ex-info "No executable graft-kv found; build graft-rust or pass --rust-bin" {})))))
+
 (defn resolved-cpp-bin [test]
   ;; C++ support is optional. Resolve the smoke binary lazily so Java-only runs
   ;; do not depend on the C++ build.
   (if-let [configured (:cpp-bin test)]
     (.getAbsolutePath (io/file configured))
-    (let [candidates [(io/file (repo-root test) "graft-cpp" "build" "graft_smoke")
-                      (io/file "/tmp" "graft-cpp-build" "graft_smoke")]
-          found (first (filter #(.canExecute ^File %) candidates))]
-      (if found
-        (.getAbsolutePath ^File found)
-        (throw (ex-info "No executable graft_smoke found; build graft-cpp or pass --cpp-bin"
-                        {:candidates (mapv #(.getAbsolutePath ^File %) candidates)}))))))
+    (or (some (fn [^File f] (when (.canExecute f) (.getAbsolutePath f)))
+              [(io/file (repo-root test) "graft-cpp" "build" "graft_smoke")
+               (io/file "/tmp" "graft-cpp-build" "graft_smoke")])
+        (throw (ex-info "No executable graft_smoke found; build graft-cpp or pass --cpp-bin" {})))))
 
 (defn- java-props [test node]
   ;; Per-node JVM properties are part of the DB command line because Jepsen
@@ -376,16 +387,26 @@
                                          (resolved-jar-path test)
                                          (peer-spec test node)]
                                         peer-specs))
-                     :cpp (vec (concat [(resolved-cpp-bin test)
-                                        "serve-active-persistent"
-                                        "127.0.0.1"
-                                        (str (node-port test node))
-                                        (str node)
-                                        (.getAbsolutePath (cpp-state-file test node))
-                                        "0"
-                                        "0"
-                                        "0"]
-                                       peer-specs)))]
+                      :cpp (vec (concat [(resolved-cpp-bin test)
+                                         "serve-active-persistent"
+                                         "127.0.0.1"
+                                         (str (node-port test node))
+                                         (str node)
+                                         (.getAbsolutePath (cpp-state-file test node))
+                                         "0"
+                                         "0"
+                                         "0"]
+                                        peer-specs))
+                      :rust (vec (concat [(resolved-rust-bin test)
+                                          "serve-active-persistent"
+                                          "127.0.0.1"
+                                          (str (node-port test node))
+                                          (str node)
+                                          (.getAbsolutePath (rust-state-file test node))
+                                          "0"
+                                          "0"
+                                          "0"]
+                                         peer-specs)))]
        (launch-node! test node command preserve-state?)))))
 
 (defn- start-docker-node! [test node]
@@ -423,16 +444,26 @@
                                          "join"
                                          (str (peer-spec test node) "/learner")
                                          (peer-spec test seed)]))
-                     :cpp (vec (concat [(resolved-cpp-bin test)
-                                        "serve-persistent"
-                                        "127.0.0.1"
-                                        (str (node-port test node))
-                                        (str node)
-                                        (.getAbsolutePath (cpp-state-file test node))
-                                        "0"
-                                        "0"
-                                        "0"]
-                                       peer-specs)))]
+                      :cpp (vec (concat [(resolved-cpp-bin test)
+                                         "serve-persistent"
+                                         "127.0.0.1"
+                                         (str (node-port test node))
+                                         (str node)
+                                         (.getAbsolutePath (cpp-state-file test node))
+                                         "0"
+                                         "0"
+                                         "0"]
+                                        peer-specs))
+                      :rust (vec (concat [(resolved-rust-bin test)
+                                          "serve-persistent"
+                                          "127.0.0.1"
+                                          (str (node-port test node))
+                                          (str node)
+                                          (.getAbsolutePath (rust-state-file test node))
+                                          "0"
+                                          "0"
+                                          "0"]
+                                         peer-specs)))]
        (launch-node! test node command preserve-state?)))))
 
 (defn local-db []
