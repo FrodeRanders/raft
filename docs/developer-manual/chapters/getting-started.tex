@@ -137,10 +137,10 @@ For multi-language clusters or reproducible testing, use Docker Compose.
 Four Compose files are provided:
 
 \begin{itemize}
-\item \filepath{docker/compose-srv-java.yml} --- 3 Java nodes + CoreDNS
-\item \filepath{docker/compose-srv-cpp.yml} --- 3 C++ nodes + CoreDNS
-\item \filepath{docker/compose-srv-rust.yml} --- 3 Rust nodes + CoreDNS
-\item \filepath{docker/compose-srv-mixed.yml} --- 1 Java + 1 C++ + 1 Rust
+\item \filepath{docker/compose-srv-java.yml} --- 3 Java nodes and 1 CoreDNS
+\item \filepath{docker/compose-srv-cpp.yml} --- 3 C++ nodes and 1 CoreDNS
+\item \filepath{docker/compose-srv-rust.yml} --- 3 Rust nodes and 1 CoreDNS
+\item \filepath{docker/compose-srv-mixed.yml} --- 1 Java, 1 C++, 1 Rust and 1 CoreDNS
 \end{itemize}
 
 Start a cluster with:
@@ -173,10 +173,10 @@ the DNS zone is the natural place to publish the current member set.
 
 SRV records are used natively in Kubernetes and OpenShift via headless
 Services. A StatefulSet-backed Raft cluster can publish SRV records
-automatically, giving each node a stable identity
+automatically, giving each node a stable identity \\
 (\texttt{raft-0.raft.\textless ns\textgreater .svc.cluster.local}) and a
-discoverable service endpoint (\texttt{\_raft.\_tcp.raft.\textless
-ns\textgreater .svc.cluster.local}). The same mechanism works in Docker
+discoverable service endpoint \\ 
+(\texttt{\_raft.\_tcp.raft.\textless ns\textgreater .svc.cluster.local}). The same mechanism works in Docker
 Compose with a CoreDNS sidecar.
 
 The startup contract is intentionally minimal. A node needs only three
@@ -265,7 +265,7 @@ packages.
 
 The DNS SRV model maps directly to Kubernetes headless Services:
 
-\begin{lstlisting}[language=yaml,caption={Kubernetes headless Service}]
+\begin{lstlisting}[style=yaml, caption={Kubernetes headless Service}]
 apiVersion: v1
 kind: Service
 metadata:
@@ -292,6 +292,10 @@ platform owns the DNS records.
 
 \begin{itemize}
 \item Section~\ref{sec:ApplicationDeveloper} for the domain application boundary.
+\item Section~\ref{sec:ConsistencyBoundaries} for what Raft guarantees---and does
+not guarantee---under partitions and failovers.
+\item Section~\ref{sec:RaftAndXatmi} for a comparison with XATMI/XA transaction
+models, useful if you are coming from a traditional middleware background.
 \item Section~\ref{sec:JavaLibrary}, \ref{sec:CppLibrary}, or \ref{sec:RustLibrary}
 for language-specific integration details.
 \item Section~\ref{sec:TestingAndOperations} for test workflows and mixed-smoke checks.

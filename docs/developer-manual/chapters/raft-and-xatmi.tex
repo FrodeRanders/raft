@@ -1,0 +1,261 @@
+\section{Raft and XATMI Transaction Thinking}
+\label{sec:RaftAndXatmi}
+
+This section is for application developers and architects familiar with
+XATMI, XA, two-phase commit, service transactions, or similar middleware
+transaction models. Raft and XATMI can look similar from a distance because
+both coordinate distributed work, but they are not the same mechanism.
+
+\subsection{Short version}
+
+Raft answers: \emph{Which command is committed at log index N, in what
+order, according to a quorum?}
+
+XATMI/XA answers: \emph{Can this transaction commit atomically across a
+set of enlisted services?}
+
+Raft is a replicated state-machine consensus mechanism. XATMI is an
+application service and transaction coordination model. In this project, a
+Raft application command is closer to a durable, replicated service
+request than to a full XA transaction.
+
+\subsection{Where they are similar}
+
+Both models have a request that crosses process boundaries
+(\texttt{client $\to$ service/runtime $\to$ coordinated outcome $\to$
+response}) and both must handle timeouts, retries, process crashes,
+network partitions, durable recovery, duplicate delivery, unclear client
+outcome, and authentication/authorization before mutation.
+
+Both force the application to answer the same practical question: if the
+client did not receive the response, did the operation happen?
+
+\subsection{Where they differ}
+
+\subsubsection{Raft commits log entries}
+
+Raft takes an application command and appends it to a replicated log.
+Once the leader has replicated the entry to a quorum, the entry is
+committed. Every correct replica applies committed entries in the same
+order. The replicated log is the serialization point.
+
+\subsubsection{XATMI/XA coordinates resources}
+
+XATMI-style transaction processing coordinates a unit of work across
+services and resource managers. XA/two-phase commit asks all enlisted
+resources to prepare and then commit or roll back. The transaction
+coordinator tries to make multiple independent participants agree on one
+atomic outcome.
+
+\subsubsection{The core difference}
+
+Raft: one replicated log orders commands for one replicated state machine.
+
+XATMI/XA: one transaction coordinates multiple participants/resources.
+
+Raft gives you linearizable replication of a state machine. It does not
+automatically give you an ACID transaction across arbitrary external
+systems.
+
+\subsection{Commit semantics}
+
+\subsubsection{Raft commit}
+
+A Raft command is committed when durably replicated to a quorum. After
+commit, replicas apply it in log order. The application does not decide
+whether an entry is committed---Raft does. \texttt{apply()} is called
+only for committed log entries.
+
+\subsubsection{XA commit}
+
+An XA transaction commits when all resources have successfully passed the
+transaction protocol. If a resource cannot prepare or commit, the
+transaction manager must resolve the outcome using XA recovery rules. A
+Raft application state machine does not participate in prepare/commit/
+rollback.
+
+\subsection{Ambiguous outcomes}
+
+Both models have ambiguous client outcomes. A client sends a request, the
+leader commits the command, the leader crashes before the response reaches
+the client, and the client sees a timeout. From the client's perspective,
+the operation is uncertain.
+
+The remedy is the same design discipline in both models: assign a stable
+request id, store enough outcome information to recognize retries, and
+make retry behavior idempotent from the client's perspective.
+
+\subsection{Idempotency and request identity}
+
+Application developers should treat request identity as part of the domain
+command model. A good command shape includes a unique
+\texttt{commandId}, the \texttt{requesterId}, the operation type, the
+domain identifier, and the payload. The state machine keeps a small
+outcome table mapping \texttt{commandId $\to$ result}.
+
+On first application: if the commandId is unknown, apply the domain
+mutation, store the result, and return it. On retry: if the commandId is
+known, return the previously stored result. This pattern is useful in
+both Raft and XATMI-style systems and is especially important when clients
+retry after timeout.
+
+\subsection{Determinism}
+
+Raft application commands must be deterministic. Every node applies the
+same committed command at the same log index; every node must produce
+the same state transition. Avoid inside \texttt{apply()}: local
+wall-clock decisions, random number generation, reading local files not
+replicated by Raft, calling external services, checking local node
+identity, or using non-deterministic iteration order.
+
+Prefer: include timestamps in the command if the business event needs one,
+include generated ids in the command, validate before submission, and
+make \texttt{apply()} a pure transition over current replicated state
+plus command bytes. XATMI services can also suffer from non-determinism,
+but Raft makes it stricter because all replicas must replay the same
+command stream.
+
+\subsection{External resources}
+
+The safest Raft application state machine does not call external systems
+during \texttt{apply()}. If \texttt{apply()} calls a database, message
+broker, REST service, or mainframe transaction service, the operation is
+no longer just a replicated state-machine transition---you have introduced
+another participant with its own failure and recovery semantics.
+
+\subsubsection{Recommended pattern: Raft as source of truth}
+
+For reference data and masterdata: a management system validates a change,
+submits a command to Raft, Raft commits it, the state machine updates
+local replicated state, and local readers use fast in-memory lookups.
+The authoritative distributed value is the Raft log and state machine.
+External stores can feed it or observe it, but should not be part of the
+committed application transition unless deliberately modeled.
+
+\subsubsection{Outbox pattern}
+
+If a committed Raft command must trigger external side effects, use an
+outbox approach: the \texttt{apply} updates replicated domain state and
+records a pending side effect in replicated state; a separate worker
+observes the pending side effect, performs the external action
+idempotently, and submits a follow-up command marking the side effect
+complete. This keeps Raft apply deterministic and gives side effects a
+recoverable state.
+
+\subsubsection{Avoid hidden XA inside Raft apply}
+
+Do not casually start an XA transaction inside \texttt{apply()}, update
+an external database, call a remote service, and commit the XA
+transaction. That design combines Raft commit with a second transaction
+protocol. It may be correct in a specific architecture, but it is no
+longer a simple Raft state machine and needs a full failure analysis.
+
+\subsection{Mapping concepts}
+
+\begin{longtable}{p{48mm}p{52mm}p{52mm}}
+\toprule
+XATMI/XA concept & Raft-related concept & Important difference \\
+\midrule
+Service request & Client command/query &
+Raft commands are replicated before application mutation. \\
+\midrule
+Transaction commit & Log entry commit &
+Raft commit is quorum replication, not multi-resource prepare/commit. \\
+\midrule
+Resource manager & Application state machine &
+State machine should be deterministic and local. \\
+\midrule
+Transaction id & Command/request id &
+Application should model idempotency explicitly. \\
+\midrule
+Timeout & Timeout &
+Both can leave client outcome ambiguous. \\
+\midrule
+Recovery log & Raft log and snapshots &
+Raft log orders the replicated state machine. \\
+\midrule
+Rollback & Compensating commands &
+Raft commands are not rolled back after commitment; compensating commands
+are used. \\
+\midrule
+Service routing & Leader redirect / client retry &
+Writes must reach the leader. \\
+\midrule
+Read-only service & Linearizable query &
+Raft read safety must be established first. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Rollback and compensation}
+
+In XA, rollback is part of the transaction protocol before commit. In
+Raft, once an entry is committed and applied, the application does not
+roll it back. If the business process needs reversal, submit a new
+compensating command. That compensation is itself a new committed fact in
+the log.
+
+\subsection{Reads and lookup workloads}
+
+XATMI applications often think in terms of service calls. In this Raft
+design, the target use case is often few writes, many reads. For
+reference data and masterdata distribution: central governance produces
+low-rate replicated changes through Raft; high-rate local lookups are
+served from domain state. A local lookup is safe only after Raft has
+established that the node can serve the read. The runtime does that before
+calling the application's query method. Application developers should not
+implement quorum checks in the query code.
+
+\subsection{Cluster configuration is not domain data}
+
+Cluster configuration includes current voters, next voters during joint
+consensus, learners, membership transition state, and quorum rules. That
+state belongs to Raft. It is not reference data, not masterdata, not a
+key/value entry owned by the application. The application snapshot stores
+business state; the Raft snapshot wrapper stores cluster configuration.
+Applications must not reserve keys such as \texttt{\_raft/config} or
+\texttt{\_cluster/voters}---those would blur the safety boundary.
+
+\subsection{Transaction boundaries for domain developers}
+
+When designing a domain command, ask:
+
+\begin{enumerate}
+\item What is the smallest deterministic state change?
+\item What command id identifies this request across retries?
+\item What result should be returned if the same command id is seen again?
+\item What state must be included in snapshots?
+\item What external side effects are needed, if any?
+\item Can side effects be modeled as follow-up commands?
+\item What authorization/admission rule applies before the command enters
+Raft?
+\end{enumerate}
+
+Do not ask the application to decide: who the leader is, what quorum
+means, whether a membership change is committed, where cluster
+configuration is stored, or whether a read lease is valid. Those are Raft
+runtime questions.
+
+\subsection{Design guidance}
+
+Use Raft when: the application can be represented as a deterministic state
+machine, the replicated state is small or compactable enough for
+snapshots, writes are lower volume than reads, local read performance
+matters, and the system benefits from clear leader/quorum semantics.
+
+Use XA/XATMI-style coordination when: one business transaction must
+atomically update multiple independent resource managers, participants
+cannot be represented as one replicated state machine, and prepare/
+commit/rollback across external systems is the actual requirement.
+
+Use both only with explicit design: Raft for replicated state, XA/XATMI
+for external systems that truly require transaction coordination,
+idempotent bridges between them, and clear recovery and compensation
+rules.
+
+\subsection{Practical rule}
+
+For a domain application developer using this project: your command is the
+transaction-like business request; Raft makes that request durable,
+ordered, replicated, and recoverable; your state machine makes the
+deterministic business change; Raft cluster configuration stays outside
+your domain data.

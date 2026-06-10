@@ -1,0 +1,267 @@
+\section{Consistency Boundaries}
+\label{sec:ConsistencyBoundaries}
+
+This section explains what the Raft implementation guarantees when the
+network partitions and the cluster appears to split into disconnected
+groups. It separates two concerns:
+
+\begin{enumerate}
+\item consistency of the replicated Raft log and the state machine driven
+by that log---Raft addresses this directly,
+\item consistency of everything around that log---clients, retries, caches,
+projections, and external side effects---which remains an application and
+integration responsibility.
+\end{enumerate}
+
+\subsection{What ``split brain'' means here}
+
+In informal distributed-systems language, ``split brain'' usually means a
+network partition where the cluster is divided into separate sets of nodes
+where more than one set of nodes behaves as if it is the authoritative cluster.
+In a ``split brain'' scenario scenario, what we fear is that writes could proceed 
+independently in individual sets, each believing they are \emph{the} cluster, and 
+then even after healing the data sets would diverge. 
+
+A correct Raft system, guarantees that this outcome can not happen for 
+committed state.
+
+What \emph{can} happen under a partition:
+
+\begin{itemize}
+\item The cluster partitions into a majority side and one or more minority
+sides.
+\item Nodes on multiple sides may temporarily believe they should lead.
+\item An old leader may continue acting as leader until it notices quorum
+loss.
+\item Clients may see redirects, retries, timeouts, or ambiguous outcomes.
+\end{itemize}
+
+What should \emph{not} happen:
+
+\begin{itemize}
+\item Two different partitions both committing conflicting log entries for
+the same log position in the same configuration.
+\item A minority partition continuing to commit authoritative writes as if
+it still had quorum.
+\end{itemize}
+
+The useful distinction is: apparent split brain at the transport or
+liveness level can happen; committed split brain at the replicated-log
+level should not.
+
+\subsection{Why ``majority'' and ``minority'' are well-defined}
+
+The terms majority and minority are not decided dynamically by ``who can
+currently see whom.'' In Raft, elections and commitment are evaluated
+against the configured cluster membership---a specific current voting
+set. A candidate wins only by receiving votes from a majority of that
+configured set; an entry commits only when replicated to a majority of
+that configured set.
+
+If a 5-node voting configuration \texttt{\{A, B, C, D, E\}} has quorum
+threshold 3, and the network partitions into \texttt{\{A, B, C\}} and
+\texttt{\{D, E\}}, then \texttt{\{A, B, C\}} is the majority side and
+\texttt{\{D, E\}} is the minority side. This holds regardless of whether
+\texttt{D} and \texttt{E} can still reach each other. Reachability affects
+liveness; configuration defines legitimacy.
+
+The same logic applies to any partition shape. A 7-node cluster split
+into 4 + 3: only the 4 side can make committed progress because quorum
+is 4. The cluster cannot legitimately shrink itself by accident just
+because nodes disappeared behind a partition. A new voting set only becomes
+authoritative after the cluster commits that configuration change through
+the log.
+
+\subsection{What Raft guarantees}
+
+For the authoritative replicated state machine, Raft gives these safety
+properties:
+
+\begin{itemize}
+\item Only a leader with a quorum can commit new log entries.
+\item Once an entry is committed, future leaders must contain that entry.
+\item Conflicting uncommitted entries on losing sides are eventually
+overwritten.
+\item After partition healing, followers converge to the majority-selected
+log.
+\item Membership changes are serialized through the log and protected by
+joint consensus.
+\end{itemize}
+
+Applied to this implementation:
+
+\begin{itemize}
+\item Ordinary writes are accepted only through the leader path.
+\item Write success is defined as committed and applied, not merely appended
+locally.
+\item Linearizable reads are served only by a leader that can establish a
+fresh quorum-backed read window.
+\item Removed nodes decommission themselves after finalized removal.
+\end{itemize}
+
+In practice, under a partition: the majority side may continue to elect a
+leader and commit writes; the minority side may be alive but should lose
+the ability to commit new authoritative writes; once the partition heals,
+minority-side uncommitted divergence is discarded.
+
+The Jepsen partition scenarios (Section~\ref{sec:JepsenTesting}) validate
+this: isolating one node, isolating the leader, cutting the leader into a
+minority, and overlapping reconfiguration with a partition---all checking
+that only one side keeps making committed progress.
+
+\subsection{What Raft does not guarantee}
+
+Raft does not automatically make the rest of the application ecosystem
+consistent. It does not solve:
+
+\begin{itemize}
+\item client retries after ambiguous timeouts,
+\item duplicate command submission,
+\item side effects that happen before commit is known,
+\item cache invalidation across failover,
+\item stale read models or projections,
+\item reconciliation of data written outside the Raft leader path,
+\item domain-level merge policy for concurrent offline edits,
+\item idempotency of calls into external systems.
+\end{itemize}
+
+This is the point often mislabeled as ``eventual consistency.'' Inside the
+Raft state machine, the goal is strong consistency for committed state.
+Around the state machine, many components are only eventually consistent:
+materialized views, denormalized read stores, caches, search indexes,
+downstream analytics pipelines, webhook consumers, external billing or
+provisioning systems. Those must converge eventually, but Raft alone does
+not define how.
+
+\subsection{The three outcome classes}
+
+When a client issues a command during instability, there are three
+fundamentally different outcomes:
+
+\begin{description}
+\item[Definitely committed] The leader had quorum, the log entry committed,
+and the state machine applied it. The clean case.
+\item[Definitely not committed] The request was rejected because the node
+was not leader, the cluster had no usable leader, the request was invalid
+or unauthorized, or the CAS precondition did not match. Safe to treat as no
+state change.
+\item[Ambiguous] The client timed out, disconnected, or lost contact while
+the cluster was unstable. The command may have committed, or it may have
+been dropped. The client cannot safely assume either outcome.
+\end{description}
+
+The ambiguity exists even in a correct Raft system because the client can
+lose the response after the cluster has already committed the command. The
+Jepsen harness treats such outcomes as indeterminate rather than definite
+failures for this reason.
+
+\subsection{Where inconsistency can still appear}
+
+\subsubsection{Uncommitted local divergence}
+
+A minority or superseded leader may append entries locally that never
+commit. That local log tail is inconsistent with the surviving majority
+for a while. Raft handles this by rollback and overwrite during
+reconciliation. Application state changes driven only by committed entries
+do not need custom business logic for this case.
+
+\subsubsection{Side effects emitted too early}
+
+If application code sends an email, charges a card, provisions a resource,
+or updates another datastore before the Raft command is known to be
+committed, a partition or failover may produce an external side effect
+with no corresponding committed entry in the authoritative log. Raft
+cannot repair that automatically.
+
+\subsubsection{Duplicate execution from retries}
+
+If a client times out and retries without an idempotency key, the cluster
+may eventually apply the same logical intent twice. Raft preserves log
+consistency, but not business-level uniqueness unless the application
+models it.
+
+\subsubsection{Stale or lagging read models}
+
+If a system derives secondary views from the Raft log asynchronously,
+those views may lag after partitions, failovers, or restart recovery.
+That is not a Raft safety failure; it is an eventually consistent
+projection.
+
+\subsubsection{Writes outside the leader path}
+
+If any service allows local writes on followers, offline replicas, edge
+nodes, or separate databases not serialized through the Raft leader, then
+conflict resolution becomes an application concern. At that point you are
+no longer relying on Raft alone for authoritative writes.
+
+\subsection{What application developers must accommodate}
+
+\subsubsection{Treat authoritative state as log-derived}
+
+The cleanest model: only committed Raft log entries mutate authoritative
+state. Everything else is derived from or synchronized to that state.
+This prevents most split-brain reconciliation problems.
+
+\subsubsection{Use idempotency keys for client commands}
+
+Clients should attach a stable command identity for operations that may
+be retried. This lets the application distinguish ``same logical command
+retried after timeout'' from ``new logical command.'' Without that,
+ambiguous client failures can become duplicate business actions.
+
+\subsubsection{Delay irreversible side effects until commit is known}
+
+If a side effect is not reversible, it should not happen before the
+corresponding Raft command is committed and applied. Safer patterns:
+commit first, then emit side effects from an outbox or committed-event
+stream; or emit only compensatable side effects.
+
+\subsubsection{Make side-effect consumers replay-safe}
+
+Anything downstream of the committed log should tolerate duplicate
+delivery, delayed delivery, and reordered observation across independent
+streams. This is standard outbox and projection discipline.
+
+\subsubsection{Define reconciliation rules for external projections}
+
+For caches, search indexes, or read models, developers need to define how
+staleness is detected, how a projection catches up after outage, whether
+rebuild-from-log is supported, and whether consumers should prefer
+monotonic versions or log indexes.
+
+\subsubsection{Define domain merge rules if offline mutation is allowed}
+
+If the product intentionally allows updates outside the single Raft leader
+path, then Raft no longer provides the whole answer. Developers must define
+last-writer-wins or version-based conflict rules, per-field merge behavior,
+tombstone/delete precedence, and human review workflows for irreconcilable
+conflicts.
+
+\subsection{Recommended documentation for applications}
+
+Any real application using this Raft layer should document:
+
+\begin{enumerate}
+\item which data is authoritative and log-backed,
+\item which APIs return definite success, definite failure, or ambiguous
+outcome,
+\item how client retries are deduplicated,
+\item when side effects are emitted relative to commit,
+\item how projections rebuild or catch up after outage,
+\item whether any writes occur outside the Raft leader path,
+\item what conflict resolution policy applies if they do.
+\end{enumerate}
+
+If those items are left implicit, teams often assume Raft solves more than
+it actually does.
+
+\subsection{Bottom line}
+
+Raft prevents committed split brain for the authoritative replicated log.
+Raft does not eliminate ambiguous client outcomes during failures,
+duplicate intent from retries, stale projections, premature external side
+effects, or domain conflicts created outside the leader/commit path.
+
+The right mental model: Raft gives strong consistency for committed state;
+everything around that state still needs explicit application-level
+consistency design.

@@ -70,7 +70,7 @@ graft-cpp/run-mixed-membership-smoke.sh              # membership with C++ learn
 graft-cpp/run-mixed-membership-cpp-leader-smoke.sh   # membership with C++ leader
 graft-cpp/run-mixed-snapshot-smoke.sh                # snapshot catch-up
 graft-cpp/run-mixed-suite.sh                         # all C++ mixed scenarios
-graft-rust/tests/scripts/run-mixed-suite.sh          # Rust↔Java smoke suite
+graft-rust/tests/scripts/run-mixed-suite.sh          # Rust and Java smoke suite
 \end{lstlisting}
 
 Run these after changing:
@@ -140,7 +140,7 @@ advancement) must be identical.
 must be identical.
 \item Joint-consensus majority rules must use the same quorum formula in all
 three.
-\item Membership admission and finalization (JOIN↦JOINT↦FINALIZE) must be
+\item Membership admission and finalization (JOIN and JOINT and FINALIZE) must be
 identical.
 \item Read barriers must contact a joint-consensus quorum of voters before
 serving.
