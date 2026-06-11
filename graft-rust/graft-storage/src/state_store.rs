@@ -15,8 +15,9 @@
  * limitations under the License.
  */
 
-use std::fs;
-use std::path::PathBuf;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use graft_core::raft_node::PersistentStateStore as PersistentStateStoreTrait;
@@ -87,8 +88,51 @@ impl FilePersistentStateStore {
     fn save(&self) {
         let term = *self.term.lock().unwrap();
         let voted = self.voted_for.lock().unwrap().clone().unwrap_or_default();
+        if let Some(parent) = self.path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let tmp_path = temporary_path(&self.path);
         let content = format!("term={}\nvoted={}\n", term, voted);
-        let _ = fs::write(&self.path, content);
+        let mut file = match OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&tmp_path)
+        {
+            Ok(file) => file,
+            Err(_) => return,
+        };
+        if file.write_all(content.as_bytes()).is_err() {
+            let _ = fs::remove_file(&tmp_path);
+            return;
+        }
+        file.flush().ok();
+        file.sync_all().ok();
+        drop(file);
+        if fs::rename(&tmp_path, &self.path).is_ok() {
+            sync_parent_dir(&self.path);
+        } else {
+            let _ = fs::remove_file(&tmp_path);
+        }
+    }
+}
+
+fn temporary_path(path: &Path) -> PathBuf {
+    let mut tmp = path.to_path_buf();
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| format!("{}.tmp", ext))
+        .unwrap_or_else(|| "tmp".to_string());
+    tmp.set_extension(extension);
+    tmp
+}
+
+fn sync_parent_dir(path: &Path) {
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
     }
 }
 

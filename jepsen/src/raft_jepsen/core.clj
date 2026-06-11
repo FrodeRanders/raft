@@ -423,7 +423,7 @@
   ;; nemesis starts polling. Without this, a fast machine may finish the mixed
   ;; workload before any follower has applied enough entries to compact.
   (let [key (:key opts)
-        n 50
+        n (+ (:snapshot-min-entries opts) 4)
         write-phases (mapv (fn [i]
                              (gen/once {:type :invoke :f :write :value (str "snap-prelude-" i) :key key}))
                            (range n))]

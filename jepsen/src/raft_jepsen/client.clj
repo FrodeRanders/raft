@@ -28,9 +28,10 @@
                             [(keyword key) value])))
                   (str/split-lines (or text "")))
         result (cond
-                 (contains? raw :found)
-                 {:found (parse-bool (:found raw))
-                  :value (:value raw)}
+                 (or (contains? raw :found)
+                     (contains? raw :get.found))
+                 {:found (parse-bool (or (:found raw) (:get.found raw)))
+                  :value (or (:value raw) (:get.value raw))}
 
                  (contains? raw :cas.matched)
                  {:key (:cas.key raw)

@@ -135,10 +135,15 @@ final class JsonFormatSupport {
                     .append("\"peerId\": \"").append(escapeJson(stats.peerId())).append('"')
                     .append(", \"rpcType\": \"").append(escapeJson(stats.rpcType())).append('"')
                     .append(", \"samples\": ").append(stats.samples())
-                    .append(", \"meanMillis\": ").append(String.format(Locale.ROOT, "%.3f", stats.meanMillis()))
-                    .append(", \"minMillis\": ").append(String.format(Locale.ROOT, "%.3f", stats.minMillis()))
-                    .append(", \"maxMillis\": ").append(String.format(Locale.ROOT, "%.3f", stats.maxMillis()))
-                    .append(", \"cvPercent\": ").append(String.format(Locale.ROOT, "%.2f", stats.cvPercent()))
+                    .append(", \"meanMillis\": ");
+            appendJsonDoubleOrNull(out, stats.meanMillis(), "%.3f");
+            out.append(", \"minMillis\": ");
+            appendJsonDoubleOrNull(out, stats.minMillis(), "%.3f");
+            out.append(", \"maxMillis\": ");
+            appendJsonDoubleOrNull(out, stats.maxMillis(), "%.3f");
+            out.append(", \"cvPercent\": ");
+            appendJsonDoubleOrNull(out, stats.cvPercent(), "%.2f");
+            out
                     .append(" }");
             if (i + 1 < response.getPeerStats().size()) {
                 out.append(',');
@@ -189,6 +194,14 @@ final class JsonFormatSupport {
             out.append(',');
         }
         out.append('\n');
+    }
+
+    private static void appendJsonDoubleOrNull(StringBuilder out, double value, String format) {
+        if (Double.isFinite(value)) {
+            out.append(String.format(Locale.ROOT, format, value));
+        } else {
+            out.append("null");
+        }
     }
 
     private static StringBuilder indent(StringBuilder out, int indent) {

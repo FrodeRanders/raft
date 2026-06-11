@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use graft_core::raft_node::{LogStore as LogStoreTrait, PersistentStateStore as PersistentStateStoreTrait};
@@ -123,7 +123,13 @@ impl FileLogStore {
         if let Some(parent) = self.path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let mut f = match fs::File::create(&self.path) {
+        let tmp_path = temporary_path(&self.path);
+        let mut f = match OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&tmp_path)
+        {
             Ok(f) => f,
             Err(_) => return,
         };
@@ -144,9 +150,36 @@ impl FileLogStore {
                 logical_idx,
                 entry.term,
                 base64_encode(&entry.data)
-            ).ok();
+            )
+            .ok();
         }
         f.flush().ok();
+        f.sync_all().ok();
+        drop(f);
+        if fs::rename(&tmp_path, &self.path).is_ok() {
+            sync_parent_dir(&self.path);
+        } else {
+            let _ = fs::remove_file(&tmp_path);
+        }
+    }
+}
+
+fn temporary_path(path: &Path) -> PathBuf {
+    let mut tmp = path.to_path_buf();
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| format!("{}.tmp", ext))
+        .unwrap_or_else(|| "tmp".to_string());
+    tmp.set_extension(extension);
+    tmp
+}
+
+fn sync_parent_dir(path: &Path) {
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
     }
 }
 
