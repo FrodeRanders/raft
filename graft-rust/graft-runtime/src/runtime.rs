@@ -54,10 +54,7 @@ impl RaftRuntime {
     /// Creates a new runtime tied to the given node and transport client.
     /// The peer address map should be populated via `set_peers()` before
     /// calling `run()`.
-    pub fn new(
-        node: Arc<parking_lot::Mutex<RaftNode>>,
-        client: Arc<RaftClient>,
-    ) -> Self {
+    pub fn new(node: Arc<parking_lot::Mutex<RaftNode>>, client: Arc<RaftClient>) -> Self {
         Self {
             node,
             client,
@@ -89,7 +86,8 @@ impl RaftRuntime {
         let election_range = Duration::from_millis(1500); // 1500–3000ms total
         let heartbeat_interval = Duration::from_millis(750);
 
-        let mut election_timer = interval(self.random_election_timeout(election_base, election_range));
+        let mut election_timer =
+            interval(self.random_election_timeout(election_base, election_range));
         election_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let mut heartbeat_timer = interval(heartbeat_interval);
@@ -131,7 +129,8 @@ impl RaftRuntime {
             peer_id = n.me.id.clone();
             last_log_index = n.log_store.last_index();
             last_log_term = n.log_store.last_term();
-            voting_peers = n.active_configuration()
+            voting_peers = n
+                .active_configuration()
                 .current_voting_members()
                 .into_iter()
                 .filter(|p| p.id != n.me.id)
@@ -147,6 +146,26 @@ impl RaftRuntime {
 
         {
             let mut n = self.node.lock();
+            if n.joining {
+                if n.state != NodeState::Follower {
+                    n.become_follower(now);
+                }
+                n.voted_for = None;
+                n.persistent_state.set_voted_for(None);
+                n.refresh_timeout(now);
+                return;
+            }
+            if !n.is_voter_in_active_config() {
+                n.update_decommissioned(false);
+                if n.state != NodeState::Follower {
+                    n.become_follower(now);
+                }
+                n.voted_for = None;
+                n.persistent_state.set_voted_for(None);
+                n.refresh_timeout(now);
+                return;
+            }
+            n.update_decommissioned(true);
             if !n.has_timed_out(now) {
                 return;
             }
@@ -162,8 +181,10 @@ impl RaftRuntime {
             n.election_sequence_counter += 1;
             n.refresh_timeout(now);
 
-            info!("{} starting election for term {}, lastIndex={}, lastTerm={}",
-                peer_id, n.current_term, last_log_index, last_log_term);
+            info!(
+                "{} starting election for term {}, lastIndex={}, lastTerm={}",
+                peer_id, n.current_term, last_log_index, last_log_term
+            );
         }
 
         let election_term = term + 1; // term was incremented above
@@ -195,11 +216,11 @@ impl RaftRuntime {
                     last_log_term: last_log_term as i64,
                 };
 
-                let result = timeout(rpc_timeout, client.send_rpc(
-                    addr,
-                    "VoteRequest",
-                    req.encode_to_vec(),
-                )).await;
+                let result = timeout(
+                    rpc_timeout,
+                    client.send_rpc(addr, "VoteRequest", req.encode_to_vec()),
+                )
+                .await;
 
                 match result {
                     Ok(Ok(payload)) => {
@@ -248,12 +269,23 @@ impl RaftRuntime {
     // -- Heartbeat tick --
 
     async fn on_heartbeat_tick(&self) {
-        let (_state, term, leader_id, commit_index, snapshot_index, snapshot_term, snapshot_data, peer_list) = {
+        let (
+            _state,
+            term,
+            leader_id,
+            commit_index,
+            snapshot_index,
+            snapshot_term,
+            snapshot_data,
+            peer_list,
+        ) = {
             let n = self.node.lock();
             if n.state != NodeState::Leader {
                 return;
             }
-            let peers: Vec<(String, u64)> = n.next_index.iter()
+            let peers: Vec<(String, u64)> = n
+                .next_index
+                .iter()
                 .map(|(id, ni)| (id.clone(), *ni))
                 .collect();
             (
@@ -288,9 +320,16 @@ impl RaftRuntime {
 
             if snapshot_active {
                 self.send_next_snapshot_chunk(
-                    peer_id, addr, term, &leader_id,
-                    snapshot_index, snapshot_term, &snapshot_data, rpc_timeout,
-                ).await;
+                    peer_id,
+                    addr,
+                    term,
+                    &leader_id,
+                    snapshot_index,
+                    snapshot_term,
+                    &snapshot_data,
+                    rpc_timeout,
+                )
+                .await;
                 continue;
             }
 
@@ -299,9 +338,16 @@ impl RaftRuntime {
                 // chunk (offset=0) and record the offset so we continue on the
                 // next heartbeat tick.
                 self.start_snapshot_stream(
-                    peer_id, addr, term, &leader_id,
-                    snapshot_index, snapshot_term, &snapshot_data, rpc_timeout,
-                ).await;
+                    peer_id,
+                    addr,
+                    term,
+                    &leader_id,
+                    snapshot_index,
+                    snapshot_term,
+                    &snapshot_data,
+                    rpc_timeout,
+                )
+                .await;
                 continue;
             } else {
                 // Standard AppendEntries heartbeat/replication.
@@ -309,14 +355,23 @@ impl RaftRuntime {
 
                 let (prev_log_term, entries) = {
                     let n = node.lock();
-                    let plt = if prev_log_idx == 0 { 0 } else { n.log_store.term_at(prev_log_idx) };
+                    let plt = if prev_log_idx == 0 {
+                        0
+                    } else {
+                        n.log_store.term_at(prev_log_idx)
+                    };
                     let ents = n.log_store.entries_from(*next_idx);
                     (plt, ents)
                 };
 
-                let proto_entries: Vec<raft::LogEntry> = entries.iter().map(|e| {
-                    raft::LogEntry { term: e.term as i64, peer_id: e.peer_id.clone(), data: e.data.clone() }
-                }).collect();
+                let proto_entries: Vec<raft::LogEntry> = entries
+                    .iter()
+                    .map(|e| raft::LogEntry {
+                        term: e.term as i64,
+                        peer_id: e.peer_id.clone(),
+                        data: e.data.clone(),
+                    })
+                    .collect();
                 let entry_count = proto_entries.len() as u64;
 
                 let req = raft::AppendEntriesRequest {
@@ -329,9 +384,11 @@ impl RaftRuntime {
                 };
                 let payload = req.encode_to_vec();
 
-                let result = timeout(rpc_timeout, client.send_rpc(
-                    addr, "AppendEntriesRequest", payload,
-                )).await;
+                let result = timeout(
+                    rpc_timeout,
+                    client.send_rpc(addr, "AppendEntriesRequest", payload),
+                )
+                .await;
 
                 match result {
                     Ok(Ok(resp_bytes)) => {
@@ -401,7 +458,11 @@ impl RaftRuntime {
         let total_len = snapshot_data.len();
         let end = std::cmp::min(chunk_size, total_len);
         let done = end >= total_len;
-        let chunk = if end <= total_len { &snapshot_data[0..end] } else { &[] };
+        let chunk = if end <= total_len {
+            &snapshot_data[0..end]
+        } else {
+            &[]
+        };
 
         let req = raft::InstallSnapshotRequest {
             term: term as i64,
@@ -414,7 +475,12 @@ impl RaftRuntime {
         };
         let payload = req.encode_to_vec();
 
-        let result = timeout(rpc_timeout, self.client.send_rpc(addr, "InstallSnapshotRequest", payload)).await;
+        let result = timeout(
+            rpc_timeout,
+            self.client
+                .send_rpc(addr, "InstallSnapshotRequest", payload),
+        )
+        .await;
 
         match result {
             Ok(Ok(resp_bytes)) => {
@@ -492,7 +558,12 @@ impl RaftRuntime {
         };
         let payload = req.encode_to_vec();
 
-        let result = timeout(rpc_timeout, self.client.send_rpc(addr, "InstallSnapshotRequest", payload)).await;
+        let result = timeout(
+            rpc_timeout,
+            self.client
+                .send_rpc(addr, "InstallSnapshotRequest", payload),
+        )
+        .await;
 
         match result {
             Ok(Ok(resp_bytes)) => {
@@ -552,12 +623,22 @@ impl RaftRuntime {
     /// linearizable read query.
     pub async fn refresh_read_barrier(&self) -> bool {
         // Snapshot the peer list under lock quickly.
-        let (peer_list, term, leader_id, commit_index, snapshot_index, snapshot_term, snapshot_data) = {
+        let (
+            peer_list,
+            term,
+            leader_id,
+            commit_index,
+            snapshot_index,
+            snapshot_term,
+            snapshot_data,
+        ) = {
             let n = self.node.lock();
             if n.state != NodeState::Leader {
                 return false;
             }
-            let peers: Vec<(String, u64)> = n.next_index.iter()
+            let peers: Vec<(String, u64)> = n
+                .next_index
+                .iter()
                 .map(|(id, ni)| (id.clone(), *ni))
                 .collect();
             (
@@ -588,35 +669,78 @@ impl RaftRuntime {
                 None => continue,
             };
 
-            let req = if *next_idx <= snapshot_index && !snapshot_data.is_empty() {
-                raft::InstallSnapshotRequest {
-                    term: term as i64, leader_id: leader_id.clone(),
-                    last_included_index: snapshot_index as i64, last_included_term: snapshot_term as i64,
-                    offset: 0, snapshot_data: snapshot_data.clone(), done: true,
-                }.encode_to_vec()
+            let (rpc_type, req) = if *next_idx <= snapshot_index && !snapshot_data.is_empty() {
+                let req = raft::InstallSnapshotRequest {
+                    term: term as i64,
+                    leader_id: leader_id.clone(),
+                    last_included_index: snapshot_index as i64,
+                    last_included_term: snapshot_term as i64,
+                    offset: 0,
+                    snapshot_data: snapshot_data.clone(),
+                    done: true,
+                };
+                ("InstallSnapshotRequest", req.encode_to_vec())
             } else {
                 let prev_log_idx = if *next_idx > 0 { *next_idx - 1 } else { 0 };
                 let (plt, entries) = {
                     let n = node.lock();
-                    let t = if prev_log_idx == 0 { 0 } else { n.log_store.term_at(prev_log_idx) };
+                    let t = if prev_log_idx == 0 {
+                        0
+                    } else {
+                        n.log_store.term_at(prev_log_idx)
+                    };
                     let e = n.log_store.entries_from(*next_idx);
                     (t, e)
                 };
-                let proto_entries: Vec<raft::LogEntry> = entries.iter().map(|e| {
-                    raft::LogEntry { term: e.term as i64, peer_id: e.peer_id.clone(), data: e.data.clone() }
-                }).collect();
-                raft::AppendEntriesRequest {
-                    term: term as i64, leader_id: leader_id.clone(),
-                    prev_log_index: prev_log_idx as i64, prev_log_term: plt as i64,
-                    leader_commit: commit_index as i64, entries: proto_entries,
-                }.encode_to_vec()
+                let proto_entries: Vec<raft::LogEntry> = entries
+                    .iter()
+                    .map(|e| raft::LogEntry {
+                        term: e.term as i64,
+                        peer_id: e.peer_id.clone(),
+                        data: e.data.clone(),
+                    })
+                    .collect();
+                let req = raft::AppendEntriesRequest {
+                    term: term as i64,
+                    leader_id: leader_id.clone(),
+                    prev_log_index: prev_log_idx as i64,
+                    prev_log_term: plt as i64,
+                    leader_commit: commit_index as i64,
+                    entries: proto_entries,
+                };
+                ("AppendEntriesRequest", req.encode_to_vec())
             };
 
-            let result = timeout(rpc_timeout, client.send_rpc(addr, "AppendEntriesRequest", req)).await;
-            if let Ok(Ok(_resp_bytes)) = result {
-                contacted.insert(peer_id.clone());
+            let result = timeout(rpc_timeout, client.send_rpc(addr, rpc_type, req)).await;
+            if let Ok(Ok(resp_bytes)) = result {
                 let mut n = node.lock();
-                n.record_follower_replication_success(peer_id);
+                let success = if rpc_type == "InstallSnapshotRequest" {
+                    match raft::InstallSnapshotResponse::decode(&resp_bytes[..]) {
+                        Ok(resp) if resp.term as u64 > n.current_term => {
+                            n.current_term = resp.term as u64;
+                            n.persistent_state.set_current_term(resp.term as u64);
+                            n.become_follower(std::time::Instant::now());
+                            false
+                        }
+                        Ok(resp) => resp.success,
+                        Err(_) => false,
+                    }
+                } else {
+                    match raft::AppendEntriesResponse::decode(&resp_bytes[..]) {
+                        Ok(resp) if resp.term as u64 > n.current_term => {
+                            n.current_term = resp.term as u64;
+                            n.persistent_state.set_current_term(resp.term as u64);
+                            n.become_follower(std::time::Instant::now());
+                            false
+                        }
+                        Ok(resp) => resp.success,
+                        Err(_) => false,
+                    }
+                };
+                if success {
+                    contacted.insert(peer_id.clone());
+                    n.record_follower_replication_success(peer_id);
+                }
             }
         }
 

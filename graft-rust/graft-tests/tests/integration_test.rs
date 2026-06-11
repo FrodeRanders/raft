@@ -5,8 +5,10 @@ mod tests {
 
     use graft_core::membership::ClusterConfiguration;
     use graft_core::raft_node::{
-        AppendEntriesRequest, InstallSnapshotRequest, LogStore, RaftNode, VoteRequest,
+        AppendEntriesRequest, InstallSnapshotRequest, LogStore, RaftNode, RaftTransport,
+        VoteRequest,
     };
+    use graft_core::state_machine::StateMachine;
     use graft_core::types::{LogEntry, Peer};
     use graft_storage::log_store::{InMemoryLogStore, InMemoryPersistentStateStore};
 
@@ -23,25 +25,82 @@ mod tests {
         let log_store = Arc::new(InMemoryLogStore::new());
         let state_store = Arc::new(InMemoryPersistentStateStore::new());
 
-        RaftNode::new(
-            me,
-            500,
-            log_store,
-            state_store,
-            None,
-            config,
-            100,
-            1024,
-        )
+        RaftNode::new(me, 500, log_store, state_store, None, config, 100, 1024)
+    }
+
+    struct NoopTransport;
+
+    impl RaftTransport for NoopTransport {
+        fn send_vote_request(
+            &self,
+            _peer: &Peer,
+            _term: u64,
+            _candidate_id: &str,
+            _last_log_index: u64,
+            _last_log_term: u64,
+        ) {
+        }
+        fn send_append_entries(
+            &self,
+            _peer: &Peer,
+            _term: u64,
+            _leader_id: &str,
+            _prev_log_index: u64,
+            _prev_log_term: u64,
+            _leader_commit: u64,
+            _entries: Vec<LogEntry>,
+        ) {
+        }
+        fn send_install_snapshot(
+            &self,
+            _peer: &Peer,
+            _term: u64,
+            _leader_id: &str,
+            _last_included_index: u64,
+            _last_included_term: u64,
+            _offset: u64,
+            _data: Vec<u8>,
+            _done: bool,
+        ) {
+        }
+        fn broadcast_heartbeat_complete(&self) {}
+    }
+
+    struct RestoreTrackingStateMachine {
+        restored: std::sync::Mutex<Vec<u8>>,
+    }
+
+    impl RestoreTrackingStateMachine {
+        fn new() -> Self {
+            Self {
+                restored: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn restored(&self) -> Vec<u8> {
+            self.restored.lock().unwrap().clone()
+        }
+    }
+
+    impl StateMachine for RestoreTrackingStateMachine {
+        fn apply(&self, _term: u64, _command: &[u8]) {}
+
+        fn restore(&self, snapshot_data: &[u8]) {
+            *self.restored.lock().unwrap() = snapshot_data.to_vec();
+        }
     }
 
     #[test]
     fn test_initial_state_is_follower() {
-        let node = make_raft_node("n1", 5001, vec![
-            make_peer("n1", 5001),
-            make_peer("n2", 5002),
-            make_peer("n3", 5003),
-        ]);
+        let node = make_raft_node(
+            "n1",
+            5001,
+            vec![
+                make_peer("n1", 5001),
+                make_peer("n2", 5002),
+                make_peer("n3", 5003),
+            ],
+        );
         assert_eq!(node.state, graft_core::types::NodeState::Follower);
         assert_eq!(node.current_term, 0);
         assert_eq!(node.voted_for, None);
@@ -50,11 +109,15 @@ mod tests {
 
     #[test]
     fn test_vote_request_granted_when_candidate_is_up_to_date() {
-        let mut node = make_raft_node("n1", 5001, vec![
-            make_peer("n1", 5001),
-            make_peer("n2", 5002),
-            make_peer("n3", 5003),
-        ]);
+        let mut node = make_raft_node(
+            "n1",
+            5001,
+            vec![
+                make_peer("n1", 5001),
+                make_peer("n2", 5002),
+                make_peer("n3", 5003),
+            ],
+        );
 
         let resp = node.handle_vote_request(VoteRequest {
             term: 1,
@@ -71,11 +134,15 @@ mod tests {
 
     #[test]
     fn test_vote_request_rejected_when_term_is_lower() {
-        let mut node = make_raft_node("n1", 5001, vec![
-            make_peer("n1", 5001),
-            make_peer("n2", 5002),
-            make_peer("n3", 5003),
-        ]);
+        let mut node = make_raft_node(
+            "n1",
+            5001,
+            vec![
+                make_peer("n1", 5001),
+                make_peer("n2", 5002),
+                make_peer("n3", 5003),
+            ],
+        );
 
         node.current_term = 5;
         let resp = node.handle_vote_request(VoteRequest {
@@ -91,11 +158,15 @@ mod tests {
 
     #[test]
     fn test_vote_request_rejected_when_already_voted() {
-        let mut node = make_raft_node("n1", 5001, vec![
-            make_peer("n1", 5001),
-            make_peer("n2", 5002),
-            make_peer("n3", 5003),
-        ]);
+        let mut node = make_raft_node(
+            "n1",
+            5001,
+            vec![
+                make_peer("n1", 5001),
+                make_peer("n2", 5002),
+                make_peer("n3", 5003),
+            ],
+        );
 
         // Grant vote to n3 in term 1
         node.handle_vote_request(VoteRequest {
@@ -117,6 +188,33 @@ mod tests {
     }
 
     #[test]
+    fn test_vote_request_allows_higher_term_shorter_log() {
+        let log_store = Arc::new(InMemoryLogStore::new());
+        let state_store = Arc::new(InMemoryPersistentStateStore::new());
+        let me = make_peer("n1", 5001);
+        let config = ClusterConfiguration::stable(vec![
+            make_peer("n1", 5001),
+            make_peer("n2", 5002),
+            make_peer("n3", 5003),
+        ]);
+        log_store.append(vec![
+            LogEntry::new(1, "n1".to_string(), b"a".to_vec()),
+            LogEntry::new(1, "n1".to_string(), b"b".to_vec()),
+            LogEntry::new(1, "n1".to_string(), b"c".to_vec()),
+        ]);
+        let mut node = RaftNode::new(me, 500, log_store, state_store, None, config, 100, 1024);
+
+        let resp = node.handle_vote_request(VoteRequest {
+            term: 2,
+            candidate_id: "n2".to_string(),
+            last_log_index: 1,
+            last_log_term: 2,
+        });
+
+        assert!(resp.vote_granted);
+    }
+
+    #[test]
     fn test_append_entries_follower_accepts_entries() {
         let log_store = Arc::new(InMemoryLogStore::new());
         let state_store = Arc::new(InMemoryPersistentStateStore::new());
@@ -128,7 +226,14 @@ mod tests {
         ]);
 
         let mut node = RaftNode::new(
-            me, 500, log_store.clone(), state_store, None, config, 100, 1024,
+            me,
+            500,
+            log_store.clone(),
+            state_store,
+            None,
+            config,
+            100,
+            1024,
         );
 
         let resp = node.handle_append_entries_request(AppendEntriesRequest {
@@ -161,13 +266,18 @@ mod tests {
         ]);
 
         let mut node = RaftNode::new(
-            me, 500, log_store.clone(), state_store, None, config, 100, 1024,
+            me,
+            500,
+            log_store.clone(),
+            state_store,
+            None,
+            config,
+            100,
+            1024,
         );
 
         // Append some entries first with term 1
-        log_store.append(vec![
-            LogEntry::new(1, "n1".to_string(), b"old".to_vec()),
-        ]);
+        log_store.append(vec![LogEntry::new(1, "n1".to_string(), b"old".to_vec())]);
 
         let resp = node.handle_append_entries_request(AppendEntriesRequest {
             term: 2,
@@ -219,7 +329,7 @@ mod tests {
 
         assert!(joint.is_joint_consensus());
         assert_eq!(joint.current_majority_size(), 2); // 3 -> maj=2
-        assert_eq!(joint.next_majority_size(), 3);    // 5 -> maj=3
+        assert_eq!(joint.next_majority_size(), 3); // 5 -> maj=3
 
         // n1,n2 gives old majority (2/3) but not new majority (2/5)
         let partial: HashSet<String> = ["n1".to_string(), "n2".to_string()].into();
@@ -228,7 +338,10 @@ mod tests {
         assert!(!joint.has_joint_majority(&partial));
 
         // All five is majority of both
-        let all: HashSet<String> = ["n1","n2","n3","n4","n5"].iter().map(|s| s.to_string()).collect();
+        let all: HashSet<String> = ["n1", "n2", "n3", "n4", "n5"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!(joint.has_joint_majority(&all));
     }
 
@@ -240,7 +353,14 @@ mod tests {
         let config = ClusterConfiguration::stable(vec![make_peer("n1", 5001)]);
 
         let mut node = RaftNode::new(
-            me, 500, log_store.clone(), state_store, None, config, 100, 1024,
+            me,
+            500,
+            log_store.clone(),
+            state_store,
+            None,
+            config,
+            100,
+            1024,
         );
 
         // Install a snapshot
@@ -288,19 +408,63 @@ mod tests {
     #[test]
     fn test_non_voter_not_in_active_config() {
         let me = make_peer("n1", 5001);
-        let config = ClusterConfiguration::stable(vec![
-            make_peer("n2", 5002),
-            make_peer("n3", 5003),
-        ]);
+        let config =
+            ClusterConfiguration::stable(vec![make_peer("n2", 5002), make_peer("n3", 5003)]);
         let log_store = Arc::new(InMemoryLogStore::new());
         let state_store = Arc::new(InMemoryPersistentStateStore::new());
 
-        let node = RaftNode::new(
-            me, 500, log_store, state_store, None, config, 100, 1024,
-        );
+        let node = RaftNode::new(me, 500, log_store, state_store, None, config, 100, 1024);
 
         assert!(!node.is_peer_in_active_config());
         assert!(!node.is_voter_in_active_config());
+    }
+
+    #[test]
+    fn test_non_voter_timeout_marks_decommissioned() {
+        let me = make_peer("n1", 5001);
+        let config =
+            ClusterConfiguration::stable(vec![make_peer("n2", 5002), make_peer("n3", 5003)]);
+        let log_store = Arc::new(InMemoryLogStore::new());
+        let state_store = Arc::new(InMemoryPersistentStateStore::new());
+        let mut node = RaftNode::new(me, 500, log_store, state_store, None, config, 100, 1024);
+
+        node.check_timeout(std::time::Instant::now(), &NoopTransport);
+
+        assert!(node.is_decommissioned());
+        assert_eq!(node.state, graft_core::types::NodeState::Follower);
+    }
+
+    #[test]
+    fn test_snapshot_install_restores_state_machine_and_advances_apply_index() {
+        let log_store = Arc::new(InMemoryLogStore::new());
+        let state_store = Arc::new(InMemoryPersistentStateStore::new());
+        let sm = Arc::new(RestoreTrackingStateMachine::new());
+        let me = make_peer("n1", 5001);
+        let config = ClusterConfiguration::stable(vec![make_peer("n1", 5001)]);
+        let mut node = RaftNode::new(
+            me,
+            500,
+            log_store,
+            state_store,
+            Some(sm.clone()),
+            config,
+            100,
+            1024,
+        );
+
+        node.accept_snapshot_chunk(InstallSnapshotRequest {
+            term: 1,
+            leader_id: "n2".to_string(),
+            last_included_index: 7,
+            last_included_term: 1,
+            offset: 0,
+            data: b"domain-snapshot".to_vec(),
+            done: true,
+        });
+
+        assert_eq!(sm.restored(), b"domain-snapshot");
+        assert_eq!(node.commit_index, 7);
+        assert_eq!(node.last_applied, 7);
     }
 
     #[test]
@@ -331,8 +495,8 @@ mod tests {
 
     #[test]
     fn test_membership_join_and_joint() {
-        use graft_runtime::membership;
         use graft_proto::raft;
+        use graft_runtime::membership;
 
         let n1 = make_peer("n1", 5001);
         let _n2 = make_peer("n2", 5002);
@@ -341,12 +505,22 @@ mod tests {
         let state_store = Arc::new(InMemoryPersistentStateStore::new());
 
         let mut node = RaftNode::new(
-            make_peer("n1", 5001), 500, log_store.clone(), state_store, None, config, 100, 1024,
+            make_peer("n1", 5001),
+            500,
+            log_store.clone(),
+            state_store,
+            None,
+            config,
+            100,
+            1024,
         );
 
         // JOIN n2 as learner
         let join_cmd = membership::encode_join_command(&raft::PeerSpec {
-            id: "n2".to_string(), host: "127.0.0.1".to_string(), port: 5002, role: "LEARNER".to_string(),
+            id: "n2".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 5002,
+            role: "LEARNER".to_string(),
         });
         log_store.append(vec![LogEntry::new(1, "n1".to_string(), join_cmd)]);
         node.apply_committed_entries(); // This won't work directly, need commit_index advance
@@ -355,8 +529,12 @@ mod tests {
         node.state = graft_core::types::NodeState::Leader;
         node.current_term = 1;
         node.submit_command(membership::encode_join_command(&raft::PeerSpec {
-            id: "n2".to_string(), host: "127.0.0.1".to_string(), port: 5002, role: "VOTER".to_string(),
-        })).unwrap();
+            id: "n2".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 5002,
+            role: "VOTER".to_string(),
+        }))
+        .unwrap();
         node.commit_index = node.log_store.last_index();
         node.apply_committed_entries();
 
@@ -365,9 +543,20 @@ mod tests {
 
         // JOINT
         node.submit_command(membership::encode_joint_command(&[
-            raft::PeerSpec { id: "n1".to_string(), host: "127.0.0.1".to_string(), port: 5001, role: "VOTER".to_string() },
-            raft::PeerSpec { id: "n2".to_string(), host: "127.0.0.1".to_string(), port: 5002, role: "VOTER".to_string() },
-        ])).unwrap();
+            raft::PeerSpec {
+                id: "n1".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: 5001,
+                role: "VOTER".to_string(),
+            },
+            raft::PeerSpec {
+                id: "n2".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: 5002,
+                role: "VOTER".to_string(),
+            },
+        ]))
+        .unwrap();
         node.commit_index = node.log_store.last_index();
         node.apply_committed_entries();
 
@@ -376,7 +565,8 @@ mod tests {
         assert!(node.pending_join_ids.is_empty());
 
         // FINALIZE
-        node.submit_command(membership::encode_finalize_command()).unwrap();
+        node.submit_command(membership::encode_finalize_command())
+            .unwrap();
         node.commit_index = node.log_store.last_index();
         node.apply_committed_entries();
 

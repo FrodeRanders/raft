@@ -77,7 +77,12 @@ pub trait LogStore: Send + Sync {
     fn snapshot_data(&self) -> Vec<u8>;
     /// Install a received snapshot: replaces log prefix with metadata and
     /// stores the snapshot payload for future transfers.
-    fn install_snapshot(&self, last_included_index: u64, last_included_term: u64, snapshot_data: Vec<u8>);
+    fn install_snapshot(
+        &self,
+        last_included_index: u64,
+        last_included_term: u64,
+        snapshot_data: Vec<u8>,
+    );
 }
 
 /// Small durable state that Raft must persist outside the replicated log:
@@ -100,9 +105,35 @@ pub trait PersistentStateStore: Send + Sync {
 /// methods without knowing whether the transport is TCP, in-memory,
 /// or a test stub.
 pub trait RaftTransport: Send + Sync {
-    fn send_vote_request(&self, peer: &Peer, term: u64, candidate_id: &str, last_log_index: u64, last_log_term: u64);
-    fn send_append_entries(&self, peer: &Peer, term: u64, leader_id: &str, prev_log_index: u64, prev_log_term: u64, leader_commit: u64, entries: Vec<LogEntry>);
-    fn send_install_snapshot(&self, peer: &Peer, term: u64, leader_id: &str, last_included_index: u64, last_included_term: u64, offset: u64, data: Vec<u8>, done: bool);
+    fn send_vote_request(
+        &self,
+        peer: &Peer,
+        term: u64,
+        candidate_id: &str,
+        last_log_index: u64,
+        last_log_term: u64,
+    );
+    fn send_append_entries(
+        &self,
+        peer: &Peer,
+        term: u64,
+        leader_id: &str,
+        prev_log_index: u64,
+        prev_log_term: u64,
+        leader_commit: u64,
+        entries: Vec<LogEntry>,
+    );
+    fn send_install_snapshot(
+        &self,
+        peer: &Peer,
+        term: u64,
+        leader_id: &str,
+        last_included_index: u64,
+        last_included_term: u64,
+        offset: u64,
+        data: Vec<u8>,
+        done: bool,
+    );
     /// Signal that a heartbeat broadcast has been triggered — the transport
     /// layer initiates the actual send loop.
     fn broadcast_heartbeat_complete(&self);
@@ -330,6 +361,11 @@ impl RaftNode {
         };
 
         // Seed the election timer so the node doesn't immediately elect.
+        if snapshot_index > 0 {
+            if let Some(ref sm) = node.state_machine {
+                sm.restore(&node.log_store.snapshot_data());
+            }
+        }
         node.refresh_timeout(now);
         node
     }
@@ -442,7 +478,7 @@ impl RaftNode {
         // Non-voters or nodes not in the configuration at all should
         // not disrupt the cluster with elections.
         if !self.is_voter_in_active_config() {
-            self.update_decommissioned(true);
+            self.update_decommissioned(false);
             if self.state != NodeState::Follower {
                 self.become_follower(now);
             }
@@ -452,7 +488,7 @@ impl RaftNode {
             return;
         }
 
-        self.update_decommissioned(false);
+        self.update_decommissioned(true);
 
         // Figure 2: if election timeout elapses, start new election.
         if self.state != NodeState::Leader && self.has_timed_out(now) {
@@ -485,7 +521,8 @@ impl RaftNode {
         self.current_term += 1;
         self.persistent_state.set_current_term(self.current_term);
         self.voted_for = Some(self.me.id.clone());
-        self.persistent_state.set_voted_for(Some(self.me.id.clone()));
+        self.persistent_state
+            .set_voted_for(Some(self.me.id.clone()));
         self.election_sequence_counter += 1;
         self.refresh_timeout(Instant::now());
 
@@ -542,11 +579,7 @@ impl RaftNode {
 
         // Figure 2 "All Servers": if RPC response contains term T > currentTerm,
         // set currentTerm = T, convert to follower.
-        let max_response_term = responses
-            .iter()
-            .map(|r| r.current_term)
-            .max()
-            .unwrap_or(0);
+        let max_response_term = responses.iter().map(|r| r.current_term).max().unwrap_or(0);
 
         let max_term = std::cmp::max(self.current_term, max_response_term);
         if max_term > self.current_term {
@@ -573,7 +606,8 @@ impl RaftNode {
                 // least as up-to-date as receiver's log, grant vote."
                 // A rejection with a higher term means we're stale.
                 self.current_term = response.current_term;
-                self.persistent_state.set_current_term(response.current_term);
+                self.persistent_state
+                    .set_current_term(response.current_term);
                 self.become_follower(now);
                 return;
             }
@@ -648,10 +682,7 @@ impl RaftNode {
         for peer in self.remote_replicated_peers_for(&config) {
             let snapshot_index = self.log_store.snapshot_index();
             let last_index = self.log_store.last_index();
-            let next = *self
-                .next_index
-                .get(&peer.id)
-                .unwrap_or(&(last_index + 1));
+            let next = *self.next_index.get(&peer.id).unwrap_or(&(last_index + 1));
 
             // Guard against sending entries that have been compacted.
             let min_next = snapshot_index + 1;
@@ -730,7 +761,10 @@ impl RaftNode {
     ///
     /// A valid AppendEntries request is also the leader heartbeat. It
     /// refreshes leader identity and suppresses local elections.
-    pub fn handle_append_entries_request(&mut self, req: AppendEntriesRequest) -> AppendEntriesResponse {
+    pub fn handle_append_entries_request(
+        &mut self,
+        req: AppendEntriesRequest,
+    ) -> AppendEntriesResponse {
         let now = Instant::now();
 
         // Figure 2 rule 1: reply false if term < currentTerm.
@@ -827,10 +861,13 @@ impl RaftNode {
 
         // §5.4.1 election restriction: the candidate's log must be at least
         // as up-to-date as the receiver's log.
+        let candidate_log_is_up_to_date = req.last_log_term > self.log_store.last_term()
+            || (req.last_log_term == self.log_store.last_term()
+                && req.last_log_index >= self.log_store.last_index());
+
         let can_grant = req.term >= self.current_term
             && (self.voted_for.is_none() || self.voted_for.as_deref() == Some(&req.candidate_id))
-            && (req.last_log_index >= self.log_store.last_index()
-                && req.last_log_term >= self.log_store.last_term());
+            && candidate_log_is_up_to_date;
 
         let mut vote_granted = false;
         if can_grant {
@@ -1022,7 +1059,11 @@ impl RaftNode {
 
             // Forward to the application state machine.
             if let Some(ref sm) = self.state_machine {
-                sm.apply(entry.term, &entry.data);
+                let result = sm.apply_with_result(entry.term, &entry.data);
+                if !result.is_empty() {
+                    self.applied_command_results
+                        .insert(self.last_applied, result);
+                }
             }
         }
 
@@ -1073,7 +1114,10 @@ impl RaftNode {
         match command {
             Command::Join(join_cmd) => {
                 if let Some(ref peer_spec) = join_cmd.member {
-                    let ip: std::net::IpAddr = peer_spec.host.parse().unwrap_or(std::net::IpAddr::from([127, 0, 0, 1]));
+                    let ip: std::net::IpAddr = peer_spec
+                        .host
+                        .parse()
+                        .unwrap_or(std::net::IpAddr::from([127, 0, 0, 1]));
                     let addr = std::net::SocketAddr::new(ip, peer_spec.port as u16);
                     let role = match peer_spec.role.to_uppercase().as_str() {
                         "LEARNER" => crate::types::Role::Learner,
@@ -1088,18 +1132,30 @@ impl RaftNode {
                 false
             }
             Command::Joint(joint_cmd) => {
-                let proposed: Vec<crate::types::Peer> = joint_cmd.members.iter().map(|ps| {
-                    let ip: std::net::IpAddr = ps.host.parse().unwrap_or(std::net::IpAddr::from([127, 0, 0, 1]));
-                    let addr = std::net::SocketAddr::new(ip, ps.port as u16);
-                    let role = match ps.role.to_uppercase().as_str() {
-                        "LEARNER" => crate::types::Role::Learner,
-                        _ => crate::types::Role::Voter,
-                    };
-                    crate::types::Peer::new(ps.id.clone(), addr, role)
-                }).collect();
+                let proposed: Vec<crate::types::Peer> = joint_cmd
+                    .members
+                    .iter()
+                    .map(|ps| {
+                        let ip: std::net::IpAddr = ps
+                            .host
+                            .parse()
+                            .unwrap_or(std::net::IpAddr::from([127, 0, 0, 1]));
+                        let addr = std::net::SocketAddr::new(ip, ps.port as u16);
+                        let role = match ps.role.to_uppercase().as_str() {
+                            "LEARNER" => crate::types::Role::Learner,
+                            _ => crate::types::Role::Voter,
+                        };
+                        crate::types::Peer::new(ps.id.clone(), addr, role)
+                    })
+                    .collect();
 
-                let proposed_ids: std::collections::HashSet<String> = proposed.iter().map(|p| p.id.clone()).collect();
-                tracing::info!("{} JOINT: entering joint consensus with {} members", self.me.id, proposed.len());
+                let proposed_ids: std::collections::HashSet<String> =
+                    proposed.iter().map(|p| p.id.clone()).collect();
+                tracing::info!(
+                    "{} JOINT: entering joint consensus with {} members",
+                    self.me.id,
+                    proposed.len()
+                );
 
                 for m in &proposed {
                     if !self.known_peers.contains_key(&m.id) {
@@ -1112,8 +1168,11 @@ impl RaftNode {
                 self.pending_auto_finalize_members = proposed_ids.iter().cloned().collect();
                 self.pending_auto_finalize_fence_index = self.commit_index + 1;
 
-                if proposed_ids.contains(&self.me.id) { self.joining = false; }
-                self.pending_join_ids.retain(|id| !proposed_ids.contains(id));
+                if proposed_ids.contains(&self.me.id) {
+                    self.joining = false;
+                }
+                self.pending_join_ids
+                    .retain(|id| !proposed_ids.contains(id));
                 self.configuration_transition_started = Some(std::time::Instant::now());
 
                 if self.state == crate::types::NodeState::Leader {
@@ -1122,7 +1181,8 @@ impl RaftNode {
                     for m in self.cluster_configuration.all_members() {
                         if m.id != self.me.id && !self.next_index.contains_key(&m.id) {
                             self.next_index.insert(m.id.clone(), next);
-                            self.match_index.insert(m.id.clone(), self.log_store.snapshot_index());
+                            self.match_index
+                                .insert(m.id.clone(), self.log_store.snapshot_index());
                         }
                     }
                 }
@@ -1130,8 +1190,12 @@ impl RaftNode {
             }
             Command::Finalize(_) => {
                 tracing::info!("{} FINALIZE: exiting joint consensus", self.me.id);
-                let next_ids: std::collections::HashSet<String> = self.cluster_configuration.next_members()
-                    .iter().map(|p| p.id.clone()).collect();
+                let next_ids: std::collections::HashSet<String> = self
+                    .cluster_configuration
+                    .next_members()
+                    .iter()
+                    .map(|p| p.id.clone())
+                    .collect();
 
                 self.cluster_configuration = self.cluster_configuration.finalize_transition();
                 self.configuration_transition_started = None;
@@ -1144,8 +1208,12 @@ impl RaftNode {
                     self.match_index.retain(|id, _| next_ids.contains(id));
                 }
 
-                let current_ids: std::collections::HashSet<String> = self.cluster_configuration.current_members()
-                    .iter().map(|p| p.id.clone()).collect();
+                let current_ids: std::collections::HashSet<String> = self
+                    .cluster_configuration
+                    .current_members()
+                    .iter()
+                    .map(|p| p.id.clone())
+                    .collect();
                 self.known_peers.retain(|id, _| current_ids.contains(id));
 
                 if !current_ids.contains(&self.me.id) {
@@ -1180,9 +1248,10 @@ impl RaftNode {
             return;
         }
 
-        let all_caught_up = self.pending_auto_finalize_members.iter().all(|id| {
-            self.match_index.get(id).copied().unwrap_or(0) >= fence
-        });
+        let all_caught_up = self
+            .pending_auto_finalize_members
+            .iter()
+            .all(|id| self.match_index.get(id).copied().unwrap_or(0) >= fence);
 
         if all_caught_up {
             let finalize_cmd = graft_proto::raft::InternalRaftCommand {
@@ -1297,7 +1366,14 @@ impl RaftNode {
                     pending.last_included_term,
                     std::mem::take(&mut pending.data),
                 );
+                let installed_index = pending.last_included_index;
+                let installed_data = self.log_store.snapshot_data();
                 self.pending_snapshot = None;
+                self.commit_index = self.commit_index.max(installed_index);
+                self.last_applied = self.last_applied.max(installed_index);
+                if let Some(ref sm) = self.state_machine {
+                    sm.restore(&installed_data);
+                }
             }
         }
 
@@ -1414,9 +1490,7 @@ impl RaftNode {
 
     fn trim_applied_command_results(&mut self) {
         let keep_from = self.commit_index.saturating_sub(1024);
-        self.applied_command_results = self
-            .applied_command_results
-            .split_off(&keep_from);
+        self.applied_command_results = self.applied_command_results.split_off(&keep_from);
     }
 }
 

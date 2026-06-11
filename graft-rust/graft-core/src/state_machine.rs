@@ -34,6 +34,14 @@ pub trait StateMachine: Send + Sync {
     /// the same index must produce the same domain state.
     fn apply(&self, term: u64, command: &[u8]);
 
+    /// Applies a committed command and returns optional client-visible result
+    /// bytes. Implementations that do not produce command results can use the
+    /// default, which delegates to `apply` and returns an empty payload.
+    fn apply_with_result(&self, term: u64, command: &[u8]) -> Vec<u8> {
+        self.apply(term, command);
+        Vec::new()
+    }
+
     /// Returns encoded domain snapshot bytes. The returned bytes are later
     /// wrapped by Raft with cluster membership metadata before being stored
     /// or transferred. Return only application state, not Raft metadata.

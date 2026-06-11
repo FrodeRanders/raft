@@ -66,7 +66,11 @@ impl StateMachine for KeyValueStateMachine {
     ///
     /// Determinism is guaranteed by Raft: the same command at the same
     /// log index produces the same state on every node.
-    fn apply(&self, _term: u64, command: &[u8]) {
+    fn apply(&self, term: u64, command: &[u8]) {
+        let _ = self.apply_with_result(term, command);
+    }
+
+    fn apply_with_result(&self, _term: u64, command: &[u8]) -> Vec<u8> {
         if let Ok(cmd) = serde_json::from_slice::<KvCommand>(command) {
             let mut store = self.store.lock().unwrap();
             match cmd {
@@ -81,19 +85,29 @@ impl StateMachine for KeyValueStateMachine {
                 }
                 KvCommand::Cas {
                     key,
+                    expected_present,
                     expected_value,
                     new_value,
                 } => {
-                    // Compare-and-swap: only update if the current value
-                    // matches the expected value. This is an atomic
-                    // operation because apply is called under Raft
-                    // commitment — no concurrent writes can interleave.
-                    if store.get(&key) == Some(&expected_value) {
+                    let current = store.get(&key).cloned();
+                    let current_present = current.is_some();
+                    let matched = current_present == expected_present
+                        && (!expected_present || current.as_ref() == Some(&expected_value));
+                    if matched {
                         store.insert(key, new_value);
                     }
+                    return serde_json::to_vec(&CasResult {
+                        matched,
+                        expected_present,
+                        expected_value,
+                        current_present,
+                        current_value: current.unwrap_or_default(),
+                    })
+                    .unwrap_or_default();
                 }
             }
         }
+        Vec::new()
     }
 
     /// Returns a JSON-serialized snapshot of the entire store. Raft
@@ -128,12 +142,7 @@ impl QueryableStateMachine for KeyValueStateMachine {
                 KvQuery::Get { key } => {
                     let found = store.contains_key(&key);
                     let value = store.get(&key).cloned().unwrap_or_default();
-                    serde_json::to_vec(&GetResult {
-                        key,
-                        found,
-                        value,
-                    })
-                    .unwrap_or_default()
+                    serde_json::to_vec(&GetResult { key, found, value }).unwrap_or_default()
                 }
             }
         } else {
@@ -154,9 +163,14 @@ pub enum KvCommand {
     Delete { key: String },
     /// Remove all keys.
     Clear,
-    /// Conditional write: only update if the current value matches
-    /// `expected_value`.
-    Cas { key: String, expected_value: Vec<u8>, new_value: Vec<u8> },
+    /// Conditional write: only update if presence and value match the expected
+    /// state.
+    Cas {
+        key: String,
+        expected_present: bool,
+        expected_value: Vec<u8>,
+        new_value: Vec<u8>,
+    },
 }
 
 /// A read query submitted by a client.
@@ -174,4 +188,70 @@ pub struct GetResult {
     pub found: bool,
     /// The value, or empty if `found` is false.
     pub value: Vec<u8>,
+}
+
+/// Result of a committed CAS command.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct CasResult {
+    pub matched: bool,
+    pub expected_present: bool,
+    pub expected_value: Vec<u8>,
+    pub current_present: bool,
+    pub current_value: Vec<u8>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graft_core::state_machine::StateMachine;
+
+    #[test]
+    fn cas_missing_expected_succeeds_and_reports_result() {
+        let sm = KeyValueStateMachine::new();
+        let command = serde_json::to_vec(&KvCommand::Cas {
+            key: "k".to_string(),
+            expected_present: false,
+            expected_value: Vec::new(),
+            new_value: b"v1".to_vec(),
+        })
+        .unwrap();
+
+        let result = sm.apply_with_result(1, &command);
+        let result: CasResult = serde_json::from_slice(&result).unwrap();
+
+        assert!(result.matched);
+        assert!(!result.current_present);
+
+        let query = serde_json::to_vec(&KvQuery::Get {
+            key: "k".to_string(),
+        })
+        .unwrap();
+        let get: GetResult = serde_json::from_slice(&sm.query(&query)).unwrap();
+        assert!(get.found);
+        assert_eq!(get.value, b"v1");
+    }
+
+    #[test]
+    fn cas_present_mismatch_reports_false_without_updating() {
+        let sm = KeyValueStateMachine::new();
+        let put = serde_json::to_vec(&KvCommand::Put {
+            key: "k".to_string(),
+            value: b"old".to_vec(),
+        })
+        .unwrap();
+        sm.apply(1, &put);
+
+        let command = serde_json::to_vec(&KvCommand::Cas {
+            key: "k".to_string(),
+            expected_present: true,
+            expected_value: b"expected".to_vec(),
+            new_value: b"new".to_vec(),
+        })
+        .unwrap();
+        let result: CasResult = serde_json::from_slice(&sm.apply_with_result(1, &command)).unwrap();
+
+        assert!(!result.matched);
+        assert!(result.current_present);
+        assert_eq!(result.current_value, b"old");
+    }
 }
