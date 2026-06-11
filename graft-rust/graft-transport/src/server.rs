@@ -125,11 +125,28 @@ async fn handle_connection(
 
         // Wrap the response in an Envelope and send it back.
         let response = Envelope {
-            correlation_id: format!("{}_resp", correlation_id),
-            r#type: format!("{}Response", envelope_type),
+            correlation_id,
+            r#type: response_type_for(&envelope_type),
             payload: response_payload,
         };
 
         codec::write_envelope(&mut stream, &response).await?;
+    }
+}
+
+fn response_type_for(request_type: &str) -> String {
+    match request_type {
+        "VoteRequest" => "VoteResponse".to_string(),
+        "AppendEntriesRequest" => "AppendEntriesResponse".to_string(),
+        "InstallSnapshotRequest" => "InstallSnapshotResponse".to_string(),
+        "ClientCommandRequest" => "ClientCommandResponse".to_string(),
+        "ClientQueryRequest" => "ClientQueryResponse".to_string(),
+        "JoinClusterRequest" => "JoinClusterResponse".to_string(),
+        "JoinClusterStatusRequest" => "JoinClusterStatusResponse".to_string(),
+        "ReconfigureClusterRequest" => "ReconfigureClusterResponse".to_string(),
+        "ReconfigurationStatusRequest" => "ReconfigurationStatusResponse".to_string(),
+        "ClusterSummaryRequest" => "ClusterSummaryResponse".to_string(),
+        "TelemetryRequest" => "TelemetryResponse".to_string(),
+        _ => format!("{}Response", request_type),
     }
 }

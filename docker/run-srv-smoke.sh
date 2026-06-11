@@ -93,7 +93,7 @@ wait_for_port() {
   while (( SECONDS < deadline )); do
     local output
     output="$(probe_summary "${port}")"
-    if grep -q '^success: true' <<<"${output}"; then
+    if grep -q '^status: \(OK\|REDIRECT\)' <<<"${output}"; then
       return 0
     fi
     sleep 1

@@ -11,6 +11,50 @@ STATE_FILE="${DATA_DIR}/raft.state"
 
 mkdir -p "${DATA_DIR}"
 
+resolve_host() {
+    local host="$1"
+    if [[ "${host}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        printf '%s\n' "${host}"
+        return 0
+    fi
+
+    local line
+    line="$(getent ahostsv4 "${host}" 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${line}" ]]; then
+        set -- ${line}
+        printf '%s\n' "$1"
+        return 0
+    fi
+
+    printf '%s\n' "${host}"
+}
+
+normalize_peer_spec() {
+    local spec="$1"
+    local id rest addr role host port resolved
+
+    if [[ "${spec}" == *@* ]]; then
+        id="${spec%%@*}"
+        rest="${spec#*@}"
+    else
+        printf '%s\n' "${spec}"
+        return 0
+    fi
+
+    if [[ "${rest}" == */* ]]; then
+        addr="${rest%%/*}"
+        role="/${rest#*/}"
+    else
+        addr="${rest}"
+        role=""
+    fi
+
+    host="${addr%:*}"
+    port="${addr##*:}"
+    resolved="$(resolve_host "${host}")"
+    printf '%s@%s:%s%s\n' "${id}" "${resolved}" "${port}" "${role}"
+}
+
 # Build the peer list. Peers can be specified explicitly via RAFT_PEERS
 # (comma-separated id@host:port), or discovered via RAFT_CLUSTER_SRV
 # (DNS SRV record).
@@ -19,7 +63,7 @@ if [[ -n "${RAFT_PEERS:-}" ]]; then
     IFS=',' read -ra SPECS <<< "${RAFT_PEERS}"
     for spec in "${SPECS[@]}"; do
         spec="$(echo "${spec}" | xargs)"
-        [[ -n "${spec}" ]] && PEER_ARGS+=("${spec}")
+        [[ -n "${spec}" ]] && PEER_ARGS+=("$(normalize_peer_spec "${spec}")")
     done
 elif [[ -n "${RAFT_CLUSTER_SRV:-}" ]]; then
     # Resolve SRV records using dig. Format: id@host:port for each target.

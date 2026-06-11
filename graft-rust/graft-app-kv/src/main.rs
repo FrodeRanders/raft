@@ -547,8 +547,8 @@ fn run_server(
                         };
                     let resp_payload = h.dispatch(&envelope.r#type, &envelope.payload).await;
                     let resp = Envelope {
-                        correlation_id: format!("{}_resp", envelope.correlation_id),
-                        r#type: format!("{}Response", envelope.r#type),
+                        correlation_id: envelope.correlation_id,
+                        r#type: response_type_for(&envelope.r#type),
                         payload: resp_payload,
                     };
                     if graft_transport::codec::write_envelope(&mut stream, &resp)
@@ -561,6 +561,23 @@ fn run_server(
             });
         }
     })
+}
+
+fn response_type_for(request_type: &str) -> String {
+    match request_type {
+        "VoteRequest" => "VoteResponse".to_string(),
+        "AppendEntriesRequest" => "AppendEntriesResponse".to_string(),
+        "InstallSnapshotRequest" => "InstallSnapshotResponse".to_string(),
+        "ClientCommandRequest" => "ClientCommandResponse".to_string(),
+        "ClientQueryRequest" => "ClientQueryResponse".to_string(),
+        "JoinClusterRequest" => "JoinClusterResponse".to_string(),
+        "JoinClusterStatusRequest" => "JoinClusterStatusResponse".to_string(),
+        "ReconfigureClusterRequest" => "ReconfigureClusterResponse".to_string(),
+        "ReconfigurationStatusRequest" => "ReconfigurationStatusResponse".to_string(),
+        "ClusterSummaryRequest" => "ClusterSummaryResponse".to_string(),
+        "TelemetryRequest" => "TelemetryResponse".to_string(),
+        _ => format!("{}Response", request_type),
+    }
 }
 
 fn parse_peers(peers: &[String]) -> HashMap<String, (SocketAddr, String)> {
