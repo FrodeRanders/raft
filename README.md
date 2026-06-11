@@ -406,21 +406,19 @@ Those counters and age gauges are intended for alerting on long-running role cha
 ## Next Steps
 There are no committed follow-up items at the moment.
 
-## Java/C++ Implementations
+## Java/C++/Rust Implementations
 
-This repository is intended to carry two functionally equivalent Raft implementations: Java and C++. The Java implementation remains in the Maven reactor, while the C++ implementation under `graft-cpp` is a separate CMake subtree. Both implementations share the same protobuf schema, envelope framing, client command/query messages, membership messages, telemetry messages, and snapshot messages.
-
-The primary application is distributing governed reference data: writes are rare and centrally managed, while lookups are high-volume and latency-sensitive near consuming systems. Raft lets a slower management database remain the source of governed changes while replicated state machines distribute those changes to local, fast lookup structures. The same model also applies to selected master data, where individual records change infrequently but aggregate dataset churn still requires quality assurance and efficient distributed reads.
+This repository is intended to carry three functionally equivalent Raft implementations: Java, C++ and Rust. The Java implementation remains in the Maven reactor, the C++ implementation under `graft-cpp` is a separate CMake subtree, as is the Rust implementation under 'graft-rust'. All three implementations share the same protobuf schema, envelope framing, client command/query messages, membership messages, telemetry messages, and snapshot messages.
 
 Current mixed-language validation covers:
 
-- Java and C++ nodes participating in the same local cluster
-- Java CLI clients talking to Java or C++ leaders
-- C++ `graft_smoke` clients driving Jepsen put/get/CAS workloads
-- C++ followers catching up from Java leaders
-- Java followers catching up from C++ leaders
-- C++ membership joiners admitted by Java or C++ leaders
-- C++ leader handling of join admission, reconfiguration status, learner promotion, and role-aware membership summaries
+- Java, C++ and Rust nodes participating in the same local cluster
+- Java CLI clients talking to Java, C++ or Rust leaders
+- C++ and Rust `graft_smoke` clients driving Jepsen put/get/CAS workloads
+- C++ and Rust followers catching up from Java leaders
+- Java followers catching up from C++ or Rust leaders
+- C++ or Rust membership joiners admitted by Java, C++ or Rust leaders
+- C++ or Rust leader handling of join admission, reconfiguration status, learner promotion, and role-aware membership summaries
 
 The local Jepsen mixed suite is the current high-signal validation path:
 
@@ -429,7 +427,7 @@ cd jepsen
 ./run-suite.sh mixed
 ```
 
-The C++ smoke suite remains useful for narrower protocol and runtime checks:
+The C++ and Rust smoke suite remains useful for narrower protocol and runtime checks:
 
 ```text
 graft-cpp/run-mixed-suite.sh
