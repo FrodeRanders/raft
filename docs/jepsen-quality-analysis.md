@@ -167,8 +167,8 @@ discriminating power.
 
 For example, instead of random values from five strings, use values like:
 ```
-p7-op42
-p3-op17
+w7-v0042
+w3-v0017
 ```
 or, even better, structured values:
 ```

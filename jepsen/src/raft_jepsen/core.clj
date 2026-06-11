@@ -62,7 +62,7 @@
                :workload-mode "single-key"
                :key-count 3
                :operation-limit 100
-               :unique-values false
+               :unique-values true
                :snapshot-min-entries nil
                :snapshot-chunk-bytes nil
                :node-count 5
@@ -124,7 +124,7 @@
     "  --workload <mode>     single-key|multi-key, default single-key"
     "  --key-count <n>       Keys for multi-key workload, default 3"
     "  --operation-limit <n> Maximum generated client operations, default 100"
-    "  --unique-values <bool> Generate unique write/CAS values, default false"
+    "  --unique-values <bool> Generate unique write/CAS values, default true"
     "  --snapshot-min-entries <n>  Override raft.snapshot.min.entries"
     "  --snapshot-chunk-bytes <n>  Override raft.snapshot.chunk.bytes"
     "  --node-count <n>      Number of local nodes, default 5"
@@ -206,28 +206,47 @@
         (dissoc :node-impl-list))))
 
 (def cas-values ["v0" "v1" "v2" "v3" "v4"])
+(def unique-new-value ::unique-new-value)
+(def unique-seen-value ::unique-seen-value)
 
-(defn- next-unique-value [value-state process]
-  (let [process-id (if (nil? process) "p" (str "p" process))
-        value (str process-id "-op" (swap! (:counter value-state) inc))]
+(defn- next-unique-value [value-state op]
+  (let [worker-id (if (nil? (:process op)) "unknown" (str (:process op)))
+        next-id (get (swap! (:counters value-state)
+                            update worker-id
+                            (fnil inc 0))
+                     worker-id)
+        value (format "w%s-v%04d" worker-id next-id)]
     (swap! (:seen value-state) conj value)
     value))
 
-(defn- generator-process [args]
-  (let [candidate (first (filter integer? args))]
-    candidate))
+(defn- random-seen-value [value-state]
+  (let [seen @(:seen value-state)]
+    (when (seq seen)
+      (rand-nth (vec seen)))))
 
-(defn- random-value [opts value-state process]
+(defn- assign-unique-values [value-state op]
+  (case (:f op)
+    :write (if (= unique-new-value (:value op))
+             (assoc op :value (next-unique-value value-state op))
+             op)
+    :cas (let [[expected new-value] (:value op)
+               expected (if (= unique-seen-value expected)
+                          (random-seen-value value-state)
+                          expected)
+               new-value (if (= unique-new-value new-value)
+                           (next-unique-value value-state op)
+                           new-value)]
+           (assoc op :value [expected new-value]))
+    op))
+
+(defn- random-value [opts]
   (if (:unique-values opts)
-    (next-unique-value value-state process)
+    unique-new-value
     (rand-nth cas-values)))
 
-(defn- random-expected [opts value-state]
+(defn- random-expected [opts]
   (if (:unique-values opts)
-    (let [seen @(:seen value-state)]
-      (if (seq seen)
-        (rand-nth (vec (cons nil seen)))
-        nil))
+    unique-seen-value
     (rand-nth (vec (cons nil cas-values)))))
 
 (defn- workload-keys [opts]
@@ -241,26 +260,24 @@
 (defn- op-with-key [opts op]
   (assoc op :key (random-key opts)))
 
-(defn- write-op [opts value-state & args]
+(defn- write-op [opts & _]
   ;; Generators emit operation maps. Jepsen will pass each map to the client
   ;; invoke! method and record the returned map in the history.
-  (let [process (generator-process args)]
-    (op-with-key opts
+  (op-with-key opts
     {:type :invoke
      :f :write
-     :value (random-value opts value-state process)})))
+     :value (random-value opts)}))
 
 (defn- read-op [opts & _]
   (op-with-key opts
   {:type :invoke
    :f :read}))
 
-(defn- cas-op [opts value-state & args]
-  (let [process (generator-process args)
-        expected (random-expected opts value-state)
-        next-value (loop [candidate (random-value opts value-state process)]
+(defn- cas-op [opts & _]
+  (let [expected (random-expected opts)
+        next-value (loop [candidate (random-value opts)]
                      (if (= candidate expected)
-                       (recur (random-value opts value-state process))
+                       (recur (random-value opts))
                        candidate))]
     (op-with-key opts
     {:type :invoke
@@ -318,9 +335,7 @@
   ;; client operations, and a checker that judges the completed history. This
   ;; function returns those two pieces so raft-test can merge them into the
   ;; final test map.
-  (let [keys (workload-keys opts)
-        value-state {:counter (atom 0)
-                     :seen (atom [])}]
+  (let [keys (workload-keys opts)]
     {:checker (checker/compose
                {:linearizable (if (= "multi-key" (:workload-mode opts))
                                 (independent-key-checker keys)
@@ -329,9 +344,9 @@
                                  #(not= :nemesis (:process %))))
                 :nemesis-errors (nemesis-error-checker)
                 :timeline (timeline/html)})
-     :generator (->> (gen/mix [(partial write-op opts value-state)
+     :generator (->> (gen/mix [(partial write-op opts)
                                (partial read-op opts)
-                               (partial cas-op opts value-state)])
+                               (partial cas-op opts)])
                      (gen/limit (:operation-limit opts)))}))
 
 (defn- nemesis-object [opts]
@@ -453,9 +468,16 @@
   ;; - gen/time-limit bounds the run
   ;; The final read phase is useful because it gives the checker a settled
   ;; observation after the last fault or write.
-  (let [client-gen (:generator (workload opts))
+  (let [{:keys [generator]} (workload opts)
+        value-state {:counters (atom {})
+                     :seen (atom [])}
+        client-base (gen/clients generator)
+        client-gen (if (:unique-values opts)
+                     (gen/map (fn [op]
+                                (assign-unique-values value-state op))
+                              client-base)
+                     client-base)
         base (->> client-gen
-                  gen/clients
                   (gen/stagger 1/10))
         with-nemesis (if-let [n-gen (nemesis-generator opts)]
                        (->> base
