@@ -46,7 +46,7 @@
   ;; normalize-opts, then pass the same opts through test construction.
   (loop [opts {:repo-root (default-repo-root)
                :workdir (default-workdir)
-               ;; Mixed Java/C++ support is explicit per node so peer ids and
+               ;; Mixed implementation support is explicit per node so peer ids and
                ;; port assignments stay independent from implementation type.
                :node-impl-list nil
                 :client-impl :java
@@ -151,7 +151,8 @@
                   (case srv-mode
                     :java (vec (repeat (count nodes) :java))
                     :cpp (vec (repeat (count nodes) :cpp))
-                    :mixed [:java :cpp :cpp]
+                    :rust (vec (repeat (count nodes) :rust))
+                    :mixed [:java :cpp :rust]
                     (vec (repeat (count nodes) :java))))
         joining-impl (:joining-impl opts)
         client-impl (:client-impl opts)

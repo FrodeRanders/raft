@@ -10,7 +10,7 @@ Usage: ./run-suite.sh [suite] [extra run-local args...]
 Suites:
   smoke     baseline + crash-restart + partition-one
   extended  richer validated local scenarios
-  mixed     static Java/C++ interop smoke cases
+  mixed     static Java/C++/Rust interop smoke cases
   stress    high-concurrency long-running stress profiles
   all       smoke + extended
 
@@ -146,9 +146,6 @@ case "${suite}" in
     ;;
   mixed)
     run_mixed
-    ;;
-  mixed-rust)
-    run_mixed_rust
     ;;
   stress)
     run_stress

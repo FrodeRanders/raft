@@ -82,6 +82,8 @@
         success? (and (zero? exit) (= "ACCEPTED" status) (:success response))]
     (cond
       success? (assoc op :type :ok :value value)
+      (and (zero? exit) (= "ACCEPTED_NOT_COMMITTED" status) (:success response))
+      (assoc op :type :info :error status)
       (#{"RETRY" "REDIRECT" "NOT_LEADER"} status) (assoc op :type :fail :error status)
       (#{"UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
       :else (assoc op :type :fail :error (or status :command-failed)))))
@@ -112,6 +114,8 @@
     (cond
       (and success? matched?) (assoc op :type :ok)
       (and success? (contains? result :matched)) (assoc op :type :fail :error :cas-mismatch)
+      (and (zero? exit) (= "ACCEPTED_NOT_COMMITTED" status) (:success response))
+      (assoc op :type :info :error status)
       (#{"RETRY" "REDIRECT" "NOT_LEADER"} status) (assoc op :type :fail :error status)
       (#{"UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
       :else (assoc op :type :fail :error (or status :command-failed)))))
