@@ -31,9 +31,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -45,6 +47,27 @@ class FilePersistentStoresTest {
     }
 
     static class NoopRaftClient extends NoopRaftTransportClient {
+    }
+
+    static class CapturingStateMachine implements SnapshotStateMachine {
+        private byte[] restored = new byte[0];
+        private int applied;
+
+        @Override
+        public void apply(long term, byte[] command) {
+            applied++;
+        }
+
+        @Override
+        public byte[] snapshot() {
+            return restored.clone();
+        }
+
+        @Override
+        public void restore(byte[] snapshotData) {
+            restored = snapshotData == null ? new byte[0] : Arrays.copyOf(snapshotData, snapshotData.length);
+            applied = 0;
+        }
     }
 
     private static Peer peer(String id) {
@@ -64,6 +87,28 @@ class FilePersistentStoresTest {
                 .withPeers(peers)
                 .withTimeoutMillis(100)
                 .withStateMachine(null)
+                .withClient(raftClient)
+                .withLogStore(logStore)
+                .withPersistentStateStore(persistentStateStore)
+                .withTimeSource(timeSource)
+                .withRandom(new Random(randomSeed))
+                .build();
+    }
+
+    private static RaftNode newPersistentTestNode(
+            Peer me,
+            List<Peer> peers,
+            SnapshotStateMachine stateMachine,
+            RaftTransportClient raftClient,
+            LogStore logStore,
+            PersistentStateStore persistentStateStore,
+            RaftNode.TimeSource timeSource,
+            int randomSeed
+    ) {
+        return TestRaftNodeBuilder.forPeer(me)
+                .withPeers(peers)
+                .withTimeoutMillis(100)
+                .withStateMachine(stateMachine)
                 .withClient(raftClient)
                 .withLogStore(logStore)
                 .withPersistentStateStore(persistentStateStore)
@@ -302,5 +347,59 @@ class FilePersistentStoresTest {
         assertTrue(restarted.getClusterConfigurationForTest().contains("B"));
         assertTrue(restarted.getClusterConfigurationForTest().contains("C"));
         assertFalse(restarted.isDecommissionedForTest());
+    }
+
+    @Test
+    void snapshotBackedRestartRestoresStateMachineAndApplyBoundary(@TempDir Path tmp) {
+        announce("Node restart compacted snapshot: restores application snapshot and skips compacted apply prefix");
+        Path stateFile = tmp.resolve("snapshot.state");
+        Path logFile = tmp.resolve("snapshot.log");
+
+        Peer a = peer("A");
+        Peer b = peer("B");
+        byte[] applicationSnapshot = "application-snapshot".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        FilePersistentStateStore persistentState = new FilePersistentStateStore(stateFile);
+        FileLogStore logStore = new FileLogStore(logFile);
+        logStore.installSnapshot(
+                2,
+                2,
+                ClusterConfigurationSnapshotCodec.encode(
+                        ClusterConfiguration.stable(List.of(a, b)),
+                        applicationSnapshot
+                )
+        );
+        logStore.append(List.of(new LogEntry(3, "A", "after-snapshot".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+        persistentState.setCurrentTerm(3);
+
+        CapturingStateMachine stateMachine = new CapturingStateMachine();
+        RaftNode restarted = newPersistentTestNode(
+                b,
+                List.of(a),
+                stateMachine,
+                new NoopRaftClient(),
+                new FileLogStore(logFile),
+                new FilePersistentStateStore(stateFile),
+                System::currentTimeMillis,
+                3
+        );
+
+        assertArrayEquals(applicationSnapshot, stateMachine.restored);
+        assertEquals(2, restarted.getCommitIndexForTest());
+        assertEquals(2, restarted.getLastAppliedForTest());
+
+        var response = restarted.handleAppendEntries(new AppendEntriesRequest(
+                4,
+                "A",
+                3,
+                3,
+                4,
+                List.of(new LogEntry(4, "A", "next".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+        ));
+
+        assertTrue(response.isSuccess());
+        assertEquals(4, restarted.getCommitIndexForTest());
+        assertEquals(4, restarted.getLastAppliedForTest());
+        assertEquals(2, stateMachine.applied);
     }
 }

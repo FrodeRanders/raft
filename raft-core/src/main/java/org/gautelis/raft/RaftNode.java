@@ -256,10 +256,21 @@ public class RaftNode {
         this.commandCommitTimeoutMillis = Long.getLong("raft.command.commit.timeout.millis", Math.max(250L, builder.timeoutMillis * 5L));
         this.clusterConfiguration = ClusterConfiguration.stable(allConfiguredMembers());
         this.snapshotConfiguration = clusterConfiguration;
-        var decodedSnapshot = ClusterConfigurationSnapshotCodec.decode(builder.logStore.snapshotData());
+        long snapshotIndex = builder.logStore.snapshotIndex();
+        byte[] snapshotData = builder.logStore.snapshotData();
+        byte[] stateMachineSnapshot = snapshotData;
+        var decodedSnapshot = ClusterConfigurationSnapshotCodec.decode(snapshotData);
         if (decodedSnapshot.isPresent()) {
             this.snapshotConfiguration = decodedSnapshot.get().configuration();
             this.clusterConfiguration = snapshotConfiguration;
+            stateMachineSnapshot = decodedSnapshot.get().stateMachineSnapshot();
+        }
+        if (snapshotIndex > 0L) {
+            this.commitIndex = Math.max(this.commitIndex, snapshotIndex);
+            this.lastApplied = Math.max(this.lastApplied, snapshotIndex);
+        }
+        if (snapshotIndex > 0L && snapshotStateMachine != null) {
+            snapshotStateMachine.restore(stateMachineSnapshot);
         }
         this.clusterConfiguration = configurationAt(builder.logStore.lastIndex());
         this.decommissioned = !this.clusterConfiguration.contains(me.getId());
@@ -1842,45 +1853,45 @@ public class RaftNode {
             registerPeer(peer);
         }
         ClusterConfiguration updated = baseConfiguration.transitionTo(proposedMembers);
-        if (updated.isJointConsensus() && !baseConfiguration.isJointConsensus() && configurationTransitionStartedMillis <= 0L) {
-            configurationTransitionStartedMillis = timeSource.nowMillis();
-        }
-        if (updated.contains(me.getId())) {
-            joining = false;
-        }
-        for (Peer peer : proposedMembers) {
-            pendingJoinIds.remove(peer.getId());
-        }
         if (updateTransport) {
-            raftClient.setKnownPeers(remoteReplicatedPeersFor(updated));
-        }
-        if (updateTransport && state == State.LEADER) {
-            long next = Math.max(logStore.snapshotIndex() + 1, logStore.lastIndex() + 1);
-            for (Peer peer : remoteReplicatedPeersFor(updated)) {
-                nextIndex.putIfAbsent(peer.getId(), next);
-                matchIndex.putIfAbsent(peer.getId(), logStore.snapshotIndex());
+            if (updated.isJointConsensus() && !baseConfiguration.isJointConsensus() && configurationTransitionStartedMillis <= 0L) {
+                configurationTransitionStartedMillis = timeSource.nowMillis();
             }
-        }
-        if (log.isDebugEnabled()) {
-            log.debug("{}@{} entered joint configuration: {} -> {}",
-                    me.getId(), currentTerm, describeConfiguration(baseConfiguration), describeConfiguration(updated));
+            if (updated.contains(me.getId())) {
+                joining = false;
+            }
+            for (Peer peer : proposedMembers) {
+                pendingJoinIds.remove(peer.getId());
+            }
+            raftClient.setKnownPeers(remoteReplicatedPeersFor(updated));
+            if (state == State.LEADER) {
+                long next = Math.max(logStore.snapshotIndex() + 1, logStore.lastIndex() + 1);
+                for (Peer peer : remoteReplicatedPeersFor(updated)) {
+                    nextIndex.putIfAbsent(peer.getId(), next);
+                    matchIndex.putIfAbsent(peer.getId(), logStore.snapshotIndex());
+                }
+            }
+            if (log.isDebugEnabled()) {
+                log.debug("{}@{} entered joint configuration: {} -> {}",
+                        me.getId(), currentTerm, describeConfiguration(baseConfiguration), describeConfiguration(updated));
+            }
         }
         return updated;
     }
 
     private ClusterConfiguration applyFinalizedConfiguration(ClusterConfiguration baseConfiguration, boolean updateTransport) {
         ClusterConfiguration updated = baseConfiguration.finalizeTransition();
-        configurationTransitionStartedMillis = 0L;
-        if (updated.contains(me.getId())) {
-            joining = false;
-        }
-        for (Peer peer : updated.allMembers()) {
-            pendingJoinIds.remove(peer.getId());
-        }
-        java.util.Set<String> activePeerIds = remoteReplicatedPeersFor(updated).stream()
-                .map(Peer::getId)
-                .collect(java.util.stream.Collectors.toSet());
         if (updateTransport) {
+            configurationTransitionStartedMillis = 0L;
+            if (updated.contains(me.getId())) {
+                joining = false;
+            }
+            for (Peer peer : updated.allMembers()) {
+                pendingJoinIds.remove(peer.getId());
+            }
+            java.util.Set<String> activePeerIds = remoteReplicatedPeersFor(updated).stream()
+                    .map(Peer::getId)
+                    .collect(java.util.stream.Collectors.toSet());
             // Once finalized, replication and transport state must forget removed members immediately.
             nextIndex.keySet().retainAll(activePeerIds);
             matchIndex.keySet().retainAll(activePeerIds);
@@ -1899,11 +1910,11 @@ public class RaftNode {
             if (!localMember) {
                 notifyDecommissionListener();
             }
-        }
-        clearPendingAutoFinalize();
-        if (log.isDebugEnabled()) {
-            log.debug("{}@{} finalized configuration: {} -> {}",
-                    me.getId(), currentTerm, describeConfiguration(baseConfiguration), describeConfiguration(updated));
+            clearPendingAutoFinalize();
+            if (log.isDebugEnabled()) {
+                log.debug("{}@{} finalized configuration: {} -> {}",
+                        me.getId(), currentTerm, describeConfiguration(baseConfiguration), describeConfiguration(updated));
+            }
         }
         return updated;
     }
