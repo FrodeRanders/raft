@@ -28,6 +28,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -110,6 +111,7 @@ public class RaftNode {
     private boolean joining;
     private String knownLeaderId;
     private Runnable decommissionListener = () -> {};
+    private final List<MembershipChangeListener> membershipChangeListeners = new ArrayList<>();
     private List<String> pendingAutoFinalizeMembers = List.of();
     private long pendingAutoFinalizeFenceIndex;
     private long configurationTransitionStartedMillis;
@@ -633,6 +635,19 @@ public class RaftNode {
      */
     public void setDecommissionListener(Runnable decommissionListener) {
         this.decommissionListener = decommissionListener == null ? () -> {} : decommissionListener;
+    }
+
+    /**
+     * Registers a callback that runs when the committed cluster configuration changes.
+     *
+     * @param listener callback invoked on any membership change, or {@code null} to clear all listeners
+     */
+    public void addMembershipChangeListener(MembershipChangeListener listener) {
+        if (listener == null) {
+            membershipChangeListeners.clear();
+        } else {
+            membershipChangeListeners.add(listener);
+        }
     }
 
     /**
@@ -1792,7 +1807,11 @@ public class RaftNode {
             return false;
         }
 
+        ClusterConfiguration previous = clusterConfiguration;
         clusterConfiguration = applyConfigurationCommand(clusterConfiguration, command, true);
+        if (!clusterConfiguration.sameMembershipAs(previous)) {
+            notifyMembershipChangeListeners();
+        }
         committedConfigurations.put(lastApplied, clusterConfiguration);
         if (log.isDebugEnabled()) {
             log.debug("{}@{} applied {} at log index {} -> {}",
@@ -2398,6 +2417,17 @@ public class RaftNode {
             decommissionListener.run();
         } catch (RuntimeException e) {
             log.warn("{}@{} failed to run decommission callback", me.getId(), currentTerm, e);
+        }
+    }
+
+    private void notifyMembershipChangeListeners() {
+        ClusterConfiguration current = clusterConfiguration;
+        for (MembershipChangeListener listener : membershipChangeListeners) {
+            try {
+                listener.onMembershipChanged(current);
+            } catch (RuntimeException e) {
+                log.warn("{}@{} failed to run membership change callback", me.getId(), currentTerm, e);
+            }
         }
     }
 }

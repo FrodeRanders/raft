@@ -23,6 +23,7 @@
         <module>raft-runtime</module>
         <module>raft-app-kv</module>
         <module>raft-app-reference</module>
+        <module>raft-app-compensator</module>
         <module>raft-dist</module>
         <module>raft-tests</module>
         <module>graft-cpp/java-probe</module>
@@ -109,6 +110,12 @@
             <dependency>
                 <groupId>org.gautelis</groupId>
                 <artifactId>raft-app-reference</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.gautelis</groupId>
+                <artifactId>raft-app-compensator</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

@@ -20,6 +20,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.gautelis.raft.app.kv.KeyValueApplicationModule;
 import org.gautelis.raft.app.reference.ReferenceDataApplicationModule;
+import org.gautelis.raft.app.compensator.CompensatorApplicationModule;
 import org.gautelis.raft.protocol.Peer;
 import org.gautelis.raft.transport.netty.NettyTransportFactory;
 import org.gautelis.raft.transport.netty.RaftClient;
@@ -38,7 +39,8 @@ public class Application {
     private static final List<RaftApplicationModule> APPLICATION_MODULES = List.of(
             new OperationalApplicationModule(),
             new KeyValueApplicationModule(),
-            new ReferenceDataApplicationModule()
+            new ReferenceDataApplicationModule(),
+            new CompensatorApplicationModule()
     );
 
     public static void main(String[] args) {
