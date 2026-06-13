@@ -15,6 +15,7 @@ use graft_runtime::handlers::RaftHandler;
 use graft_runtime::runtime::RaftRuntime;
 use graft_storage::log_store::{FileLogStore, InMemoryLogStore, InMemoryPersistentStateStore};
 use graft_storage::state_store::FilePersistentStateStore;
+use graft_telemetry::{telemetry_exporter_from_env, TelemetryPublisher};
 use prost::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -523,6 +524,17 @@ fn run_server(
         }
     }
 
+    // ── Telemetry export (Prometheus / OTLP) if configured via env vars ──
+    let exporter = telemetry_exporter_from_env();
+    let tp = TelemetryPublisher::new(raft_node.clone(), exporter);
+    if let Some(addr) = tp.prometheus_bind_addr() {
+        eprintln!(
+            "[graft-smoke] telemetry exporter: prometheus http://{}/metrics",
+            addr
+        );
+    }
+    tp.start();
+
     rt.block_on(async {
         let listener = tokio::net::TcpListener::bind(bind_addr)
             .await
@@ -991,17 +1003,13 @@ fn reconfiguration_status(host: &str, port: u16) -> Result<(), String> {
         "ReconfigurationStatusRequest",
         req.encode_to_vec(),
     )?;
-    let resp = raft::ClusterSummaryResponse::decode(&resp_bytes[..]).map_err(|e| e.to_string())?;
+    let resp = raft::ReconfigurationStatusResponse::decode(&resp_bytes[..]).map_err(|e| e.to_string())?;
     println!("success: {}", resp.success);
     println!("status: {}", resp.status);
     println!("joint_consensus: {}", resp.joint_consensus);
+    println!("reconfiguration_active: {}", resp.reconfiguration_active);
     if resp.joint_consensus {
-        println!("voting_members: {}", resp.voting_members);
-        println!("healthy_voting_members: {}", resp.healthy_voting_members);
-        println!(
-            "reconfiguration_age_millis: {}",
-            resp.reconfiguration_age_millis
-        );
+        println!("reconfiguration_age_millis: {}", resp.reconfiguration_age_millis);
     }
     Ok(())
 }

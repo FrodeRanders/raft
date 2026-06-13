@@ -75,7 +75,7 @@ The Java and C++ implementations are intentionally coupled at the protocol bound
         |                           |
  Netty transport               Boost.Asio transport
  Java RaftNode/runtime         C++ RaftNode/runtime
- Java storage/state machine    C++ persistence/KV implementation
+ Java storage/state machine    C++ storage/state machine
 ```
 
 The strongest cohesion is the shared wire contract:
@@ -107,6 +107,7 @@ The C++ implementation mirrors the same conceptual layers, but in a smaller CMak
 - `raft_runtime.hpp/.cpp`: outbound election, heartbeat, replication, and snapshot catch-up runtime
 - `rpc_handler.hpp/.cpp`: inbound protocol handlers, request authentication, write authorization, and adapter boundary
 - `persistent_state_store.hpp/.cpp`: current file-backed persistence
+- `telemetry_exporter.hpp/.cpp`: Prometheus scrape endpoint (RAFT_TELEMETRY_* env config)
 - `cli.cpp`: command-line interface for direct and mixed-language validation
 
 The current design goal is not source-level parity. It is behavioral parity at the protocol boundary first, followed by gradual convergence of internal layering where the Java modules already show the intended seams. The C++ side should therefore keep moving toward explicit `wire`, `core`, `storage`, `state-machine`, `runtime`, `transport`, and `app` boundaries as the implementation grows.
@@ -324,6 +325,32 @@ The C++ adapter boundary now also mirrors Java's default-off request policy hook
 - `RAFT_TELEMETRY_RATE_LIMIT_PER_MINUTE=30`
 - `RAFT_TELEMETRY_RECONFIGURATION_STUCK_MILLIS=60000`
 
+## Telemetry Export
+
+The C++ implementation supports two layers of telemetry:
+
+1. **In-cluster telemetry** (protobuf RPC) — `TelemetryRequest` / `TelemetryResponse` and `ClusterSummaryRequest` / `ClusterSummaryResponse` handled through the shared wire protocol. This is the on-demand operational snapshot available from any cluster member.
+
+2. **External telemetry endpoints** — Prometheus and OTLP export, configured via environment variables:
+
+```text
+# Exporter selection: "none" (default), "prometheus", "otlp", or "otel-log"
+export RAFT_TELEMETRY_EXPORTER=prometheus
+
+# Prometheus
+export RAFT_TELEMETRY_PROMETHEUS_HOST=127.0.0.1
+export RAFT_TELEMETRY_PROMETHEUS_PORT=9108
+export RAFT_TELEMETRY_PROMETHEUS_PATH=/metrics
+
+# OTEL JSON log (single-line JSON emitted periodically via std::cout)
+export RAFT_TELEMETRY_EXPORTER=otel-log
+
+# Common
+export RAFT_TELEMETRY_EXPORT_INTERVAL_SECONDS=15
+```
+
+For Prometheus, the active server starts a separate HTTP listener and serves Raft metrics (term, commit/applied/log indices, member counts, replication, reconfiguration age) in Prometheus text format. For OTEL JSON log (`otel-log`), the active server periodically writes a single-line JSON snapshot to stdout, matching Java's OpenTelemetryJsonExporter pattern. OTLP configuration is recognized but push export is not yet implemented in C++.
+
 Authentication applies to client and administrative requests. The allow-list applies to client write commands and returns `FORBIDDEN` before replication when the requester id is not listed. Internal Raft RPCs remain unauthenticated, matching the Java split between external adapter policy and Raft mechanics.
 When `RAFT_ADAPTER_MODE=reference-data` is set, learner nodes reject client writes instead of redirecting them, matching Java's reference-data admission policy. The C++ side still uses the shared KV payloads; Java remains the reference for the full reference-data application payload model.
 Operational summary requests are rate-limited per requester id by default, matching Java's `30` requests/minute default; use `0` or a negative value to disable the C++ limiter.
@@ -505,6 +532,8 @@ The C++ implementation now has a real consensus core for the shared behaviors li
   - C++ Raft state core for vote, append, snapshot, election, commit, membership application, and heartbeat request handling
 - `include/graft/storage/`
   - file-backed persistence for the current C++ node state
+- `include/graft/telemetry/`
+  - Prometheus scrape endpoint and OTLP configuration (RAFT_TELEMETRY_EXPORTER=prometheus)
 - `include/graft/runtime/`
   - active runtime fanout for elections, heartbeats, replication, snapshot catch-up, and inbound handler adapters
 - `include/graft/transport/`

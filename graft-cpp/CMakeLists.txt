@@ -61,6 +61,7 @@ add_library(graft_transport STATIC
     src/runtime/rpc_handler.cpp
     src/runtime/seed_provider.cpp
     src/storage/persistent_state_store.cpp
+    src/telemetry/telemetry_exporter.cpp
     src/transport/raft_server.cpp
 )
 

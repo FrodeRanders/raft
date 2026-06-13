@@ -1,0 +1,17 @@
+[package]
+name = "graft-telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+graft-core = { path = "../graft-core" }
+tokio.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+serde_json.workspace = true
+reqwest = { version = "0.12", features = ["json"], optional = true }
+
+[features]
+default = []
+otlp = ["reqwest"]

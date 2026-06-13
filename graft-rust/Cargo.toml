@@ -5,6 +5,7 @@ members = [
     "graft-storage",
     "graft-transport",
     "graft-runtime",
+    "graft-telemetry",
     "graft-app-kv",
     "graft-tests",
 ]

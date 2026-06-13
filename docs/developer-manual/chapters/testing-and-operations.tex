@@ -122,6 +122,22 @@ Operators should monitor:
 \item snapshot install events.
 \end{itemize}
 
+These metrics can be consumed through two channels:
+
+\begin{description}
+\item[In-cluster RPCs] \texttt{TelemetryRequest}, \texttt{ClusterSummaryRequest},
+  and \texttt{ReconfigurationStatusRequest} provide point-in-time operational
+  snapshots over the shared wire protocol. All three implementations handle
+  these RPCs.
+
+\item[External telemetry endpoints] Java, C++ and Rust nodes can expose
+  Prometheus scrape endpoints (\texttt{RAFT\_TELEMETRY\_EXPORTER=prometheus}),
+  OTLP push (Java, Rust behind feature flag), and OTEL JSON log output (all
+  three). Configuration follows the shared \texttt{raft.telemetry.*} /
+  \texttt{RAFT\_TELEMETRY\_*} naming convention. See the library chapters for
+  each implementation's specific exporter support.
+\end{description}
+
 \subsection{Cross-language parity}
 
 The three implementations (Java, C++, Rust) are intended to be functionally
@@ -191,6 +207,16 @@ Transport framing & \filepath{raft-transport-netty/.../ProtobufLiteEncoder.java}
 Membership encoders & ClusterConfigurationCommand.java &
 rpc\_handler.cpp (inline) &
 \filepath{graft-rust/graft-runtime/src/membership.rs} \\
+\midrule
+Telemetry export (Prometheus/OTLP/OTEL log) &
+\filepath{raft-telemetry/} &
+\filepath{graft-cpp/include/graft/telemetry/telemetry\_exporter.hpp} &
+\filepath{graft-rust/graft-telemetry/src/lib.rs} \\
+\midrule
+ReconfigurationStatus RPC &
+\filepath{raft-runtime/.../raftMessageHandler.java} &
+\filepath{graft-cpp/src/runtime/rpc\_handler.cpp} &
+\filepath{graft-rust/graft-runtime/src/handlers.rs} \\
 \midrule
 Auth / admission hooks & \filepath{raft-runtime/.../ClientWriteAdmissionPolicy.java} &
 rpc\_handler.cpp (Authenticator) &

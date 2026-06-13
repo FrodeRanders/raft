@@ -8,7 +8,7 @@ Java and C++.
 
 \subsection{Build model}
 
-The Rust workspace contains seven crates:
+The Rust workspace contains eight crates:
 
 \begin{itemize}
 \item \texttt{graft-proto}: shared protobuf generated types plus varint32
@@ -24,6 +24,8 @@ stores,
 envelope framing,
 \item \texttt{graft-runtime}: active event loop (\texttt{RaftRuntime}), message
 handler, membership encoders, seed providers, policy hooks,
+\item \texttt{graft-telemetry}: Prometheus scrape endpoint, OTLP HTTP push
+(behind \texttt{otlp} Cargo feature), and OTEL JSON log export,
 \item \texttt{graft-app-kv}: demo key-value state machine and the
 \texttt{graft-kv} CLI binary,
 \item \texttt{graft-tests}: integration tests covering elections, log
@@ -110,6 +112,42 @@ The Rust code uses the same shared \texttt{raft.proto} as Java and C++. The
 generation step is needed---it runs as part of \texttt{cargo build}. The
 generated types use Rust protobuf encoding that is byte-compatible with Java
 protobuf-lite and C++ libprotobuf.
+
+\subsection{Telemetry and observability}
+
+The Rust implementation supports two layers of telemetry.
+
+\subsubsection{In-cluster telemetry (protobuf RPC)}
+
+All three telemetry RPC types are handled through the shared wire protocol in
+\filepath{graft-runtime/src/handlers.rs}: \texttt{TelemetryRequest}/\texttt{TelemetryResponse},
+\texttt{ClusterSummaryRequest}/\texttt{ClusterSummaryResponse}, and
+\texttt{ReconfigurationStatusRequest}/\texttt{ReconfigurationStatusResponse}.
+The handlers enforce authentication, rate limiting, leader redirects and cluster
+health summaries matching the Java and C++ reference behavior.
+
+\subsubsection{External telemetry endpoints}
+
+Configured via the \texttt{RAFT\_TELEMETRY\_EXPORTER} environment variable:
+
+\begin{itemize}
+\item \texttt{prometheus}: starts an HTTP listener on the configured port and
+  serves Prometheus exposition text. Implemented directly on top of Tokio
+  without an external HTTP library.
+
+\item \texttt{otlp} / \texttt{opentelemetry}: requires building with
+  \texttt{---features otlp} (adds the \texttt{reqwest} crate). Pushes OTLP
+  JSON payloads to the configured collector endpoint on a periodic timer.
+
+\item \texttt{otel-log} / \texttt{opentelemetry-log}: periodically emits a
+  single-line JSON snapshot via \texttt{tracing::info!(target: "OTEL", ...)},
+  matching Java's \texttt{OpenTelemetryJsonExporter} pattern.
+\end{itemize}
+
+The export interval is controlled by
+\texttt{RAFT\_TELEMETRY\_EXPORT\_INTERVAL\_SECONDS} (default 15\,s). The
+telemetry infrastructure lives in the \texttt{graft-telemetry} crate at
+\filepath{graft-telemetry/src/lib.rs}.
 
 \subsection{Policy hooks}
 

@@ -33,6 +33,7 @@
 #include "graft/runtime/raft_runtime.hpp"
 #include "graft/runtime/rpc_handler.hpp"
 #include "graft/runtime/seed_provider.hpp"
+#include "graft/telemetry/telemetry_exporter.hpp"
 #include "graft/transport/raft_client.hpp"
 #include "graft/transport/raft_server.hpp"
 
@@ -1255,6 +1256,20 @@ namespace {
                     }
                     runtime.configure_peers(std::move(peers));
                 });
+        }
+
+        // ── Telemetry export (Prometheus / OTLP / OTEL JSON log) if configured via env vars ──
+        auto telemetry_exporter = graft::TelemetryExporter::from_env();
+        if (telemetry_exporter.enabled()) {
+            if (telemetry_exporter.type() == graft::TelemetryExporter::Type::Prometheus) {
+                telemetry_exporter.start(server_io_context, [node]() -> std::string {
+                    return graft::TelemetryExporter::format_prometheus_metrics(*node);
+                });
+            } else {
+                telemetry_exporter.start(server_io_context, [node]() -> std::string {
+                    return graft::TelemetryExporter::format_otel_json_log(*node);
+                });
+            }
         }
 
         graft::RaftServer server(server_io_context, bind_host, port, std::move(handler));

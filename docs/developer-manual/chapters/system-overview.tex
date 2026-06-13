@@ -50,7 +50,8 @@ The C++ subtree is intentionally smaller but follows the same conceptual layers:
 \item[\filepath{include/graft/runtime}] Runtime and RPC handler abstractions.
 \item[\filepath{include/graft/storage}] Persistent state store.
 \item[\filepath{include/graft/transport}] Boost.Asio client/server transport.
-\item[\filepath{src}] Implementations of the core, runtime, storage, transport and CLI.
+\item[\filepath{include/graft/telemetry}] Prometheus, OTLP and OTEL JSON log export.
+\item[\filepath{src}] Implementations of the core, runtime, storage, transport, telemetry and CLI.
 \item[\filepath{tests}] Catch2 tests for the C++ core and runtime behaviors.
 \end{description}
 
@@ -64,6 +65,7 @@ The Rust workspace is structured as seven crates mirroring the Java module bound
 \item[\filepath{graft-storage}] In-memory and file-based log and persistent state stores.
 \item[\filepath{graft-transport}] Tokio-based TCP client/server with envelope framing.
 \item[\filepath{graft-runtime}] Active event loop, RPC handler, membership encoders, seed providers, policy hooks.
+\item[\filepath{graft-telemetry}] Prometheus scrape endpoint, OTLP push and OTEL JSON log export.
 \item[\filepath{graft-app-kv}] Demo key-value state machine and the \texttt{graft-kv} CLI binary.
 \item[\filepath{graft-tests}] Integration tests covering elections, replication, snapshots, membership, and persistence.
 \end{description}

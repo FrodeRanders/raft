@@ -1,42 +1,123 @@
-# raft
-An asynchronous Raft implementation in Java, built on netty.io 4.2.
-This implementation supports Raft joint-consensus reconfiguration, persisted configuration state, and chunked `InstallSnapshot` transfer.
+# Graft
 
-## Build
-This repository now builds as a small Maven reactor:
+This repo contains three *interoperable* implementations of the Raft consensus protocol, making it possible to build clusters with applications developed in Java, C++, and Rust:
 
-- `raft-wire`
-- `raft-membership`
-- `raft-state-machine`
-- `raft-storage`
-- `raft-core`
-- `raft-transport-netty`
-- `raft-telemetry`
-- `raft-runtime`
-- `raft-app-kv`
-- `raft-app-reference`
-- `raft-dist`
-- `raft-tests`
+- An asynchronous Raft **reference implementation** in Java, built on [Netty 4.2](https://netty.io).
+- An asynchronous [Raft implementation in C++](./graft-cpp/README.md), built on [Boost.Asio](https://www.boost.org/doc/libs/release/doc/html/boost_asio.html).
+- An asynchronous [Raft implementation in Rust](./graft-rust/README.md), built on [Tokio](https://tokio.rs).
 
-Build from the repository root:
+All three implementations support Raft joint-consensus reconfiguration, persisted configuration state, and chunked `InstallSnapshot` transfer.
+
+## Shared Wire Contract & Architecture
+
+All three share a single protobuf contract and wire protocol, making them interoperable in the same cluster. The coupling is at the protocol boundary, while builds and runtimes remain independent.
+
+```text
+                 shared contract
+        ../raft-wire/src/main/proto/raft.proto
+          Envelope + Raft RPCs + KV commands
+                      |
+        +-------------+-------------+------------------------+
+        |                           |                        | 
+     Java impl.                 C++ impl.                Rust impl.
+  Maven reactor                graft-cpp                 graft-rust
+        |                           |                        |
+ Netty transport              Boost.Asio                  Tokio
+ Java RaftNode/runtime        C++ RaftNode/runtime        Rust RaftNode/runtime
+ Java storage/state machine   C++ storage/state machine   Rust storage/state machine
+```
+
+The on-the-wire protocol is identical for all three implementations:
+
+1. raw varint32 length prefix
+2. serialized protobuf `Envelope { correlation_id, type, payload }`
+3. `Envelope.type` naming the RPC request or response message
+4. protobuf payload inside `Envelope.payload`
+
+All three encode replicated client work as `StateMachineCommand`, membership transitions as `InternalRaftCommand`, and expose telemetry, cluster summaries, reconfiguration status, and redirect metadata through the same shared message types.
+
+### Layer Mapping
+
+Each implementation mirrors the same conceptual layers:
+
+| Layer | Java (Maven module) | C++ (header dir) | Rust (Cargo crate) |
+|---|---|---|---|
+| Wire protocol | `raft-wire` | `include/graft/wire/` | `graft-proto` |
+| Transport | `raft-transport-netty` (Netty) | `include/graft/transport/` (Boost.Asio) | `graft-transport` (Tokio) |
+| Core consensus | `raft-core` | `include/graft/core/` | `graft-core` |
+| Membership | `raft-membership` | (in core) | (in core) |
+| State machine | `raft-state-machine` | (in app) | `graft-core` (traits) |
+| Storage | `raft-storage` | `include/graft/storage/` | `graft-storage` |
+| Runtime | `raft-runtime` | `include/graft/runtime/` | `graft-runtime` |
+| Application | `raft-app-kv`, `raft-app-reference` | `include/graft/app/` | `graft-app-kv` |
+| Telemetry | `raft-telemetry` | `include/graft/telemetry/` | `graft-telemetry` |
+| Tests | `raft-tests` | `tests/` (Catch2) | `graft-tests` |
+
+### Cross-Language Coverage
+
+Mixed-language validation currently covers:
+
+- Java, C++, and Rust nodes participating in the same cluster
+- Java CLI clients talking to Java, C++, or Rust leaders
+- C++ and Rust `graft_smoke` clients driving Jepsen put/get/CAS workloads
+- Followers catching up from leaders of any implementation language
+- Membership joiners admitted by leaders of any implementation language
+- Learner promotion, role-aware membership summaries, and reconfiguration across languages
+
+```text
+cd jepsen
+./run-suite.sh mixed
+graft-cpp/run-mixed-suite.sh
+```
+
+### Important Boundary
+
+All three implementations reuse the exact same protocol and framing, and all three exercise real replicated-node paths, but the **Java implementation remains the production-grade reference**. The C++ and Rust implementations are interoperability and convergence tracks. See their respective READMEs for current scope and remaining limitations.
+
+## Building
+
+### Java (reference)
+
+Builds as a Maven reactor from the repository root:
 
 ```text
 mvn -q package
 ```
 
-The runnable shaded jar is produced at:
+The runnable shaded jar is produced at `raft-dist/target/raft-1.0-SNAPSHOT.jar`.
+
+Java modules: `raft-wire` → `raft-membership` → `raft-state-machine` → `raft-storage` → `raft-core` → `raft-transport-netty` → `raft-telemetry` → `raft-runtime` → `raft-app-kv` → `raft-app-reference` → `raft-dist` → `raft-tests`.
+
+### C++
+
+Builds with CMake from the repository root:
 
 ```text
-raft-dist/target/raft-1.0-SNAPSHOT.jar
+cmake -S graft-cpp -B graft-cpp/build
+cmake --build graft-cpp/build
 ```
 
-For a concise description of what each module contains, see [docs/module-overview.md](docs/module-overview.md).
+Produces `graft-cpp/build/graft_smoke`. See [graft-cpp/README.md](graft-cpp/README.md) for prerequisites and details.
 
-For guidance on building domain applications on top of the Java and C++ Raft libraries, see [docs/application-developer-guide.md](docs/application-developer-guide.md).
+### Rust
 
-For a fuller developer manual covering both application integration and internal Raft machinery development, see [docs/developer-manual/raft-developer-manual.tex](docs/developer-manual/raft-developer-manual.tex). A generated PDF is available at [docs/developer-manual/raft-developer-manual.pdf](docs/developer-manual/raft-developer-manual.pdf).
+Builds with Cargo from the repository root:
 
-## Jepsen Validation
+```text
+cargo build --release
+```
+
+Produces `graft-rust/target/release/graft-smoke`. See [graft-rust/README.md](graft-rust/README.md) for crate structure and details.
+
+## Docs
+
+For a concise description of what each Java module contains, see [docs/module-overview.md](docs/module-overview.md).
+
+For guidance on building domain applications on top of the Raft libraries, see [docs/application-developer-guide.md](docs/application-developer-guide.md).
+
+For a fuller developer manual covering both application integration and internal Raft machinery development, see [docs/developer-manual/raft-developer-manual.tex](docs/developer-manual/raft-developer-manual.tex) ([PDF](docs/developer-manual/raft-developer-manual.pdf)).
+
+## Jepsen validation of cluster functionality
 
 The repository now includes a local Jepsen harness, documented in [jepsen/README.md](jepsen/README.md). It complements the classic JUnit/Maven suite by exercising the runnable `raft-dist` node processes under concurrent client load and injected failures.
 
@@ -103,9 +184,9 @@ For exact commands, prerequisites, and result inspection, see [jepsen/README.md]
 
 For a more detailed discussion of partitions, apparent split brain, ambiguous client outcomes, and the boundary between Raft guarantees and application-level reconciliation, see [docs/split-brain-and-consistency.md](docs/split-brain-and-consistency.md).
 
-There are two different implementations: 
-- On the `'main'` branch, messages are packaged according to protobuf and sent/received through Netty.
-- On the `'json-on-the-wire'` branch, messages are exchanged using JSON envelopes (akin to MCP thinking) and sent through Netty.
+There are two protocol variants across branches:
+- On the `main` branch, messages use protobuf encoding over varint32-framed Netty transport.
+- On the `json-on-the-wire` branch, messages use JSON envelopes over Netty transport.
 
 ## Cluster Management
 There are two distinct concerns:
@@ -127,7 +208,7 @@ This startup peer list is a transport seed, not the full source of truth for mem
 
 For local runs, `./scripts/start_raft.sh` is still the easiest way to form an initial cluster. It gives each node enough seed addresses to elect a leader and start exchanging Raft traffic, but it does not lock the cluster to that initial member set.
 
-### API surface
+### API
 Cluster management and ordinary client access use typed protobuf messages:
 
 - `ClientCommandRequest` / `ClientCommandResponse`
@@ -150,6 +231,8 @@ This is the recommended topology for centrally managed reference data:
 - add remote or edge replicas as learners
 
 Requests should normally be sent to the current leader. Followers forward typed cluster-management requests to the leader when they know who it is; decommissioned nodes reject them.
+
+Ordinary typed queries are served as linearizable leader reads. The leader only answers them when it has applied through its current `commitIndex` and holds a fresh quorum-backed leader lease. If the lease is stale, the leader attempts a short quorum heartbeat barrier to refresh it. If it cannot re-establish a linearizable read window, the query returns `status=RETRY` instead of serving a potentially stale read.
 
 ### Adapter policies and authorization
 Raft itself still enforces the hard safety rule that only the leader appends client commands to the replicated log. On top of that, the runnable adapter layer can now apply an application-facing write-admission policy and a separate authorization check for client writes.
@@ -256,182 +339,85 @@ Cluster configuration is persisted as part of Raft state:
 - a surviving node that restarts comes back with the latest committed membership
 
 ## Telemetry
-Nodes expose:
 
-- `TelemetryRequest` / `TelemetryResponse` for detailed node-level inspection
-- `ClusterSummaryRequest` / `ClusterSummaryResponse` for leader-oriented cluster-wide status
+Telemetry is split into two layers: **in-cluster telemetry** (protobuf RPCs available over the shared wire protocol, supported by all three implementations) and **external telemetry endpoints** (Prometheus scrape / OTLP push, available depending on implementation maturity).
 
-The response includes:
+### In-Cluster Telemetry (protobuf RPC)
 
-- local Raft state, term, leader, and vote
-- commit/applied/log/snapshot indexes
-- current and next membership sets
-- pending joins
-- leader replication progress per follower when applicable
-- transport response-time statistics per peer
+All three implementations handle these protobuf message pairs through the shared `Envelope` framing:
 
-For manual inspection from the prompt:
+| Request | Response | Description |
+|---|---|---|
+| `TelemetryRequest` | `TelemetryResponse` | Detailed node-level inspection |
+| `ClusterSummaryRequest` | `ClusterSummaryResponse` | Leader-oriented cluster-wide status |
+| `ReconfigurationStatusRequest` | `ReconfigurationStatusResponse` | Membership change progress |
+
+The data exposed through these RPCs includes local Raft state, term, leader, vote, commit/applied/log/snapshot indexes, current and next membership sets, pending joins, leader replication progress per follower, transport response-time statistics per peer, cluster health, quorum status, and per-member transition detail (role, current/next role, blocking quorum information).
+
+Rate limiting applies to these in-cluster requests (default 30/min/requester). Long-running reconfigurations are flagged as `reconfiguration-stuck` after a configurable threshold (default 60s).
+
+For manual inspection:
 
 ```text
 java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar telemetry 127.0.0.1:10080
-```
-
-That prints a concise node summary to STDOUT, including replication and transport timing information when available.
-
-Typed admin helpers are also available from the jar:
-
-```text
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command put 127.0.0.1:10080 demo-key demo-value
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command delete 127.0.0.1:10080 demo-key
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar command clear 127.0.0.1:10080
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar query get 127.0.0.1:10080 demo-key
 java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar cluster-summary --json 127.0.0.1:10080
 java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfiguration-status --json 127.0.0.1:10080
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar join-request 127.0.0.1:10080 127.0.0.1:10085/learner
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar join-status 127.0.0.1:10080 server-10085
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfigure joint 127.0.0.1:10080 10081 10082 10083 10085/learner
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfigure finalize 127.0.0.1:10080
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfigure promote 127.0.0.1:10080 server-10085
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfigure demote 127.0.0.1:10080 server-10085
 ```
 
-Any peer spec in the CLI can use `/learner` or `/voter`. If omitted, `voter` is the default.
-`promote` turns a learner into a voter through a joint-consensus transition, and `demote` keeps the member replicating while removing it from quorum and elections.
+### Telemetry Endpoints (Prometheus / OTLP)
 
-Ordinary typed queries are served as linearizable leader reads. The leader will only answer them when it has:
+In addition to the in-cluster RPCs, nodes can expose metrics to external monitoring systems.
 
-- applied through its current `commitIndex`
-- a fresh quorum-backed leader lease based on recent follower acknowledgements
+#### Java (reference — full support)
 
-If that lease is stale, the leader first attempts a short quorum heartbeat barrier to refresh it. If it still cannot re-establish a linearizable read window, the query returns `status=RETRY` instead of serving a potentially stale read.
+The `raft-telemetry` module supports three exporters, selected via `raft.telemetry.exporter`:
 
-For machine-readable inspection:
+| Exporter | Property value | Mechanism |
+|---|---|---|
+| Prometheus | `prometheus` | HTTP scrape endpoint (default `http://127.0.0.1:9108/metrics`) — supported in Java, C++, Rust |
+| OTLP HTTP | `opentelemetry` / `otlp` | Periodic JSON push to collector (default `http://127.0.0.1:4318/v1/metrics`) — supported in Java, Rust (behind `otlp` feature); config recognized in C++ |
+| OTEL JSON log | `otel-log` / `opentelemetry-log` | Single-line JSON via dedicated OTEL logger — supported in Java, C++, Rust |
 
-```text
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar telemetry --json 127.0.0.1:10080
+A daemon thread (`raft-telemetry-export-{peerId}`) periodically calls `RaftNode.telemetrySnapshot()` and publishes to the configured exporter.
+
+Configuration (Java system properties / env vars for C++/Rust):
+
+| Property / Env Var | Default | Description |
+|---|---|---|
+| `raft.telemetry.exporter` / `RAFT_TELEMETRY_EXPORTER` | `none` | `none`, `prometheus`, `opentelemetry`/`otlp` |
+| `raft.telemetry.prometheus.host` / `RAFT_TELEMETRY_PROMETHEUS_HOST` | `127.0.0.1` | Bind address |
+| `raft.telemetry.prometheus.port` / `RAFT_TELEMETRY_PROMETHEUS_PORT` | `9108` | Listen port |
+| `raft.telemetry.prometheus.path` / `RAFT_TELEMETRY_PROMETHEUS_PATH` | `/metrics` | Scrape path |
+| `raft.telemetry.otlp.endpoint` / `RAFT_TELEMETRY_OTLP_ENDPOINT` | `http://127.0.0.1:4318/v1/metrics` | Collector URL |
+| `raft.telemetry.otlp.timeout.millis` / `RAFT_TELEMETRY_OTLP_TIMEOUT_MILLIS` | `2000` | Request timeout |
+| `raft.telemetry.otlp.headers` / `RAFT_TELEMETRY_OTLP_HEADERS` | — | Comma-separated `key=value` pairs |
+| `raft.telemetry.export.interval.seconds` / `RAFT_TELEMETRY_EXPORT_INTERVAL_SECONDS` | `15` | Publish cadence |
+
+#### C++
+
+Prometheus endpoint via `RAFT_TELEMETRY_EXPORTER=prometheus`. The active server starts an additional HTTP listener on the configured port and serves Raft metrics in Prometheus text format. OTLP configuration is recognized but push export is not yet implemented. See [graft-cpp/README.md](graft-cpp/README.md).
+
+#### Rust
+
+Prometheus endpoint via `RAFT_TELEMETRY_EXPORTER=prometheus` (raw TCP listener, no external HTTP library). OTLP push is available behind the `otlp` Cargo feature (`cargo build --features otlp`), using `reqwest`. See [graft-rust/README.md](graft-rust/README.md).
+
+#### Metrics
+
+The following gauges are exported by all three implementations (Java includes additional per-peer replication and transport-latency metrics not yet available in C++/Rust):
+
+```
+raft_term                      raft_commit_index             raft_last_applied
+raft_last_log_index            raft_last_log_term            raft_snapshot_index
+raft_snapshot_term             raft_joint_consensus          raft_members_total
+raft_voting_members            raft_followers_replicating    raft_pending_joins
+raft_joining                   raft_decommissioned           raft_reconfiguration_age_millis
 ```
 
-That emits the same telemetry view as structured JSON, including cluster health, quorum status, blocking peer ids, replication detail, and transport timing samples.
-
-For the dedicated cluster-wide status endpoint:
-
-```text
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar cluster-summary --json 127.0.0.1:10080
-```
-
-That emits a leader summary with:
-
-- cluster health and reason
-- quorum availability
-- blocking current/next quorum peers
-- per-member cluster view including reachability, freshness, health, lag, failure counts, and role-transition state
-
-For a narrower view focused only on membership change progress:
-
-```text
-java -jar raft-dist/target/raft-1.0-SNAPSHOT.jar reconfiguration-status --json 127.0.0.1:10080
-```
-
-That emits:
-
-- whether a reconfiguration is active
-- whether the leader’s latest known configuration is in joint consensus
-- reconfiguration age
-- cluster health and quorum status as they relate to the transition
-- blocking current/next quorum peers
-- per-member transition detail for members involved in the change
-
-Per-member cluster summaries now expose:
-
-- `role`: the effective role currently presented by the leader view
-- `currentRole`: the role in the active committed configuration
-- `nextRole`: the role in the latest log-known target configuration
-- `roleTransition`: one of `steady`, `promoting`, `demoting`, `joining`, or `removing`
-- `transitionAgeMillis`: how long that peer has been in the current transition state
-- `blockingQuorums`: which quorum set the peer is currently blocking, if any (`current`, `next`, or `current,next`)
-- `blockingReason`: the primary reason the peer is blocking progress (`unreachable`, `replication-failures`, `lagging`, `stale`, or `role-transition`)
-
-Cluster summaries and telemetry summaries also expose:
-
-- `reconfigurationAgeMillis`: how long the current in-flight configuration change has been active on the leader
-
-That makes in-flight role changes visible before a learner promotion or voter demotion has fully finalized.
-
-If the request reaches a follower, it redirects to the leader and includes the leader endpoint so the CLI can retry directly.
-
-Leader-aware status pulls:
-
-- a telemetry request can ask for a leader summary
-- if it reaches a follower, the follower responds with `status=REDIRECT` and enough peer information to locate the leader
-- the CLI helper follows one redirect hop automatically
-
-Rate limiting:
-
-- telemetry requests are rate-limited per requester id
-- default limit is `30` requests per minute per requester
-- configure with `-Draft.telemetry.rate.limit.per.minute=<n>`
-- long-running in-flight reconfiguration is flagged as `reconfiguration-stuck` once it exceeds `-Draft.telemetry.reconfiguration.stuck.millis=<n>` (default `60000`)
-
-Exporter scaffold:
-
-- `-Draft.telemetry.exporter=none` is the default
-- `-Draft.telemetry.exporter=prometheus` starts a local scrape endpoint
-- `-Draft.telemetry.prometheus.host=127.0.0.1` controls the bind address
-- `-Draft.telemetry.prometheus.port=9108` controls the listen port
-- `-Draft.telemetry.prometheus.path=/metrics` controls the scrape path
-- `-Draft.telemetry.export.interval.seconds=15` controls the publish cadence from a running node
-- `-Draft.telemetry.exporter=opentelemetry` or `-Draft.telemetry.exporter=otlp` sends OTLP/HTTP metrics to `-Draft.telemetry.otlp.endpoint=http://127.0.0.1:4318/v1/metrics`
-- `-Draft.telemetry.otlp.headers=Authorization=Bearer ...` adds comma-separated HTTP headers to OTLP export requests
-- `-Draft.telemetry.otlp.timeout.millis=2000` controls the OTLP export request timeout
-- `-Draft.telemetry.exporter=otel-log` keeps the previous structured log exporter available through the `OTEL` logger in `otel.log`
-- demo telemetry logging emits a compact one-line headline every interval and a full detailed snapshot every `-Draft.demo.telemetry.detail.every=<n>` intervals
-
-Current exporter metrics include the usual Raft term/index/replication gauges plus transition counters derived from active vs latest-known membership:
-
-- Prometheus:
-  `raft_members_promoting`
-  `raft_members_demoting`
-  `raft_members_joining`
-  `raft_members_removing`
-  `raft_reconfiguration_age_millis`
-- OTLP:
-  `raft.members.promoting`
-  `raft.members.demoting`
-  `raft.members.joining`
-  `raft.members.removing`
-  `raft.reconfiguration.age.millis`
-
-Those counters and age gauges are intended for alerting on long-running role changes or membership transitions that do not converge. The leader summary will also surface `clusterStatusReason=reconfiguration-stuck` once the configured threshold is crossed.
+Java additionally exports: `raft_members_promoting`, `raft_members_demoting`, `raft_members_joining`, `raft_members_removing`, and per-peer `raft_replication_*` / `raft_transport_response_*` gauges.
 
 ## Next Steps
-There are no committed follow-up items at the moment.
 
-## Java/C++/Rust Implementations
-
-This repository is intended to carry three functionally equivalent Raft implementations: Java, C++ and Rust. The Java implementation remains in the Maven reactor, the C++ implementation under `graft-cpp` is a separate CMake subtree, as is the Rust implementation under 'graft-rust'. All three implementations share the same protobuf schema, envelope framing, client command/query messages, membership messages, telemetry messages, and snapshot messages.
-
-Current mixed-language validation covers:
-
-- Java, C++ and Rust nodes participating in the same local cluster
-- Java CLI clients talking to Java, C++ or Rust leaders
-- C++ and Rust `graft_smoke` clients driving Jepsen put/get/CAS workloads
-- C++ and Rust followers catching up from Java leaders
-- Java followers catching up from C++ or Rust leaders
-- C++ or Rust membership joiners admitted by Java, C++ or Rust leaders
-- C++ or Rust leader handling of join admission, reconfiguration status, learner promotion, and role-aware membership summaries
-
-The local Jepsen mixed suite is the current high-signal validation path:
-
-```text
-cd jepsen
-./run-suite.sh mixed
-```
-
-The C++ and Rust smoke suite remains useful for narrower protocol and runtime checks:
-
-```text
-graft-cpp/run-mixed-suite.sh
-```
+See the C++ ([graft-cpp/README.md](graft-cpp/README.md)) and Rust ([graft-rust/README.md](graft-rust/README.md)) READMEs for their respective convergence roadmaps.
 
 ### Other discovery mechanisms
 If you do not want to rely on a full static peer list at startup, typical alternatives are:

@@ -9,6 +9,7 @@ graft-proto = { path = "../graft-proto" }
 graft-core = { path = "../graft-core" }
 graft-storage = { path = "../graft-storage" }
 graft-transport = { path = "../graft-transport" }
+graft-telemetry = { path = "../graft-telemetry" }
 prost.workspace = true
 bytes.workspace = true
 tokio.workspace = true

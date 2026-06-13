@@ -60,6 +60,49 @@ graft-cpp/build/graft_smoke cluster-summary 127.0.0.1 11082 cpp-cli
 graft-cpp/build/graft_smoke reconfiguration-status 127.0.0.1 11082 cpp-cli
 \end{lstlisting}
 
+\subsection{Telemetry and observability}
+
+The C++ implementation supports two layers of telemetry.
+
+\subsubsection{In-cluster telemetry (protobuf RPC)}
+
+All three telmetry RPC types are handled through the shared wire protocol:
+\texttt{TelemetryRequest}/\texttt{TelemetryResponse},
+\texttt{ClusterSummaryRequest}/\texttt{ClusterSummaryResponse}, and
+\texttt{ReconfigurationStatusRequest}/\texttt{ReconfigurationStatusResponse}.
+The \texttt{InMemoryRpcHandler} and \texttt{PersistentRpcHandler} classes in
+\filepath{src/runtime/rpc\_handler.cpp} implement all three with authentication,
+rate limiting, leader redirects and cluster health summaries matching the Java
+reference behavior.
+
+\subsubsection{External telemetry endpoints}
+
+Configured via the \texttt{RAFT\_TELEMETRY\_EXPORTER} environment variable
+(matching the Java \texttt{raft.telemetry.exporter} property):
+
+\begin{itemize}
+\item \texttt{prometheus}: starts a separate HTTP listener on
+  \texttt{RAFT\_TELEMETRY\_PROMETHEUS\_HOST}:\texttt{RAFT\_TELEMETRY\_PROMETHEUS\_PORT}
+  (default \texttt{127.0.0.1:9108}) and serves Raft metrics in Prometheus
+  exposition format at \texttt{RAFT\_TELEMETRY\_PROMETHEUS\_PATH} (default
+  \texttt{/metrics}). The listener is implemented directly on top of Boost.Asio
+  without an external HTTP library.
+
+\item \texttt{otlp} / \texttt{opentelemetry}: configuration is recognized and
+  parsed but push export is not yet implemented (the timer skeleton is in
+  place).
+
+\item \texttt{otel-log} / \texttt{opentelemetry-log}: periodically writes a
+  single-line JSON snapshot to \texttt{std::cout} at the configured
+  \texttt{RAFT\_TELEMETRY\_EXPORT\_INTERVAL\_SECONDS} interval (default 15\,s).
+  The JSON structure matches Java's \texttt{OpenTelemetryJsonExporter}.
+\end{itemize}
+
+The telemetry infrastructure lives in
+\filepath{include/graft/telemetry/telemetry\_exporter.hpp} and
+\filepath{src/telemetry/telemetry\_exporter.cpp}. The exporter is wired into
+the active server modes in \filepath{src/app/cli.cpp}.
+
 \subsection{Protobuf toolchain}
 
 The C++ build uses \texttt{protoc} and \texttt{libprotobuf}. They should come

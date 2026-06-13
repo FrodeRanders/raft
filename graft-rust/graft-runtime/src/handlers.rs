@@ -72,7 +72,7 @@ impl RaftHandler {
             "JoinClusterRequest" => handle_join(&self.node, &self.runtime, payload),
             "JoinClusterStatusRequest" => handle_join_status(&self.node, payload),
             "ReconfigureClusterRequest" => handle_reconfig(&self.node, &self.runtime, payload),
-            "ReconfigurationStatusRequest" => handle_reconfig_status(&self.node, payload),
+            "ReconfigurationStatusRequest" => handle_reconfig_status(self, now_millis, payload),
             _ => {
                 tracing::warn!("Unknown envelope type: {}", envelope_type);
                 vec![]
@@ -757,38 +757,133 @@ fn handle_reconfig(
     }
 }
 
-fn handle_reconfig_status(node: &Arc<parking_lot::Mutex<RaftNode>>, payload: &[u8]) -> Vec<u8> {
-    let _req = match raft::ReconfigurationStatusRequest::decode(payload) {
+fn handle_reconfig_status(handler: &RaftHandler, now_millis: i64, payload: &[u8]) -> Vec<u8> {
+    let req = match raft::ReconfigurationStatusRequest::decode(payload) {
         Ok(r) => r,
         _ => return vec![],
     };
-    let n = node.lock();
-    raft::ClusterSummaryResponse {
-        observed_at_millis: 0,
+    if !handler.telemetry_rate_limiter.check(&req.peer_id) {
+        return empty_reconfig_status(now_millis, "RATE_LIMITED");
+    }
+    let (is_leader, current_term, peer_id, leader_id, state_str) = {
+        let n = handler.node.lock();
+        (
+            n.state == NodeState::Leader,
+            n.current_term,
+            n.me.id.clone(),
+            n.known_leader_id.clone().unwrap_or_default(),
+            format!("{:?}", n.state).to_uppercase(),
+        )
+    };
+    if !is_leader {
+        let redirect_id = if leader_id.is_empty() {
+            String::new()
+        } else {
+            leader_id.clone()
+        };
+        let (redirect_host, redirect_port) = redirect_id
+            .is_empty()
+            .then(|| (String::new(), 0))
+            .unwrap_or_else(|| {
+                handler
+                    .client
+                    .peer_addr(&redirect_id)
+                    .map(|a| (a.ip().to_string(), a.port() as i32))
+                    .unwrap_or((String::new(), 0))
+            });
+        return raft::ReconfigurationStatusResponse {
+            observed_at_millis: now_millis,
+            term: current_term as i64,
+            peer_id,
+            success: false,
+            status: if redirect_id.is_empty() {
+                "NO_LEADER"
+            } else {
+                "REDIRECT"
+            }
+            .to_string(),
+            redirect_leader_id: redirect_id,
+            redirect_leader_host: redirect_host,
+            redirect_leader_port: redirect_port,
+            state: state_str,
+            leader_id,
+            reconfiguration_active: false,
+            joint_consensus: false,
+            reconfiguration_age_millis: 0,
+            cluster_health: String::new(),
+            cluster_status_reason: String::new(),
+            quorum_available: false,
+            current_quorum_available: false,
+            next_quorum_available: false,
+            blocking_current_quorum_peer_ids: vec![],
+            blocking_next_quorum_peer_ids: vec![],
+            members: vec![],
+        }
+        .encode_to_vec();
+    }
+    let n = handler.node.lock();
+    let is_stuck = handler.stuck_detector.is_stuck(&n);
+    let joint = n.cluster_configuration.is_joint_consensus();
+    let reconfig_age = n
+        .configuration_transition_started
+        .map(|s| s.elapsed().as_millis() as i64)
+        .unwrap_or(0);
+    raft::ReconfigurationStatusResponse {
+        observed_at_millis: now_millis,
         term: n.current_term as i64,
         peer_id: n.me.id.clone(),
         success: true,
-        status: if n.cluster_configuration.is_joint_consensus() {
-            "IN_JOINT_CONSENSUS"
+        status: "OK".to_string(),
+        redirect_leader_id: String::new(),
+        redirect_leader_host: String::new(),
+        redirect_leader_port: 0,
+        state: state_str,
+        leader_id: leader_id.clone(),
+        reconfiguration_active: joint,
+        joint_consensus: joint,
+        reconfiguration_age_millis: reconfig_age,
+        cluster_health: if is_stuck {
+            "DEGRADED"
         } else {
-            "STABLE"
+            "OK"
         }
         .to_string(),
+        cluster_status_reason: if is_stuck {
+            "Joint consensus transition has not progressed"
+        } else {
+            ""
+        }
+        .to_string(),
+        quorum_available: true,
+        current_quorum_available: true,
+        next_quorum_available: !joint,
+        blocking_current_quorum_peer_ids: vec![],
+        blocking_next_quorum_peer_ids: vec![],
+        members: member_vec(&n),
+    }
+    .encode_to_vec()
+}
+
+fn empty_reconfig_status(now_millis: i64, status: &str) -> Vec<u8> {
+    raft::ReconfigurationStatusResponse {
+        observed_at_millis: now_millis,
+        term: 0,
+        peer_id: String::new(),
+        success: false,
+        status: status.to_string(),
         redirect_leader_id: String::new(),
         redirect_leader_host: String::new(),
         redirect_leader_port: 0,
         state: String::new(),
         leader_id: String::new(),
-        joint_consensus: n.cluster_configuration.is_joint_consensus(),
+        reconfiguration_active: false,
+        joint_consensus: false,
+        reconfiguration_age_millis: 0,
         cluster_health: String::new(),
         cluster_status_reason: String::new(),
-        quorum_available: true,
-        current_quorum_available: true,
-        next_quorum_available: !n.cluster_configuration.is_joint_consensus(),
-        voting_members: 0,
-        healthy_voting_members: 0,
-        reachable_voting_members: 0,
-        reconfiguration_age_millis: 0,
+        quorum_available: false,
+        current_quorum_available: false,
+        next_quorum_available: false,
         blocking_current_quorum_peer_ids: vec![],
         blocking_next_quorum_peer_ids: vec![],
         members: vec![],
