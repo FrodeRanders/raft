@@ -1,0 +1,153 @@
+# CI for the multi-language Raft repository.
+#
+# Tracks (see AGENTS.md / README.md):
+#   - java        : Maven reactor (raft-* modules + graft-cpp/java-probe)
+#   - cpp         : graft-cpp (CMake + CTest)
+#   - rust        : graft-rust Cargo workspace
+#   - mixed-smoke : graft-cpp/run-mixed-suite.sh (Java <-> C++ interop smoke)
+#
+# Action/runner versions verified against GitHub on 2026-06-26:
+#   actions/checkout      -> v7  (latest v7.0.0)
+#   actions/setup-java    -> v5  (latest v5.4.0, built-in Maven cache)
+#   Swatinem/rust-cache   -> v2
+#   dtolnay/rust-toolchain-> stable
+#   runner label          -> ubuntu-latest (currently Ubuntu 24.04)
+#
+# The Java build depends on org.gautelis:vopn:3.0-SNAPSHOT, which is NOT on
+# Maven Central. It is built from its source repo (FrodeRanders/java-vopn) and
+# installed into the local ~/.m2 before the reactor build, per project owner.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  java:
+    name: Java (Maven reactor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build and install vopn (org.gautelis:vopn:3.0-SNAPSHOT)
+        run: |
+          git clone --depth 1 https://github.com/FrodeRanders/java-vopn.git "${RUNNER_TEMP}/java-vopn"
+          mvn -B --no-transfer-progress -f "${RUNNER_TEMP}/java-vopn/pom.xml" install \
+            -DskipTests -Dmaven.javadoc.skip=true -Dmaven.source.skip=true
+
+      - name: Build and test (Jepsen suite skipped)
+        run: |
+          mvn -B --no-transfer-progress clean verify \
+            -DskipJepsenTests=true \
+            -Dmaven.javadoc.skip=true
+
+  cpp:
+    name: C++ (CMake + CTest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install C++ dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ \
+            libboost-all-dev \
+            protobuf-compiler libprotobuf-dev \
+            libabsl-dev \
+            catch2
+
+      - name: Configure
+        run: cmake -S graft-cpp -B graft-cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build graft-cpp/build
+
+      - name: Test
+        run: ctest --test-dir graft-cpp/build --output-on-failure
+
+  rust:
+    name: Rust (Cargo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install protoc (required by graft-proto build.rs)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends protobuf-compiler
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: graft-rust
+
+      - name: Build
+        working-directory: graft-rust
+        run: cargo build --workspace --locked
+
+      - name: Test
+        working-directory: graft-rust
+        run: cargo test --workspace --locked
+
+  mixed-smoke:
+    name: Mixed Java/C++ smoke suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [java, cpp]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Install C++ dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ \
+            libboost-all-dev \
+            protobuf-compiler libprotobuf-dev \
+            libabsl-dev \
+            catch2
+
+      - name: Build and install vopn (org.gautelis:vopn:3.0-SNAPSHOT)
+        run: |
+          git clone --depth 1 https://github.com/FrodeRanders/java-vopn.git "${RUNNER_TEMP}/java-vopn"
+          mvn -B --no-transfer-progress -f "${RUNNER_TEMP}/java-vopn/pom.xml" install \
+            -DskipTests -Dmaven.javadoc.skip=true -Dmaven.source.skip=true
+
+      - name: Build C++ smoke binary
+        run: |
+          cmake -S graft-cpp -B graft-cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build graft-cpp/build --target graft_smoke
+
+      - name: Run mixed Java/C++ suite
+        run: graft-cpp/run-mixed-suite.sh
