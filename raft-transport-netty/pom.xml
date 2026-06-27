@@ -50,6 +50,7 @@
         <dependency>
             <groupId>org.gautelis</groupId>
             <artifactId>vopn</artifactId>
+            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>

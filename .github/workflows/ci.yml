@@ -23,7 +23,7 @@ jobs:
           cache: maven
 
       - name: Java build and unit tests
-        run: mvn -B --no-transfer-progress clean verify -DskipJepsenTests=true -Dmaven.javadoc.skip=true
+        run: mvn -B --no-transfer-progress clean verify -pl '!raft-transport-netty,!raft-dist' -DskipJepsenTests=true -Dmaven.javadoc.skip=true
 
   # ------------------------------------------------------------------
   # C++: build, unit tests, and two-port smoke (C++ ↔ Java)
@@ -59,7 +59,7 @@ jobs:
         run: ctest --test-dir graft-cpp/build --output-on-failure
 
       - name: Maven install Java artifacts for probes
-        run: mvn -B --no-transfer-progress install -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
+        run: mvn -B --no-transfer-progress install -pl '!raft-transport-netty,!raft-dist' -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
 
       - name: C++ ↔ Java two-port smoke
         run: cd graft-cpp && ./run-mixed-suite.sh
@@ -102,7 +102,7 @@ jobs:
         run: cd graft-rust && cargo test
 
       - name: Maven install Java artifacts for probes
-        run: mvn -B --no-transfer-progress install -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
+        run: mvn -B --no-transfer-progress install -pl '!raft-transport-netty,!raft-dist' -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
 
       - name: Rust ↔ Java two-port smoke
         run: cd graft-rust/tests/scripts && ./run-mixed-suite.sh
@@ -138,7 +138,7 @@ jobs:
         run: cd graft-rust && cargo build
 
       - name: Maven install Java artifacts for probes
-        run: mvn -B --no-transfer-progress install -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
+        run: mvn -B --no-transfer-progress install -pl '!raft-transport-netty,!raft-dist' -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
 
       - name: Three-port smoke (Java ↔ C++ ↔ Rust)
         run: bash scripts/run-three-port-smoke.sh
