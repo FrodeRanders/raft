@@ -704,27 +704,50 @@ fn handle_reconfig(
     }
     let cmd = match req.action.to_uppercase().as_str() {
         "JOINT" => crate::membership::encode_joint_command(&req.members),
-        "FINALIZE" => crate::membership::encode_finalize_command(),
+        "FINALIZE" => {
+            let n = node.lock();
+            if !n.cluster_configuration.is_joint_consensus() {
+                return raft::ReconfigureClusterResponse {
+                    term: n.current_term as i64,
+                    peer_id: n.me.id.clone(),
+                    success: true,
+                    status: "ACCEPTED".to_string(),
+                    message: "No active joint consensus to finalize".to_string(),
+                    leader_id: n.me.id.clone(),
+                }
+                .encode_to_vec();
+            }
+            crate::membership::encode_finalize_command()
+        }
         _ => {
             let n = node.lock();
-            let mut members: Vec<raft::PeerSpec> = n
-                .cluster_configuration
-                .current_members()
-                .iter()
-                .map(|p| raft::PeerSpec {
-                    id: p.id.clone(),
-                    host: p.address.ip().to_string(),
-                    port: p.address.port() as i32,
-                    role: if p.is_voter() { "VOTER" } else { "LEARNER" }.to_string(),
-                })
-                .collect();
+            let mut members: Vec<raft::PeerSpec> = Vec::new();
+            for p in n.cluster_configuration.current_members().iter() {
+                if let Some(ps) = req.members.iter().find(|m| m.id == p.id) {
+                    members.push(raft::PeerSpec {
+                        id: ps.id.clone(),
+                        host: ps.host.clone(),
+                        port: ps.port,
+                        role: ps.role.clone(),
+                    });
+                } else {
+                    members.push(raft::PeerSpec {
+                        id: p.id.clone(),
+                        host: p.address.ip().to_string(),
+                        port: p.address.port() as i32,
+                        role: if p.is_voter() { "VOTER" } else { "LEARNER" }.to_string(),
+                    });
+                }
+            }
             for ps in &req.members {
-                members.push(raft::PeerSpec {
-                    id: ps.id.clone(),
-                    host: ps.host.clone(),
-                    port: ps.port,
-                    role: "VOTER".to_string(),
-                });
+                if !n.cluster_configuration.contains(&ps.id) {
+                    members.push(raft::PeerSpec {
+                        id: ps.id.clone(),
+                        host: ps.host.clone(),
+                        port: ps.port,
+                        role: ps.role.clone(),
+                    });
+                }
             }
             crate::membership::encode_joint_command(&members)
         }
