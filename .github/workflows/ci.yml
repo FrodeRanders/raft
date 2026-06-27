@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  VOPN_REPO: https://github.com/FrodeRanders/java-vopn.git
+  VOPN_VERSION: 3.0-SNAPSHOT
+
 jobs:
   # ------------------------------------------------------------------
   # Java: build and unit tests
@@ -13,17 +17,23 @@ jobs:
   java:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: temurin
           cache: maven
 
+      - name: Build vopn dependency
+        run: |
+          git clone --depth 1 "${VOPN_REPO}" /tmp/java-vopn
+          cd /tmp/java-vopn
+          mvn -B --no-transfer-progress install -DskipTests -Dmaven.javadoc.skip=true
+
       - name: Java build and unit tests
-        run: mvn -B --no-transfer-progress clean verify -pl '!raft-transport-netty,!raft-dist' -DskipJepsenTests=true -Dmaven.javadoc.skip=true
+        run: mvn -B --no-transfer-progress clean verify -DskipJepsenTests=true -Dmaven.javadoc.skip=true
 
   # ------------------------------------------------------------------
   # C++: build, unit tests, and two-port smoke (C++ ↔ Java)
@@ -32,10 +42,10 @@ jobs:
     runs-on: ubuntu-24.04
     needs: java
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: temurin
@@ -45,6 +55,12 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libprotobuf-dev protobuf-compiler libboost-dev ninja-build
+
+      - name: Build vopn dependency
+        run: |
+          git clone --depth 1 "${VOPN_REPO}" /tmp/java-vopn
+          cd /tmp/java-vopn
+          mvn -B --no-transfer-progress install -DskipTests -Dmaven.javadoc.skip=true
 
       - name: Configure C++
         run: cmake -S graft-cpp -B graft-cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -59,7 +75,7 @@ jobs:
         run: ctest --test-dir graft-cpp/build --output-on-failure
 
       - name: Maven install Java artifacts for probes
-        run: mvn -B --no-transfer-progress install -pl '!raft-transport-netty,!raft-dist' -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
+        run: mvn -B --no-transfer-progress install -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
 
       - name: C++ ↔ Java two-port smoke
         run: cd graft-cpp && ./run-mixed-suite.sh
@@ -71,10 +87,10 @@ jobs:
     runs-on: ubuntu-24.04
     needs: java
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: temurin
@@ -95,6 +111,12 @@ jobs:
             graft-rust/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('graft-rust/Cargo.lock') }}
 
+      - name: Build vopn dependency
+        run: |
+          git clone --depth 1 "${VOPN_REPO}" /tmp/java-vopn
+          cd /tmp/java-vopn
+          mvn -B --no-transfer-progress install -DskipTests -Dmaven.javadoc.skip=true
+
       - name: Rust build
         run: cd graft-rust && cargo build
 
@@ -102,7 +124,7 @@ jobs:
         run: cd graft-rust && cargo test
 
       - name: Maven install Java artifacts for probes
-        run: mvn -B --no-transfer-progress install -pl '!raft-transport-netty,!raft-dist' -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
+        run: mvn -B --no-transfer-progress install -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
 
       - name: Rust ↔ Java two-port smoke
         run: cd graft-rust/tests/scripts && ./run-mixed-suite.sh
@@ -114,10 +136,10 @@ jobs:
     runs-on: ubuntu-24.04
     needs: [java, cpp, rust]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: temurin
@@ -131,6 +153,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Build vopn dependency
+        run: |
+          git clone --depth 1 "${VOPN_REPO}" /tmp/java-vopn
+          cd /tmp/java-vopn
+          mvn -B --no-transfer-progress install -DskipTests -Dmaven.javadoc.skip=true
+
       - name: Build C++
         run: cmake -S graft-cpp -B graft-cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build graft-cpp/build --target graft_smoke
 
@@ -138,7 +166,7 @@ jobs:
         run: cd graft-rust && cargo build
 
       - name: Maven install Java artifacts for probes
-        run: mvn -B --no-transfer-progress install -pl '!raft-transport-netty,!raft-dist' -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
+        run: mvn -B --no-transfer-progress install -DskipTests -DskipJepsenTests=true -Dmaven.javadoc.skip=true
 
       - name: Three-port smoke (Java ↔ C++ ↔ Rust)
         run: bash scripts/run-three-port-smoke.sh
