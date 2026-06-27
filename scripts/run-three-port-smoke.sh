@@ -184,14 +184,14 @@ rust_pid=$!
 sleep 3
 wait_for_leader_rust "${HOST}" "${RUST_PORT}" "Rust"
 
-echo "==> Java client-put -> Rust leader"
-put="$(run_java_probe client-put "${HOST}" "${RUST_PORT}" k v1 three-port-client)"
+echo "==> Rust client-put -> Rust leader"
+put="$("${rust_bin}" client-put "${HOST}" "${RUST_PORT}" k v1 three-port-client)"
 echo "${put}"
 grep -q "success: true" <<<"${put}"
 
 echo
-echo "==> Java client-get -> Rust leader"
-get="$(run_java_probe client-get "${HOST}" "${RUST_PORT}" k three-port-client)"
+echo "==> Rust client-get -> Rust leader"
+get="$("${rust_bin}" client-get "${HOST}" "${RUST_PORT}" k three-port-client)"
 echo "${get}"
 grep -q "get.value: v1" <<<"${get}"
 
