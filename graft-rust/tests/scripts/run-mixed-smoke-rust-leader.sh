@@ -74,6 +74,17 @@ rust_pid=$!
 
 sleep 5
 
+# Wait for Rust leader
+echo "==> Waiting for Rust leader..."
+for _ in $(seq 1 40); do
+  if telemetry_output="$("${rust_bin}" telemetry "${HOST}" "${RUST_PORT}" --require-leader-summary 2>/dev/null)"; then
+    if grep -q "state: LEADER" <<<"${telemetry_output}"; then
+      break
+    fi
+  fi
+  sleep 0.5
+done
+
 echo "==> Java client-put -> Rust leader"
 put_output="$(run_java_probe client-put "${HOST}" "${RUST_PORT}" k v1 rust-client)"
 echo "${put_output}"
