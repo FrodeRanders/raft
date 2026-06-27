@@ -274,7 +274,8 @@ echo
 echo "==> C++ client-get -> Java leader"
 get="$("${cpp_bin}" client-get "${HOST}" "${JAVA_PORT}" k three-port-client)"
 echo "${get}"
-grep -q "get.value: v1" <<<"${get}"
+grep -q "found: true" <<<"${get}"
+grep -q "value: v1" <<<"${get}"
 
 echo
 echo "==> C++ dump-state -> C++ follower"
@@ -348,7 +349,7 @@ echo
 echo "==> C++ client-get -> C++ leader"
 get="$("${cpp_bin}" client-get "${HOST}" "${CPP_PORT}" k three-port-client)"
 echo "${get}"
-grep -q "get.value: v1" <<<"${get}"
+grep -q "value: v1" <<<"${get}"
 
 echo
 echo "==> Java telemetry -> Java follower"
