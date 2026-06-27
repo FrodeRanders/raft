@@ -265,14 +265,14 @@ java_pid=$!
 sleep 3
 wait_for_leader_java "${HOST}" "${JAVA_PORT}" "Java"
 
-echo "==> Java client-put -> Java leader"
-put="$(run_java_probe client-put "${HOST}" "${JAVA_PORT}" k v1 three-port-client)"
+echo "==> C++ client-put -> Java leader"
+put="$("${cpp_bin}" client-put "${HOST}" "${JAVA_PORT}" k v1 three-port-client)"
 echo "${put}"
 grep -q "success: true" <<<"${put}"
 
 echo
-echo "==> Java client-get -> Java leader"
-get="$(run_java_probe client-get "${HOST}" "${JAVA_PORT}" k three-port-client)"
+echo "==> C++ client-get -> Java leader"
+get="$("${cpp_bin}" client-get "${HOST}" "${JAVA_PORT}" k three-port-client)"
 echo "${get}"
 grep -q "get.value: v1" <<<"${get}"
 
