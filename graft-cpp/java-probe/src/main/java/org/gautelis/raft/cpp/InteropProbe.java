@@ -67,7 +67,7 @@ public final class InteropProbe {
         String command = args[0];
         String host = args[1];
         int port = Integer.parseInt(args[2]);
-        Peer target = new Peer("cpp-target", new InetSocketAddress(host, port));
+        Peer target = new Peer("interop-probe", new InetSocketAddress(host, port));
 
         NettyTransportFactory factory = new NettyTransportFactory();
         RaftTransportClient client = factory.createClient("java-probe", null);
