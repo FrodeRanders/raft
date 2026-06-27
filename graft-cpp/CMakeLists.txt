@@ -14,7 +14,7 @@ enable_testing()
 
 find_package(Protobuf REQUIRED)
 find_package(Boost REQUIRED)
-find_package(absl CONFIG REQUIRED)
+find_package(absl CONFIG QUIET)
 find_package(Catch2 3 QUIET)
 
 set(RAFT_PROTO ${CMAKE_CURRENT_SOURCE_DIR}/../raft-wire/src/main/proto/raft.proto)

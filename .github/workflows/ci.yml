@@ -54,7 +54,7 @@ jobs:
       - name: Install C++ build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libprotobuf-dev protobuf-compiler libboost-dev ninja-build
+          sudo apt-get install -y -qq libprotobuf-dev protobuf-compiler libboost-dev libabsl-dev ninja-build
 
       - name: Build vopn dependency
         run: |
@@ -148,7 +148,7 @@ jobs:
       - name: Install C++ build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libprotobuf-dev protobuf-compiler libboost-dev ninja-build
+          sudo apt-get install -y -qq libprotobuf-dev protobuf-compiler libboost-dev libabsl-dev ninja-build
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
