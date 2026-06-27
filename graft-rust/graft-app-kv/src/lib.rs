@@ -17,41 +17,29 @@
 
 //! Demo key-value state machine built on the Raft consensus engine.
 //!
-//! `KeyValueStateMachine` implements the `StateMachine` and
-//! `QueryableStateMachine` traits from `graft-core`. It stores
-//! key-value pairs in an in-memory `HashMap`, supports Put/Delete/
-//! Clear/CAS writes and Get reads, and serializes its state for
-//! snapshot/restore using JSON.
-//!
-//! This is the Rust equivalent of the Java `raft-app-kv` module and
-//! the C++ `KeyValueStateMachine`. It demonstrates how domain
-//! applications plug into the Raft consensus layer.
+//! Uses protobuf `StateMachineCommand` / `StateMachineQuery` for
+//! wire-compatibility with the Java and C++ implementations.
+//! Internal snapshot serialization uses JSON (deterministic key order).
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use graft_core::state_machine::{QueryableStateMachine, StateMachine};
+use prost::Message;
+
+pub use graft_proto::raft;
 
 // ---------------------------------------------------------------------------
 // KeyValueStateMachine
 // ---------------------------------------------------------------------------
 
 /// A simple in-memory key-value store that participates in Raft
-/// consensus. All writes (Put, Delete, Clear, CAS) are applied via
-/// `StateMachine::apply`, which is only called after Raft has committed
-/// the entry — guaranteeing linearizability. Reads (Get) go through
-/// `QueryableStateMachine::query` and are only dispatched after the
-/// leader has established read safety via a read lease or contact-
-/// majority barrier.
-///
-/// Snapshot and restore use JSON serialization of the full store,
-/// suitable for small-to-medium datasets.
+/// consensus using the shared protobuf command/query wire format.
 pub struct KeyValueStateMachine {
     store: Mutex<HashMap<String, Vec<u8>>>,
 }
 
 impl KeyValueStateMachine {
-    /// Creates an empty key-value store.
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),
@@ -60,69 +48,79 @@ impl KeyValueStateMachine {
 }
 
 impl StateMachine for KeyValueStateMachine {
-    /// Applies a committed command. The command is deserialized from
-    /// JSON; unrecognized commands are silently ignored (the command
-    /// was validated before submission).
-    ///
-    /// Determinism is guaranteed by Raft: the same command at the same
-    /// log index produces the same state on every node.
     fn apply(&self, term: u64, command: &[u8]) {
         let _ = self.apply_with_result(term, command);
     }
 
-    fn apply_with_result(&self, _term: u64, command: &[u8]) -> Vec<u8> {
-        if let Ok(cmd) = serde_json::from_slice::<KvCommand>(command) {
-            let mut store = self.store.lock().unwrap();
-            match cmd {
-                KvCommand::Put { key, value } => {
-                    store.insert(key, value);
-                }
-                KvCommand::Delete { key } => {
-                    store.remove(&key);
-                }
-                KvCommand::Clear => {
-                    store.clear();
-                }
-                KvCommand::Cas {
-                    key,
-                    expected_present,
-                    expected_value,
-                    new_value,
-                } => {
-                    let current = store.get(&key).cloned();
-                    let current_present = current.is_some();
-                    let matched = current_present == expected_present
-                        && (!expected_present || current.as_ref() == Some(&expected_value));
-                    if matched {
-                        store.insert(key, new_value);
-                    }
-                    return serde_json::to_vec(&CasResult {
-                        matched,
-                        expected_present,
-                        expected_value,
-                        current_present,
-                        current_value: current.unwrap_or_default(),
-                    })
-                    .unwrap_or_default();
-                }
+    fn apply_with_result(&self, _term: u64, data: &[u8]) -> Vec<u8> {
+        let cmd = match raft::StateMachineCommand::decode(data) {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+
+        use raft::state_machine_command::Command;
+        let mut store = self.store.lock().unwrap();
+
+        match cmd.command {
+            Some(Command::Put(put)) => {
+                store.insert(put.key, put.value.into_bytes());
             }
+            Some(Command::Delete(del)) => {
+                store.remove(&del.key);
+            }
+            Some(Command::Clear(_)) => {
+                store.clear();
+            }
+            Some(Command::Cas(cas)) => {
+                let current = store.get(&cas.key).cloned();
+                let current_present = current.is_some();
+                let current_value = String::from_utf8(current.clone().unwrap_or_default())
+                    .unwrap_or_default();
+
+                let matched = current_present == cas.expected_present
+                    && (!cas.expected_present
+                        || current.as_deref() == Some(cas.expected_value.as_bytes()));
+
+                if matched {
+                    store.insert(cas.key.clone(), cas.new_value.clone().into_bytes());
+                }
+
+                let result = raft::StateMachineCommandResult {
+                    result: Some(raft::state_machine_command_result::Result::Cas(
+                        raft::CasCommandResult {
+                            key: cas.key,
+                            matched,
+                            expected_present: cas.expected_present,
+                            expected_value: cas.expected_value,
+                            new_value: cas.new_value,
+                            current_present,
+                            current_value,
+                        },
+                    )),
+                };
+                return result.encode_to_vec();
+            }
+            None => {}
         }
         Vec::new()
     }
 
-    /// Returns a JSON-serialized snapshot of the entire store. Raft
-    /// wraps these bytes with cluster membership metadata before storage.
     fn snapshot(&self) -> Vec<u8> {
         let store = self.store.lock().unwrap();
-        serde_json::to_vec(&*store).unwrap_or_default()
+        // Use sorted keys for deterministic output
+        let mut keys: Vec<&String> = store.keys().collect();
+        keys.sort();
+        let ordered: Vec<(&String, &Vec<u8>)> = keys.iter().map(|k| (*k, &store[*k])).collect();
+        serde_json::to_vec(&ordered).unwrap_or_default()
     }
 
-    /// Restores the store from a previously-produced JSON snapshot.
-    /// Raft has already restored its own metadata before calling this.
     fn restore(&self, snapshot_data: &[u8]) {
-        if let Ok(data) = serde_json::from_slice::<HashMap<String, Vec<u8>>>(snapshot_data) {
+        if let Ok(pairs) = serde_json::from_slice::<Vec<(String, Vec<u8>)>>(snapshot_data) {
             let mut store = self.store.lock().unwrap();
-            *store = data;
+            store.clear();
+            for (key, value) in pairs {
+                store.insert(key, value);
+            }
         }
     }
 
@@ -132,72 +130,39 @@ impl StateMachine for KeyValueStateMachine {
 }
 
 impl QueryableStateMachine for KeyValueStateMachine {
-    /// Executes a read query against local state. Only called after
-    /// the leader has confirmed it still holds leadership (read lease
-    /// or contact-majority barrier), so the result is linearizable.
-    fn query(&self, request: &[u8]) -> Vec<u8> {
-        if let Ok(q) = serde_json::from_slice::<KvQuery>(request) {
-            let store = self.store.lock().unwrap();
-            match q {
-                KvQuery::Get { key } => {
-                    let found = store.contains_key(&key);
-                    let value = store.get(&key).cloned().unwrap_or_default();
-                    serde_json::to_vec(&GetResult { key, found, value }).unwrap_or_default()
-                }
+    fn query(&self, data: &[u8]) -> Vec<u8> {
+        let q = match raft::StateMachineQuery::decode(data) {
+            Ok(q) => q,
+            Err(_) => return Vec::new(),
+        };
+
+        use raft::state_machine_query::Query;
+        let store = self.store.lock().unwrap();
+
+        match q.query {
+            Some(Query::Get(get)) => {
+                let found = store.contains_key(&get.key);
+                let value = if found {
+                    String::from_utf8(store.get(&get.key).cloned().unwrap_or_default())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
+                let result = raft::StateMachineQueryResult {
+                    result: Some(raft::state_machine_query_result::Result::Get(
+                        raft::GetValueResult {
+                            key: get.key,
+                            found,
+                            value,
+                        },
+                    )),
+                };
+                result.encode_to_vec()
             }
-        } else {
-            Vec::new()
+            None => Vec::new(),
         }
     }
-}
-
-// -- Command and query types (JSON-serialized, carried in Raft log entries) --
-
-/// A write command submitted by a client. Serialized as JSON in the
-/// Raft log entry's data field.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum KvCommand {
-    /// Store a value under a key.
-    Put { key: String, value: Vec<u8> },
-    /// Remove a key (succeeds even if the key is absent).
-    Delete { key: String },
-    /// Remove all keys.
-    Clear,
-    /// Conditional write: only update if presence and value match the expected
-    /// state.
-    Cas {
-        key: String,
-        expected_present: bool,
-        expected_value: Vec<u8>,
-        new_value: Vec<u8>,
-    },
-}
-
-/// A read query submitted by a client.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum KvQuery {
-    /// Read the current value for a key.
-    Get { key: String },
-}
-
-/// Result of a Get query.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct GetResult {
-    pub key: String,
-    /// True if the key was present.
-    pub found: bool,
-    /// The value, or empty if `found` is false.
-    pub value: Vec<u8>,
-}
-
-/// Result of a committed CAS command.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct CasResult {
-    pub matched: bool,
-    pub expected_present: bool,
-    pub expected_value: Vec<u8>,
-    pub current_present: bool,
-    pub current_value: Vec<u8>,
 }
 
 #[cfg(test)]
@@ -206,52 +171,122 @@ mod tests {
     use graft_core::state_machine::StateMachine;
 
     #[test]
-    fn cas_missing_expected_succeeds_and_reports_result() {
+    fn put_and_get() {
         let sm = KeyValueStateMachine::new();
-        let command = serde_json::to_vec(&KvCommand::Cas {
-            key: "k".to_string(),
-            expected_present: false,
-            expected_value: Vec::new(),
-            new_value: b"v1".to_vec(),
-        })
-        .unwrap();
 
-        let result = sm.apply_with_result(1, &command);
-        let result: CasResult = serde_json::from_slice(&result).unwrap();
+        let put_cmd = raft::StateMachineCommand {
+            command: Some(raft::state_machine_command::Command::Put(
+                raft::PutCommand {
+                    key: "k".to_string(),
+                    value: "v1".to_string(),
+                },
+            )),
+        };
+        sm.apply(1, &put_cmd.encode_to_vec());
 
-        assert!(result.matched);
-        assert!(!result.current_present);
-
-        let query = serde_json::to_vec(&KvQuery::Get {
-            key: "k".to_string(),
-        })
-        .unwrap();
-        let get: GetResult = serde_json::from_slice(&sm.query(&query)).unwrap();
-        assert!(get.found);
-        assert_eq!(get.value, b"v1");
+        let get_q = raft::StateMachineQuery {
+            query: Some(raft::state_machine_query::Query::Get(
+                raft::GetValueQuery {
+                    key: "k".to_string(),
+                },
+            )),
+        };
+        let get_result = raft::StateMachineQueryResult::decode(&sm.query(&get_q.encode_to_vec())[..])
+            .unwrap();
+        if let Some(raft::state_machine_query_result::Result::Get(r)) = get_result.result {
+            assert!(r.found);
+            assert_eq!(r.value, "v1");
+        } else {
+            panic!("expected Get result");
+        }
     }
 
     #[test]
-    fn cas_present_mismatch_reports_false_without_updating() {
+    fn cas_missing_expected_succeeds() {
         let sm = KeyValueStateMachine::new();
-        let put = serde_json::to_vec(&KvCommand::Put {
-            key: "k".to_string(),
-            value: b"old".to_vec(),
-        })
-        .unwrap();
-        sm.apply(1, &put);
+        let cas_cmd = raft::StateMachineCommand {
+            command: Some(raft::state_machine_command::Command::Cas(raft::CasCommand {
+                key: "k".to_string(),
+                expected_present: false,
+                expected_value: String::new(),
+                new_value: "v1".to_string(),
+            })),
+        };
+        let result_bytes = sm.apply_with_result(1, &cas_cmd.encode_to_vec());
+        let result =
+            raft::StateMachineCommandResult::decode(&result_bytes[..]).unwrap();
+        if let Some(raft::state_machine_command_result::Result::Cas(r)) = result.result {
+            assert!(r.matched);
+            assert!(!r.current_present);
+        } else {
+            panic!("expected Cas result");
+        }
+    }
 
-        let command = serde_json::to_vec(&KvCommand::Cas {
-            key: "k".to_string(),
-            expected_present: true,
-            expected_value: b"expected".to_vec(),
-            new_value: b"new".to_vec(),
-        })
-        .unwrap();
-        let result: CasResult = serde_json::from_slice(&sm.apply_with_result(1, &command)).unwrap();
+    #[test]
+    fn cas_present_mismatch_reports_false() {
+        let sm = KeyValueStateMachine::new();
+        let put_cmd = raft::StateMachineCommand {
+            command: Some(raft::state_machine_command::Command::Put(
+                raft::PutCommand {
+                    key: "k".to_string(),
+                    value: "old".to_string(),
+                },
+            )),
+        };
+        sm.apply(1, &put_cmd.encode_to_vec());
 
-        assert!(!result.matched);
-        assert!(result.current_present);
-        assert_eq!(result.current_value, b"old");
+        let cas_cmd = raft::StateMachineCommand {
+            command: Some(raft::state_machine_command::Command::Cas(raft::CasCommand {
+                key: "k".to_string(),
+                expected_present: true,
+                expected_value: "expected".to_string(),
+                new_value: "new".to_string(),
+            })),
+        };
+        let result_bytes = sm.apply_with_result(1, &cas_cmd.encode_to_vec());
+        let result =
+            raft::StateMachineCommandResult::decode(&result_bytes[..]).unwrap();
+        if let Some(raft::state_machine_command_result::Result::Cas(r)) = result.result {
+            assert!(!r.matched);
+            assert!(r.current_present);
+            assert_eq!(r.current_value, "old");
+        } else {
+            panic!("expected Cas result");
+        }
+    }
+
+    #[test]
+    fn snapshot_roundtrip() {
+        let sm = KeyValueStateMachine::new();
+        let put = raft::StateMachineCommand {
+            command: Some(raft::state_machine_command::Command::Put(
+                raft::PutCommand {
+                    key: "k".to_string(),
+                    value: "v1".to_string(),
+                },
+            )),
+        };
+        sm.apply(1, &put.encode_to_vec());
+
+        let snap = sm.snapshot();
+        let sm2 = KeyValueStateMachine::new();
+        sm2.restore(&snap);
+
+        let get = raft::StateMachineQuery {
+            query: Some(raft::state_machine_query::Query::Get(
+                raft::GetValueQuery {
+                    key: "k".to_string(),
+                },
+            )),
+        };
+        let result = raft::StateMachineQueryResult::decode(&sm2.query(&get.encode_to_vec())[..])
+            .unwrap();
+        if let Some(raft::state_machine_query_result::Result::Get(r)) = result.result {
+            assert!(r.found);
+            assert_eq!(r.value, "v1");
+        } else {
+            panic!("expected Get result");
+        }
     }
 }

@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use graft_app_kv::{CasResult, GetResult, KeyValueStateMachine, KvCommand, KvQuery};
+use graft_app_kv::KeyValueStateMachine;
 use graft_core::membership::ClusterConfiguration;
 use graft_core::raft_node::{LogStore, PersistentStateStore, RaftNode};
 use graft_core::types::{LogEntry, Peer};
@@ -490,31 +490,35 @@ fn run_server(
                     counter += 1;
                     let key = format!("workload-{}", counter);
                     let value = format!("v{}", counter);
-                    let cmd = KvCommand::Put {
-                        key,
-                        value: value.into_bytes(),
+                    let key_str = key.clone();
+                    let value_str = value.clone();
+                    let cmd = raft::StateMachineCommand {
+                        command: Some(raft::state_machine_command::Command::Put(
+                            raft::PutCommand {
+                                key: key_str,
+                                value: value_str,
+                            },
+                        )),
                     };
-                    if let Ok(cmd_json) = serde_json::to_vec(&cmd) {
-                        if let Ok(_idx) = wl_runtime.submit_command(cmd_json) {
-                            // Auto-compaction: check if uncompacted entries exceed threshold
-                            let node = wl_runtime.node.lock();
-                            if node.commit_index > 0
-                                && node
-                                    .commit_index
-                                    .saturating_sub(node.log_store.snapshot_index())
-                                    >= threshold
-                            {
-                                drop(node);
-                                // Force compaction check (normally done in apply_committed_entries)
-                                let mut n = wl_runtime.node.lock();
-                                if let Some(ref sm) = n.state_machine {
-                                    let snap = sm.snapshot();
-                                    if !snap.is_empty() {
-                                        let term = n.log_store.term_at(n.commit_index);
-                                        n.log_store.compact_up_to(n.commit_index);
-                                        n.log_store.install_snapshot(n.commit_index, term, snap);
-                                        n.snapshot_configuration = n.cluster_configuration.clone();
-                                    }
+                    if let Ok(_idx) = wl_runtime.submit_command(cmd.encode_to_vec()) {
+                        // Auto-compaction: check if uncompacted entries exceed threshold
+                        let node = wl_runtime.node.lock();
+                        if node.commit_index > 0
+                            && node
+                                .commit_index
+                                .saturating_sub(node.log_store.snapshot_index())
+                                >= threshold
+                        {
+                            drop(node);
+                            // Force compaction check (normally done in apply_committed_entries)
+                            let mut n = wl_runtime.node.lock();
+                            if let Some(ref sm) = n.state_machine {
+                                let snap = sm.snapshot();
+                                if !snap.is_empty() {
+                                    let term = n.log_store.term_at(n.commit_index);
+                                    n.log_store.compact_up_to(n.commit_index);
+                                    n.log_store.install_snapshot(n.commit_index, term, snap);
+                                    n.snapshot_configuration = n.cluster_configuration.clone();
                                 }
                             }
                         }
@@ -606,15 +610,18 @@ fn parse_peers(peers: &[String]) -> HashMap<String, (SocketAddr, String)> {
 // ---------------------------------------------------------------------------
 
 fn client_put(host: &str, port: u16, key: &str, value: &str, peer_id: &str) -> Result<(), String> {
-    let cmd = KvCommand::Put {
-        key: key.to_string(),
-        value: value.as_bytes().to_vec(),
+    let cmd = raft::StateMachineCommand {
+        command: Some(raft::state_machine_command::Command::Put(
+            raft::PutCommand {
+                key: key.to_string(),
+                value: value.to_string(),
+            },
+        )),
     };
-    let cmd_json = serde_json::to_vec(&cmd).map_err(|e| e.to_string())?;
     let req = raft::ClientCommandRequest {
         term: 0,
         peer_id: peer_id.to_string(),
-        command: cmd_json,
+        command: cmd.encode_to_vec(),
         auth_scheme: String::new(),
         auth_token: String::new(),
     };
@@ -627,14 +634,17 @@ fn client_put(host: &str, port: u16, key: &str, value: &str, peer_id: &str) -> R
 }
 
 fn client_get(host: &str, port: u16, key: &str, peer_id: &str) -> Result<(), String> {
-    let q = KvQuery::Get {
-        key: key.to_string(),
+    let q = raft::StateMachineQuery {
+        query: Some(raft::state_machine_query::Query::Get(
+            raft::GetValueQuery {
+                key: key.to_string(),
+            },
+        )),
     };
-    let q_json = serde_json::to_vec(&q).map_err(|e| e.to_string())?;
     let req = raft::ClientQueryRequest {
         term: 0,
         peer_id: peer_id.to_string(),
-        query: q_json,
+        query: q.encode_to_vec(),
         auth_scheme: String::new(),
         auth_token: String::new(),
     };
@@ -643,9 +653,11 @@ fn client_get(host: &str, port: u16, key: &str, peer_id: &str) -> Result<(), Str
     println!("success: {}", resp.success);
     println!("status: {}", resp.status);
     if resp.success {
-        if let Ok(r) = serde_json::from_slice::<GetResult>(&resp.result) {
-            println!("get.value: {}", String::from_utf8_lossy(&r.value));
-            println!("get.found: {}", r.found);
+        if let Ok(r) = raft::StateMachineQueryResult::decode(&resp.result[..]) {
+            if let Some(raft::state_machine_query_result::Result::Get(g)) = r.result {
+                println!("get.value: {}", g.value);
+                println!("get.found: {}", g.found);
+            }
         }
     } else {
         println!("leader_id: {}", resp.leader_id);
@@ -664,42 +676,40 @@ fn client_cas(
     new_value: &str,
     peer_id: &str,
 ) -> Result<(), String> {
-    let cmd = KvCommand::Cas {
-        key: key.to_string(),
-        expected_present: parse_bool_arg(expected_present),
-        expected_value: expected_value.as_bytes().to_vec(),
-        new_value: new_value.as_bytes().to_vec(),
+    let cmd = raft::StateMachineCommand {
+        command: Some(raft::state_machine_command::Command::Cas(
+            raft::CasCommand {
+                key: key.to_string(),
+                expected_present: parse_bool_arg(expected_present),
+                expected_value: expected_value.to_string(),
+                new_value: new_value.to_string(),
+            },
+        )),
     };
-    let cmd_json = serde_json::to_vec(&cmd).map_err(|e| e.to_string())?;
     let req = raft::ClientCommandRequest {
         term: 0,
         peer_id: peer_id.to_string(),
-        command: cmd_json,
+        command: cmd.encode_to_vec(),
         auth_scheme: String::new(),
         auth_token: String::new(),
     };
     let resp_bytes = send_raft_rpc(host, port, "ClientCommandRequest", req.encode_to_vec())?;
     let resp = raft::ClientCommandResponse::decode(&resp_bytes[..]).map_err(|e| e.to_string())?;
-    // Output in C++-compatible "key: value" format for Jepsen parse-cpp-lines
     println!("success: {}", resp.success);
     println!("status: {}", resp.status);
     println!("peer_id: {}", peer_id);
     if resp.success && resp.status == "ACCEPTED" {
-        if let Ok(r) = serde_json::from_slice::<CasResult>(&resp.result) {
-            println!("cas.matched: {}", r.matched);
-            println!("cas.key: {}", key);
-            println!("cas.expected_present: {}", r.expected_present);
-            println!(
-                "cas.expected_value: {}",
-                String::from_utf8_lossy(&r.expected_value)
-            );
-            println!("cas.new_value: {}", new_value);
-            println!("cas.current_present: {}", r.current_present);
-            println!(
-                "cas.current_value: {}",
-                String::from_utf8_lossy(&r.current_value)
-            );
-            return Ok(());
+        if let Ok(r) = raft::StateMachineCommandResult::decode(&resp.result[..]) {
+            if let Some(raft::state_machine_command_result::Result::Cas(c)) = r.result {
+                println!("cas.matched: {}", c.matched);
+                println!("cas.key: {}", c.key);
+                println!("cas.expected_present: {}", c.expected_present);
+                println!("cas.expected_value: {}", c.expected_value);
+                println!("cas.new_value: {}", c.new_value);
+                println!("cas.current_present: {}", c.current_present);
+                println!("cas.current_value: {}", c.current_value);
+                return Ok(());
+            }
         }
     }
     // Fallback: report mismatch
@@ -955,14 +965,17 @@ fn send_install_snapshot_cmd(
 // ---------------------------------------------------------------------------
 
 fn client_delete(host: &str, port: u16, key: &str, peer_id: &str) -> Result<(), String> {
-    let cmd = KvCommand::Delete {
-        key: key.to_string(),
+    let cmd = raft::StateMachineCommand {
+        command: Some(raft::state_machine_command::Command::Delete(
+            raft::DeleteCommand {
+                key: key.to_string(),
+            },
+        )),
     };
-    let cmd_json = serde_json::to_vec(&cmd).map_err(|e| e.to_string())?;
     let req = raft::ClientCommandRequest {
         term: 0,
         peer_id: peer_id.to_string(),
-        command: cmd_json,
+        command: cmd.encode_to_vec(),
         auth_scheme: String::new(),
         auth_token: String::new(),
     };
@@ -974,12 +987,15 @@ fn client_delete(host: &str, port: u16, key: &str, peer_id: &str) -> Result<(), 
 }
 
 fn client_clear(host: &str, port: u16, peer_id: &str) -> Result<(), String> {
-    let cmd = KvCommand::Clear;
-    let cmd_json = serde_json::to_vec(&cmd).map_err(|e| e.to_string())?;
+    let cmd = raft::StateMachineCommand {
+        command: Some(raft::state_machine_command::Command::Clear(
+            raft::ClearCommand {},
+        )),
+    };
     let req = raft::ClientCommandRequest {
         term: 0,
         peer_id: peer_id.to_string(),
-        command: cmd_json,
+        command: cmd.encode_to_vec(),
         auth_scheme: String::new(),
         auth_token: String::new(),
     };
@@ -1079,14 +1095,17 @@ fn replicate_once(
     client_put(host, port, key, value, peer_id)?;
     // Poll until the key is readable (committed)
     for _ in 0..30 {
-        let q = KvQuery::Get {
-            key: key.to_string(),
+        let q = raft::StateMachineQuery {
+            query: Some(raft::state_machine_query::Query::Get(
+                raft::GetValueQuery {
+                    key: key.to_string(),
+                },
+            )),
         };
-        let q_json = serde_json::to_vec(&q).map_err(|e| e.to_string())?;
         let req = raft::ClientQueryRequest {
             term: 0,
             peer_id: peer_id.to_string(),
-            query: q_json,
+            query: q.encode_to_vec(),
             auth_scheme: String::new(),
             auth_token: String::new(),
         };
@@ -1140,15 +1159,18 @@ fn compact_snapshot(host: &str, port: u16) -> Result<(), String> {
     };
     // Force a few writes to advance the log past the compaction threshold
     for i in 0..5 {
-        let cmd = KvCommand::Put {
-            key: format!("compact-{}", i),
-            value: format!("v{}", i).into_bytes(),
+        let cmd = raft::StateMachineCommand {
+            command: Some(raft::state_machine_command::Command::Put(
+                raft::PutCommand {
+                    key: format!("compact-{}", i),
+                    value: format!("v{}", i),
+                },
+            )),
         };
-        let cmd_json = serde_json::to_vec(&cmd).map_err(|e| e.to_string())?;
         let req = raft::ClientCommandRequest {
             term: 0,
             peer_id: "graft-client".to_string(),
-            command: cmd_json,
+            command: cmd.encode_to_vec(),
             auth_scheme: String::new(),
             auth_token: String::new(),
         };

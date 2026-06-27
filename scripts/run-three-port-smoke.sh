@@ -44,6 +44,9 @@ fi
 
 (cd "${GRAFT_CPP_DIR}" && ./prepare-java-probe.sh)
 
+# Warm up: run a no-op Java probe call so Maven compilation is done before timing-sensitive sections.
+run_java_probe telemetry "${HOST}" "0" true 2>/dev/null || true
+
 run_java_probe() {
   "${GRAFT_CPP_DIR}/run-java-probe.sh" "$@"
 }
@@ -54,10 +57,11 @@ run_java_peer() {
 # -- Shared helpers ----------------------------------------------------
 
 start_java() {
-  local peer_id="$1" port="$2" timeout_ms="$3" data_dir="$4" seed_peer="$5" log_file="$6"
+  local peer_id="$1" port="$2" timeout_ms="$3" data_dir="$4" log_file="$5"
+  shift 5
   run_java_peer \
     "${peer_id}" "${HOST}" "${port}" "${timeout_ms}" "${data_dir}" \
-    "${seed_peer}" >"${log_file}" 2>&1 &
+    "$@" >"${log_file}" 2>&1 &
 }
 
 start_cpp_follower() {
@@ -68,18 +72,20 @@ start_cpp_follower() {
 }
 
 start_cpp_leader() {
-  local peer_id="$1" port="$2" state_file="$3" term="$4" last_log_index="$5" last_log_term="$6" known_peer="$7" log_file="$8"
+  local peer_id="$1" port="$2" state_file="$3" term="$4" last_log_index="$5" last_log_term="$6" log_file="$7"
+  shift 7
   "${cpp_bin}" serve-active-persistent \
     "${HOST}" "${port}" "${peer_id}" "${state_file}" "${term}" "${last_log_index}" "${last_log_term}" \
-    "${known_peer}" >"${log_file}" 2>&1 &
+    "$@" >"${log_file}" 2>&1 &
 }
 
 start_rust_leader() {
-  local peer_id="$1" port="$2" state_file="$3" term="$4" last_log_index="$5" last_log_term="$6" known_peer="$7" log_file="$8"
+  local peer_id="$1" port="$2" state_file="$3" term="$4" last_log_index="$5" last_log_term="$6" log_file="$7"
+  shift 7
   "${rust_bin}" serve-active-persistent \
     "${HOST}" "${port}" "${peer_id}" "${state_file}" \
     "${term}" "${last_log_index}" "${last_log_term}" \
-    "${known_peer}" >"${log_file}" 2>&1 &
+    "$@" >"${log_file}" 2>&1 &
 }
 
 start_rust_follower() {
@@ -120,7 +126,7 @@ wait_for_leader_cpp() {
 wait_for_leader_rust() {
   local host="$1" port="$2" label="$3"
   for _ in $(seq 1 40); do
-    if telemetry_output="$("${rust_bin}" telemetry "${host}" "${port}" false 2>/dev/null)"; then
+    if telemetry_output="$("${rust_bin}" telemetry "${host}" "${port}" --require-leader-summary 2>/dev/null)"; then
       if grep -q "state: LEADER" <<<"${telemetry_output}"; then
         return 0
       fi
@@ -159,18 +165,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-start_java     "${JAVA_PEER_ID}" "${JAVA_PORT}" "${JAVA_TIMEOUT_MS}" "${java_data}" \
-               "${RUST_PEER_ID}@${HOST}:${RUST_PORT}" "${java_log}"
+start_java     "${JAVA_PEER_ID}" "${JAVA_PORT}" "${JAVA_TIMEOUT_MS}" "${java_data}" "${java_log}" \
+               "${RUST_PEER_ID}@${HOST}:${RUST_PORT}"
 java_pid=$!
 
 start_cpp_follower "${CPP_PEER_ID}" "${CPP_PORT}" "${cpp_state}" \
                "${RUST_PEER_ID}@${HOST}:${RUST_PORT}" "${cpp_log}"
 cpp_pid=$!
 
-start_rust_leader "${RUST_PEER_ID}" "${RUST_PORT}" "${rust_state}" 4 7 3 \
-               "${JAVA_PEER_ID}@${HOST}:${JAVA_PORT}" "${rust_log}"
+# Give Java and C++ followers time to start before Rust leader sends votes.
+sleep 8
+
+start_rust_leader "${RUST_PEER_ID}" "${RUST_PORT}" "${rust_state}" 4 7 3 "${rust_log}" \
+               "${JAVA_PEER_ID}@${HOST}:${JAVA_PORT}" \
+               "${CPP_PEER_ID}@${HOST}:${CPP_PORT}"
 rust_pid=$!
 
+sleep 3
 wait_for_leader_rust "${HOST}" "${RUST_PORT}" "Rust"
 
 echo "==> Java client-put -> Rust leader"
@@ -185,21 +196,21 @@ echo "${get}"
 grep -q "get.value: v1" <<<"${get}"
 
 echo
-echo "==> Java telemetry -> Java follower"
+echo "==> Java telemetry -> Java follower (verify cross-replication)"
 j_tel="$(run_java_probe telemetry "${HOST}" "${JAVA_PORT}" true)"
 echo "${j_tel}"
 grep -q "state: FOLLOWER" <<<"${j_tel}"
 grep -q "leaderId: ${RUST_PEER_ID}" <<<"${j_tel}"
 
 echo
-echo "==> C++ dump-state -> C++ follower"
+echo "==> C++ dump-state -> C++ follower (verify cross-replication)"
 cpp_dump="$("${cpp_bin}" dump-state "${cpp_state}")"
 echo "${cpp_dump}"
 grep -q "kv\[k\]=v1" <<<"${cpp_dump}"
 
 echo
 echo "==> Rust telemetry -> Rust leader"
-r_tel="$("${rust_bin}" telemetry "${HOST}" "${RUST_PORT}" true)"
+r_tel="$("${rust_bin}" telemetry "${HOST}" "${RUST_PORT}" --require-leader-summary)"
 echo "${r_tel}"
 grep -q "state: LEADER" <<<"${r_tel}"
 grep -Eq "last_applied: ([1-9][0-9]*)" <<<"${r_tel}"
@@ -243,10 +254,15 @@ start_rust_follower "${RUST_PEER_ID}" "${RUST_PORT}" \
                "${JAVA_PEER_ID}@${HOST}:${JAVA_PORT}" "${rust_log}"
 rust_pid=$!
 
-start_java     "${JAVA_PEER_ID}" "${JAVA_PORT}" "${JAVA_TIMEOUT_MS}" "${java_data}" \
-               "${CPP_PEER_ID}@${HOST}:${CPP_PORT}" "${java_log}"
+# Give followers time to start before Java leader sends votes.
+sleep 8
+
+start_java     "${JAVA_PEER_ID}" "${JAVA_PORT}" "${JAVA_TIMEOUT_MS}" "${java_data}" "${java_log}" \
+               "${CPP_PEER_ID}@${HOST}:${CPP_PORT}" \
+               "${RUST_PEER_ID}@${HOST}:${RUST_PORT}"
 java_pid=$!
 
+sleep 3
 wait_for_leader_java "${HOST}" "${JAVA_PORT}" "Java"
 
 echo "==> Java client-put -> Java leader"
@@ -268,7 +284,7 @@ grep -q "kv\[k\]=v1" <<<"${cpp_dump}"
 
 echo
 echo "==> Rust telemetry -> Rust follower"
-r_tel="$("${rust_bin}" telemetry "${HOST}" "${RUST_PORT}" false)"
+r_tel="$("${rust_bin}" telemetry "${HOST}" "${RUST_PORT}")"
 echo "${r_tel}"
 grep -q "state: FOLLOWER" <<<"${r_tel}"
 grep -Eq "last_applied: ([1-9][0-9]*)" <<<"${r_tel}"
@@ -304,18 +320,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-start_java     "${JAVA_PEER_ID}" "${JAVA_PORT}" "${JAVA_TIMEOUT_MS}" "${java_data}" \
-               "${CPP_PEER_ID}@${HOST}:${CPP_PORT}" "${java_log}"
+start_java     "${JAVA_PEER_ID}" "${JAVA_PORT}" "${JAVA_TIMEOUT_MS}" "${java_data}" "${java_log}" \
+               "${CPP_PEER_ID}@${HOST}:${CPP_PORT}"
 java_pid=$!
 
 start_rust_follower "${RUST_PEER_ID}" "${RUST_PORT}" \
                "${CPP_PEER_ID}@${HOST}:${CPP_PORT}" "${rust_log}"
 rust_pid=$!
 
-start_cpp_leader "${CPP_PEER_ID}" "${CPP_PORT}" "${cpp_state}" 4 7 3 \
-               "${JAVA_PEER_ID}@${HOST}:${JAVA_PORT}" "${cpp_log}"
+# Give followers time to start before C++ leader sends votes.
+sleep 8
+
+start_cpp_leader "${CPP_PEER_ID}" "${CPP_PORT}" "${cpp_state}" 4 7 3 "${cpp_log}" \
+               "${JAVA_PEER_ID}@${HOST}:${JAVA_PORT}" \
+               "${RUST_PEER_ID}@${HOST}:${RUST_PORT}"
 cpp_pid=$!
 
+sleep 3
 wait_for_leader_cpp "${HOST}" "${CPP_PORT}" "C++"
 
 echo "==> C++ client-put -> C++ leader"
@@ -338,7 +359,7 @@ grep -q "leaderId: ${CPP_PEER_ID}" <<<"${j_tel}"
 
 echo
 echo "==> Rust telemetry -> Rust follower"
-r_tel="$("${rust_bin}" telemetry "${HOST}" "${RUST_PORT}" false)"
+r_tel="$("${rust_bin}" telemetry "${HOST}" "${RUST_PORT}")"
 echo "${r_tel}"
 grep -q "state: FOLLOWER" <<<"${r_tel}"
 grep -Eq "last_applied: ([1-9][0-9]*)" <<<"${r_tel}"
