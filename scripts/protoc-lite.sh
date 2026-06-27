@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # This should match /project/properties/protobuf.version in pom.xml
-PROTOC_VERSION="4.35.0"
+PROTOC_VERSION="4.35.1"
 
 os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch_name="$(uname -m)"
