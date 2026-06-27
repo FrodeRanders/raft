@@ -152,7 +152,7 @@ TEST_CASE("Joint consensus requires current and next majorities for commit and r
     node->become_leader();
 
     const auto index = node->append_local_entry("joint-command");
-    REQUIRE(index == 1);
+    REQUIRE(index == 2);
     REQUIRE(node->commit_index() == 0);
 
     raft::AppendEntriesResponse current_only;

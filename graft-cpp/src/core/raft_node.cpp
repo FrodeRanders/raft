@@ -468,7 +468,15 @@ namespace graft {
             return true;
         }
 
-        progress.next_index = std::max<std::int64_t>(1, progress.next_index - 1);
+        // On rejection, check if the follower has fallen behind the snapshot
+        // boundary. If so, set next_index to the snapshot index so the next
+        // heartbeat will send InstallSnapshot instead of AppendEntries.
+        const auto rejected_match = response.match_index();
+        if (rejected_match <= snapshot_index_) {
+            progress.next_index = snapshot_index_;
+        } else {
+            progress.next_index = std::max(snapshot_index_ + 1, progress.next_index - 1);
+        }
         return false;
     }
 
@@ -849,21 +857,19 @@ namespace graft {
     }
 
     std::string RaftNode::wrap_snapshot_payload_locked(const std::string &state_machine_snapshot) const {
-        std::vector<std::string> current_members;
-        current_members.reserve(voting_peers_.size() + 1);
-        current_members.push_back(peer_id_);
-        for (const auto &peer: voting_peers_) {
-            if (peer != peer_id_) {
-                current_members.push_back(peer);
-            }
-        }
-        std::sort(current_members.begin(), current_members.end());
+        auto current_members = current_voting_members_locked();
 
-        // The snapshot wrapper currently stores member ids. This keeps the C++ snapshot
-        // compatible with the bounded mixed-language snapshot tests.
+        // During joint consensus the snapshot must carry both the old and new
+        // voter sets so a follower or restarted node can reconstruct the correct
+        // membership at the compaction boundary.
+        std::vector<std::string> next_members;
+        if (joint_consensus_) {
+            next_members = next_voting_members_locked();
+        }
+
         return SnapshotCodec::wrap_payload(
             current_members,
-            joint_consensus_ ? current_members : std::vector<std::string>{},
+            next_members,
             state_machine_snapshot);
     }
 
@@ -1174,6 +1180,22 @@ namespace graft {
         votes_granted_.clear();
         votes_responded_.clear();
         reset_peer_progress_locked();
+
+        // Append a noop entry in the new leader's term so previously-replicated
+        // old-term entries can become committed once this term is established on
+        // a majority (Raft Figure 3 leader completeness).
+        previous_log_index_ = last_log_index_;
+        previous_log_term_ = last_log_term_;
+        last_log_index_ += 1;
+        last_log_term_ = current_term_;
+        log_entries_.push_back(LogEntryRecord{
+            .index = last_log_index_,
+            .term = last_log_term_,
+            .data = {},
+        });
+        last_entry_data_.clear();
+        peer_progress_[peer_id_].match_index = last_log_index_;
+        peer_progress_[peer_id_].next_index = last_log_index_ + 1;
     }
 
     void RaftNode::update_commit_index_locked() {

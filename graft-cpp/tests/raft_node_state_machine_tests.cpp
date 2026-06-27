@@ -91,10 +91,10 @@ TEST_CASE("RaftNode delegates committed entries to injected application state ma
     const auto committed = node.append_and_commit_local_command("domain-command");
 
     REQUIRE(committed.has_value());
-    REQUIRE(committed->index == 1);
-    REQUIRE(committed->result == "result:1:7:domain-command");
-    REQUIRE(application->applied == "1:7:domain-command");
-    REQUIRE(node.query_application("domain-query") == "query:domain-query:1:7:domain-command");
+    REQUIRE(committed->index == 2);
+    REQUIRE(committed->result == "result:2:7:domain-command");
+    REQUIRE(application->applied == "2:7:domain-command");
+    REQUIRE(node.query_application("domain-query") == "query:domain-query:2:7:domain-command");
     REQUIRE(node.applied_kv().empty());
 }
 
