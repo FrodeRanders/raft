@@ -1478,7 +1478,7 @@ impl RaftNode {
             } else {
                 0
             };
-            if elapsed < self.linearizable_read_timeout_millis {
+            if elapsed < self.linearizable_read_lease_millis {
                 contacted.insert(peer_id.clone());
             }
         }
