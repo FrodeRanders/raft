@@ -33,6 +33,9 @@ if [[ ! -f "${JAVA_PROBE_DIR}/prepare-java-probe.sh" ]]; then
 fi
 if [[ -f "${JAVA_PROBE_DIR}/prepare-java-probe.sh" ]]; then
   (cd "${JAVA_PROBE_DIR}" && ./prepare-java-probe.sh)
+else
+  echo "ERROR: prepare-java-probe.sh not found at ${JAVA_PROBE_DIR}" >&2
+  exit 1
 fi
 
 run_java_probe() {
@@ -76,14 +79,22 @@ sleep 5
 
 # Wait for Rust leader
 echo "==> Waiting for Rust leader..."
-for _ in $(seq 1 40); do
+leader_found=false
+for _ in $(seq 1 60); do
   if telemetry_output="$("${rust_bin}" telemetry "${HOST}" "${RUST_PORT}" --require-leader-summary 2>/dev/null)"; then
     if grep -q "state: LEADER" <<<"${telemetry_output}"; then
+      leader_found=true
       break
     fi
   fi
-  sleep 0.5
+  sleep 1
 done
+if [[ "${leader_found}" != "true" ]]; then
+  echo "ERROR: Rust leader did not become ready at ${HOST}:${RUST_PORT}" >&2
+  echo "Rust log:"
+  cat "${rust_log}" 2>/dev/null || true
+  exit 1
+fi
 
 echo "==> Java client-put -> Rust leader"
 put_output="$(run_java_probe client-put "${HOST}" "${RUST_PORT}" k v1 rust-client)"
