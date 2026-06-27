@@ -132,8 +132,8 @@ class RaftNodeConfigValidationTest {
     }
 
     @Test
-    void leaderRejectsFinalizeWithoutJointConsensus() {
-        announce("Configuration guard finalize: leader rejects finalize when no joint transition is active");
+    void finalizeAcceptedWhenNoJointConsensusIsActive() {
+        announce("Configuration guard finalize: leader accepts finalize idempotently when no joint transition is active");
         Peer a = new Peer("A", new InetSocketAddress("127.0.0.1", 10080));
 
         RaftNodeElectionTest.MutableTime time = new RaftNodeElectionTest.MutableTime(0);
@@ -147,8 +147,7 @@ class RaftNodeConfigValidationTest {
         node.electionTickForTest();
         node.handleVoteResponsesForTest(List.of(), 1);
         assertTrue(node.isLeader());
-
-        assertFalse(node.submitFinalizeConfigurationChange());
+        assertTrue(node.submitFinalizeConfigurationChange());
     }
 
     @Test

@@ -941,8 +941,11 @@ public class RaftNode {
      * @return {@code true} when the finalize command was accepted
      */
     public synchronized boolean submitFinalizeConfigurationChange() {
-        if (state != State.LEADER || decommissioned || !clusterConfiguration.isJointConsensus()) {
+        if (state != State.LEADER || decommissioned) {
             return false;
+        }
+        if (!clusterConfiguration.isJointConsensus()) {
+            return true;
         }
         if (log.isDebugEnabled()) {
             log.debug("{}@{} scheduling finalize-configuration transition from {}",
