@@ -182,6 +182,9 @@ namespace graft {
             .commit_index = 0,
             .snapshot_index = 0,
             .snapshot_term = 0,
+            .voting_peers = {},
+            .application = nullptr,
+            .time_source = nullptr,
         })) {
     }
 

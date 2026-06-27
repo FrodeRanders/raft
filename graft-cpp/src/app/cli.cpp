@@ -1124,6 +1124,7 @@ namespace {
                 .snapshot_index = 0,
                 .snapshot_term = 0,
                 .voting_peers = std::move(peer_ids),
+                .application = nullptr,
                 .time_source = raft_time_source_from_env(),
             }
         );
@@ -1197,6 +1198,7 @@ namespace {
                         .peer_id = peer_id,
                         .host = endpoint.host,
                         .port = static_cast<std::uint16_t>(endpoint.port),
+                    .role = "",
                     });
                 });
             in_memory->set_membership_updater(
@@ -1211,6 +1213,7 @@ namespace {
                             .peer_id = peer_ids[i],
                             .host = endpoints[i].host,
                             .port = static_cast<std::uint16_t>(endpoints[i].port),
+                        .role = "",
                         });
                     }
                     runtime.configure_peers(std::move(peers));
@@ -1244,6 +1247,7 @@ namespace {
                         .peer_id = peer_id,
                         .host = endpoint.host,
                         .port = static_cast<std::uint16_t>(endpoint.port),
+                    .role = "",
                     });
                 });
             persistent->delegate().set_membership_updater(
@@ -1256,6 +1260,7 @@ namespace {
                             .peer_id = peer_ids[i],
                             .host = endpoints[i].host,
                             .port = static_cast<std::uint16_t>(endpoints[i].port),
+                        .role = "",
                         });
                     }
                     runtime.configure_peers(std::move(peers));
@@ -1432,6 +1437,7 @@ namespace {
             .snapshot_index = 0,
             .snapshot_term = 0,
             .voting_peers = {},
+            .application = nullptr,
             .time_source = raft_time_source_from_env(),
         });
         auto handler = std::make_shared<graft::InMemoryRpcHandler>(node);
@@ -1462,6 +1468,7 @@ namespace {
                 .snapshot_index = 0,
                 .snapshot_term = 0,
                 .voting_peers = {},
+                .application = nullptr,
                 .time_source = raft_time_source_from_env(),
             }
         );
@@ -1504,6 +1511,7 @@ namespace {
                 .snapshot_index = 0,
                 .snapshot_term = 0,
                 .voting_peers = {},
+                .application = nullptr,
                 .time_source = raft_time_source_from_env(),
             }
         );
@@ -1680,6 +1688,8 @@ namespace {
                 .snapshot_index = 0,
                 .snapshot_term = 0,
                 .voting_peers = {},
+                .application = nullptr,
+                .time_source = nullptr,
             },
             std::move(peers)
         );
@@ -1712,13 +1722,14 @@ namespace {
                 .commit_index = last_log_index,
                 .snapshot_index = 0,
                 .snapshot_term = 0,
-                .voting_peers = {},
-            },
-            std::move(peers)
-        );
-        runtime.node().become_leader();
-
-        const auto successes = runtime.send_heartbeats_once();
+                    .voting_peers = {},
+                    .application = nullptr,
+                    .time_source = nullptr,
+                },
+                std::move(peers)
+            );
+            runtime.node().become_leader();
+            const auto successes = runtime.send_heartbeats_once();
         std::cout
                 << "role: " << (runtime.node().role() == graft::RaftNode::Role::leader ? "leader" : "not-leader") <<
                 '\n'
@@ -1746,6 +1757,8 @@ namespace {
                 .snapshot_index = 0,
                 .snapshot_term = 0,
                 .voting_peers = {},
+                .application = nullptr,
+                .time_source = nullptr,
             },
             std::move(peers)
         );
@@ -1781,6 +1794,8 @@ namespace {
             .snapshot_index = 0,
             .snapshot_term = 0,
             .voting_peers = {},
+            .application = nullptr,
+            .time_source = nullptr,
         });
 
         if (const auto persisted = store.load(); persisted.has_value()) {
@@ -1830,6 +1845,8 @@ namespace {
             .snapshot_index = 0,
             .snapshot_term = 0,
             .voting_peers = {},
+            .application = nullptr,
+            .time_source = nullptr,
         });
 
         if (const auto persisted = store.load(); persisted.has_value()) {
