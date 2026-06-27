@@ -266,7 +266,7 @@ impl LogStoreTrait for FileLogStore {
 
 // -- Simple base64 encoding (no external dep) --
 
-fn base64_encode(data: &[u8]) -> String {
+pub fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for chunk in data.chunks(3) {
@@ -290,7 +290,7 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
-fn base64_decode(s: &str) -> Vec<u8> {
+pub fn base64_decode(s: &str) -> Vec<u8> {
     let s = s.trim();
     if s.is_empty() { return vec![]; }
     let mut out = Vec::new();

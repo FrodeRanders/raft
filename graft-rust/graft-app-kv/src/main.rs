@@ -359,32 +359,110 @@ fn send_raft_rpc(
 }
 
 fn dump_state(state_file: &str) -> Result<(), String> {
-    let content = fs::read_to_string(state_file).map_err(|e| e.to_string())?;
-    let mut term = 0u64;
-    let mut voted = String::new();
-    for line in content.lines() {
-        if let Some((key, value)) = line.split_once('=') {
-            match key.trim() {
-                "term" => {
-                    term = value.trim().parse().unwrap_or(0);
+    use graft_core::snapshot_codec;
+
+    let mut peer_id = String::new();
+    let mut current_term: i64 = 0;
+    let mut voted_for = String::new();
+    let mut snapshot_index: i64 = 0;
+    let mut snapshot_term: i64 = 0;
+    let mut commit_index: i64 = 0;
+
+    // Read persistent state file (term, voted_for)
+    if let Ok(content) = fs::read_to_string(state_file) {
+        for line in content.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                match key.trim() {
+                    "peer_id" => peer_id = value.trim().to_string(),
+                    "term" => current_term = value.trim().parse().unwrap_or(0),
+                    "voted" => voted_for = value.trim().to_string(),
+                    _ => {}
                 }
-                "voted" => {
-                    voted = value.trim().to_string();
-                }
-                _ => {}
             }
         }
     }
-    println!("term: {}", term);
-    println!("voted_for: {}", voted);
-    let kv_path = format!("{}.kv", state_file);
-    if let Ok(kv_content) = fs::read_to_string(&kv_path) {
-        if let Ok(store) = serde_json::from_str::<HashMap<String, Vec<u8>>>(&kv_content) {
-            for (key, value) in &store {
-                if let Ok(val_str) = String::from_utf8(value.clone()) {
-                    println!("kv[{}]={}", key, val_str);
+
+    // Read log store file for snapshot metadata, log entries, and KV state
+    let log_path = format!("{}.log", state_file);
+    let mut kv: HashMap<String, Vec<u8>> = HashMap::new();
+    let mut log_entries: Vec<(i64, i64, Vec<u8>)> = Vec::new(); // (index, term, data)
+    let mut last_applied: i64 = 0;
+
+    if let Ok(content) = fs::read_to_string(&log_path) {
+        let mut snapshot_data: Vec<u8> = Vec::new();
+        for line in content.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                let val = value.trim();
+                match key.trim() {
+                    "snapshot_index" => {
+                        snapshot_index = val.parse().unwrap_or(0);
+                    }
+                    "snapshot_term" => {
+                        snapshot_term = val.parse().unwrap_or(0);
+                    }
+                    "snapshot_data" => {
+                        snapshot_data = graft_storage::log_store::base64_decode(val);
+                    }
+                    "log_entry" => {
+                        let parts: Vec<&str> = val.splitn(3, ',').collect();
+                        if parts.len() == 3 {
+                            let index: i64 = parts[0].trim().parse().unwrap_or(0);
+                            let term: i64 = parts[1].trim().parse().unwrap_or(0);
+                            let data = graft_storage::log_store::base64_decode(parts[2].trim());
+                            log_entries.push((index, term, data));
+                        }
+                    }
+                    _ => {}
                 }
             }
+        }
+
+        // Reconstruct KV state from snapshot
+        if !snapshot_data.is_empty() {
+            let app_snapshot = snapshot_codec::unwrap_snapshot_payload(&snapshot_data);
+            if let Some(restored) =
+                snapshot_codec::deserialize_key_value_snapshot(&app_snapshot)
+            {
+                kv = restored;
+            }
+        }
+
+        // Apply log entries past the snapshot boundary
+        for (index, _term, data) in &log_entries {
+            if *index <= snapshot_index {
+                continue;
+            }
+            last_applied = std::cmp::max(last_applied, *index);
+            if let Ok(cmd) =
+                graft_proto::raft::StateMachineCommand::decode(&data[..])
+            {
+                graft_app_kv::KeyValueStateMachine::apply_command(&mut kv, &cmd);
+            }
+        }
+
+        // The commit_index isn't directly stored; use last log entry index as
+        // an approximation that matches what the node would have committed.
+        commit_index = log_entries
+            .last()
+            .map(|(idx, _, _)| *idx)
+            .unwrap_or(snapshot_index);
+    }
+
+    println!("peer_id: {}", if peer_id.is_empty() { "(unknown)" } else { &peer_id });
+    println!("current_term: {}", current_term);
+    if !voted_for.is_empty() {
+        println!("voted_for: {}", voted_for);
+    }
+    println!("commit_index: {}", commit_index);
+    println!("last_applied: {}", last_applied);
+    println!("snapshot_index: {}", snapshot_index);
+    println!("snapshot_term: {}", snapshot_term);
+
+    let mut ordered: Vec<(&String, &Vec<u8>)> = kv.iter().collect();
+    ordered.sort_by(|a, b| a.0.cmp(b.0));
+    for (key, value) in &ordered {
+        if let Ok(val_str) = String::from_utf8(value.to_vec()) {
+            println!("kv[{}]={}", key, val_str);
         }
     }
     Ok(())

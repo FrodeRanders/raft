@@ -45,6 +45,34 @@ impl KeyValueStateMachine {
             store: Mutex::new(HashMap::new()),
         }
     }
+
+    /// Applies a protobuf `StateMachineCommand` to an external KV store.
+    /// Used by offline tools (e.g. dump-state) to reconstruct state.
+    pub fn apply_command(store: &mut HashMap<String, Vec<u8>>, cmd: &raft::StateMachineCommand) {
+        use raft::state_machine_command::Command;
+        match &cmd.command {
+            Some(Command::Put(put)) => {
+                store.insert(put.key.clone(), put.value.clone().into_bytes());
+            }
+            Some(Command::Delete(del)) => {
+                store.remove(&del.key);
+            }
+            Some(Command::Clear(_)) => {
+                store.clear();
+            }
+            Some(Command::Cas(cas)) => {
+                let current = store.get(&cas.key).cloned();
+                let current_present = current.is_some();
+                let matched = current_present == cas.expected_present
+                    && (!cas.expected_present
+                        || current.as_deref() == Some(cas.expected_value.as_bytes()));
+                if matched {
+                    store.insert(cas.key.clone(), cas.new_value.clone().into_bytes());
+                }
+            }
+            None => {}
+        }
+    }
 }
 
 impl StateMachine for KeyValueStateMachine {

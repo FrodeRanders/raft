@@ -363,7 +363,9 @@ impl RaftNode {
         // Seed the election timer so the node doesn't immediately elect.
         if snapshot_index > 0 {
             if let Some(ref sm) = node.state_machine {
-                sm.restore(&node.log_store.snapshot_data());
+                let app_snapshot =
+                    crate::snapshot_codec::unwrap_snapshot_payload(&node.log_store.snapshot_data());
+                sm.restore(&app_snapshot);
             }
         }
         node.refresh_timeout(now);
@@ -1297,11 +1299,34 @@ impl RaftNode {
         }
 
         if let Some(ref sm) = self.state_machine {
-            let snapshot_data = sm.snapshot();
+            let sm_snapshot = sm.snapshot();
+            // Wrap application bytes with current cluster membership so a
+            // follower or restarted node can recover the correct configuration
+            // at the compaction boundary. Matches Java/C++ SnapshotCodec.
+            let current_ids: Vec<String> = self
+                .cluster_configuration
+                .current_voting_members()
+                .iter()
+                .map(|p| p.id.clone())
+                .collect();
+            let next_ids: Vec<String> = if self.cluster_configuration.is_joint_consensus() {
+                self.cluster_configuration
+                    .next_voting_members()
+                    .iter()
+                    .map(|p| p.id.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let wrapped = crate::snapshot_codec::wrap_snapshot_payload(
+                &current_ids,
+                &next_ids,
+                &sm_snapshot,
+            );
             let term = self.log_store.term_at(self.commit_index);
             self.log_store.compact_up_to(self.commit_index);
             self.log_store
-                .install_snapshot(self.commit_index, term, snapshot_data);
+                .install_snapshot(self.commit_index, term, wrapped);
             self.snapshot_configuration = self.cluster_configuration.clone();
             self.trim_applied_command_results();
         }
@@ -1371,9 +1396,18 @@ impl RaftNode {
                 self.pending_snapshot = None;
                 self.commit_index = self.commit_index.max(installed_index);
                 self.last_applied = self.last_applied.max(installed_index);
+
+                // Unwrap the membership envelope (Java/C++ compatible) to
+                // restore the cluster configuration at the snapshot boundary.
+                let app_snapshot =
+                    crate::snapshot_codec::unwrap_snapshot_payload(&installed_data);
                 if let Some(ref sm) = self.state_machine {
-                    sm.restore(&installed_data);
+                    sm.restore(&app_snapshot);
                 }
+
+                // Update snapshot_configuration so configuration_at() can
+                // reconstruct the membership for post-snapshot log entries.
+                self.snapshot_configuration = self.cluster_configuration.clone();
             }
         }
 

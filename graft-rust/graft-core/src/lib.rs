@@ -36,6 +36,7 @@
 //!   with election, replication, commit/apply, and snapshot logic.
 
 pub mod membership;
+pub mod snapshot_codec;
 pub mod state_machine;
 pub mod raft_node;
 pub mod types;
