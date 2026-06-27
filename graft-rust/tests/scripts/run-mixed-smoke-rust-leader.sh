@@ -96,15 +96,15 @@ if [[ "${leader_found}" != "true" ]]; then
   exit 1
 fi
 
-echo "==> Java client-put -> Rust leader"
-put_output="$(run_java_probe client-put "${HOST}" "${RUST_PORT}" k v1 rust-client)"
+echo "==> Rust client-put -> Rust leader"
+put_output="$("${rust_bin}" client-put "${HOST}" "${RUST_PORT}" k v1 rust-client)"
 echo "${put_output}"
 grep -q "success: true" <<<"${put_output}"
 grep -q "status: ACCEPTED" <<<"${put_output}"
 
 echo
-echo "==> Java client-get -> Rust leader"
-get_output="$(run_java_probe client-get "${HOST}" "${RUST_PORT}" k rust-client)"
+echo "==> Rust client-get -> Rust leader"
+get_output="$("${rust_bin}" client-get "${HOST}" "${RUST_PORT}" k rust-client)"
 echo "${get_output}"
 grep -q "success: true" <<<"${get_output}"
 grep -q "get.value: v1" <<<"${get_output}"
