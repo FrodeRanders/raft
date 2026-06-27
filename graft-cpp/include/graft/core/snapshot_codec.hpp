@@ -38,6 +38,15 @@ namespace graft {
         // Return only the domain payload for ApplicationStateMachine::restore().
         static std::string unwrap_payload(const std::string &payload);
 
+        // Decode the full snapshot envelope, returning the application bytes and
+        // the current/next member ids for membership restoration.
+        struct DecodedSnapshot {
+            std::string state_machine_snapshot;
+            std::vector<std::string> current_members;
+            std::vector<std::string> next_members;
+        };
+        static std::optional<DecodedSnapshot> decode_payload(const std::string &payload);
+
         // Java-compatible key-value snapshot helpers used by the demo state machine
         // and mixed Java/C++ snapshot tests.
         static std::string serialize_key_value_snapshot(

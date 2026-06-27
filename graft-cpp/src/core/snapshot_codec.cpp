@@ -75,6 +75,45 @@ namespace graft {
         return decoded.value_or(payload);
     }
 
+    static std::vector<std::string> extract_member_ids(const std::string &payload, const std::string &member_key) {
+        std::vector<std::string> ids;
+        const auto key = "\"" + member_key + "\":[";
+        const auto start = payload.find(key);
+        if (start == std::string::npos) {
+            return ids;
+        }
+        auto pos = start + key.size();
+        const auto end = payload.find(']', pos);
+        if (end == std::string::npos) {
+            return ids;
+        }
+        while (pos < end) {
+            const auto id_start = payload.find("\"id\":\"", pos);
+            if (id_start == std::string::npos || id_start >= end) {
+                break;
+            }
+            const auto val_start = id_start + 6;
+            const auto val_end = payload.find('"', val_start);
+            if (val_end == std::string::npos || val_end >= end) {
+                break;
+            }
+            ids.push_back(payload.substr(val_start, val_end - val_start));
+            pos = val_end + 1;
+        }
+        return ids;
+    }
+
+    std::optional<SnapshotCodec::DecodedSnapshot> SnapshotCodec::decode_payload(const std::string &payload) {
+        if (payload.empty() || payload.front() != '{') {
+            return DecodedSnapshot{payload, {}, {}};
+        }
+        DecodedSnapshot result;
+        result.state_machine_snapshot = unwrap_payload(payload);
+        result.current_members = extract_member_ids(payload, "currentMembers");
+        result.next_members = extract_member_ids(payload, "nextMembers");
+        return result;
+    }
+
     std::string SnapshotCodec::serialize_key_value_snapshot(
         const std::unordered_map<std::string, std::string> &applied_kv) {
         std::string out;

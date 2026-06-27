@@ -203,6 +203,37 @@ namespace graft {
                     last_entry_data_.clear();
                 }
                 commit_index_ = std::max(commit_index_, snapshot_index_);
+
+                // Restore membership from the snapshot envelope so this follower
+                // has the correct cluster configuration at the compaction boundary.
+                if (auto decoded = graft::SnapshotCodec::decode_payload(snapshot_data_); decoded.has_value()) {
+                    if (!decoded->current_members.empty()) {
+                        std::vector<raft::PeerSpec> members;
+                        members.reserve(decoded->current_members.size());
+                        for (const auto &id: decoded->current_members) {
+                            auto *spec = &members.emplace_back();
+                            spec->set_id(id);
+                            spec->set_role("VOTER");
+                        }
+                        current_members_ = ClusterMembership::normalize_member_specs(std::move(members));
+                    }
+                    if (!decoded->next_members.empty()) {
+                        std::vector<raft::PeerSpec> members;
+                        members.reserve(decoded->next_members.size());
+                        for (const auto &id: decoded->next_members) {
+                            auto *spec = &members.emplace_back();
+                            spec->set_id(id);
+                            spec->set_role("VOTER");
+                        }
+                        next_members_ = ClusterMembership::normalize_member_specs(std::move(members));
+                        joint_consensus_ = !next_members_.empty();
+                    } else {
+                        next_members_.clear();
+                        joint_consensus_ = false;
+                    }
+                    refresh_voting_peers_from_members_locked();
+                }
+
                 apply_snapshot_to_state_machine_locked();
                 last_applied_ = std::max(last_applied_, snapshot_index_);
             }
