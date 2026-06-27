@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <boost/asio.hpp>
 #include <chrono>
 #include <cstdlib>
@@ -27,9 +28,12 @@
 #include <string>
 #include <type_traits>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "raft.pb.h"
+#include "graft/core/snapshot_codec.hpp"
+#include "graft/core/key_value_state_machine.hpp"
 #include "graft/runtime/raft_runtime.hpp"
 #include "graft/runtime/rpc_handler.hpp"
 #include "graft/runtime/seed_provider.hpp"
@@ -1885,8 +1889,36 @@ namespace {
                 << "commit_index: " << persisted->commit_index << '\n'
                 << "last_applied: " << persisted->last_applied << '\n'
                 << "snapshot_index: " << persisted->snapshot_index << '\n'
-                << "snapshot_term: " << persisted->snapshot_term << '\n'
-                << "snapshot_data_size: " << persisted->snapshot_data.size() << '\n';
+                << "snapshot_term: " << persisted->snapshot_term << '\n';
+
+        // Reconstruct application key-value store from snapshot and applied log entries.
+        std::unordered_map<std::string, std::string> kv;
+
+        if (!persisted->snapshot_data.empty()) {
+            const auto app_snapshot = graft::SnapshotCodec::unwrap_payload(persisted->snapshot_data);
+            if (auto restored = graft::SnapshotCodec::deserialize_key_value_snapshot(app_snapshot); restored.has_value()) {
+                kv = std::move(*restored);
+            }
+        }
+
+        for (const auto &entry : persisted->log_entries) {
+            if (entry.index <= persisted->snapshot_index || entry.index > persisted->last_applied) {
+                continue;
+            }
+            raft::StateMachineCommand command;
+            if (command.ParseFromArray(entry.data.data(), static_cast<int>(entry.data.size()))) {
+                graft::KeyValueStateMachine::apply_command(kv, command);
+            }
+        }
+
+        std::vector<std::pair<std::string, std::string>> ordered(kv.begin(), kv.end());
+        std::sort(ordered.begin(), ordered.end(), [](const auto &a, const auto &b) {
+            return a.first < b.first;
+        });
+        for (const auto &[key, value] : ordered) {
+            std::cout << "kv[" << key << "]=" << value << '\n';
+        }
+
         return 0;
     }
 } // namespace
