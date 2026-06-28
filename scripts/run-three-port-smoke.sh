@@ -277,11 +277,19 @@ echo "${get}"
 grep -q "value: v1" <<<"${get}"
 
 echo
-echo "==> Java telemetry -> Java follower"
-j_tel="$(run_java_probe telemetry "${HOST}" "${JAVA_PORT}" true)"
+echo "==> Java telemetry -> Java follower (waiting for C++ leader)"
+leader_seen=false
+for _ in $(seq 1 20); do
+  j_tel="$(run_java_probe telemetry "${HOST}" "${JAVA_PORT}" true 2>/dev/null || true)"
+  if grep -q "leaderId: ${CPP_PEER_ID}" <<<"${j_tel}"; then
+    leader_seen=true
+    break
+  fi
+  sleep 0.5
+done
 echo "${j_tel}"
 grep -q "state: FOLLOWER" <<<"${j_tel}"
-grep -q "leaderId: ${CPP_PEER_ID}" <<<"${j_tel}"
+[[ "${leader_seen}" == "true" ]] || { echo "ERROR: Java follower did not see C++ leader" >&2; exit 1; }
 
 echo
 echo "==> Rust telemetry -> Rust follower"
