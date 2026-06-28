@@ -19,6 +19,12 @@ mvn -B --no-transfer-progress install \
 echo
 echo "==> Building C++"
 CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release"
+# Wipe cache if generator changed from a previous build
+if [[ -f graft-cpp/build/CMakeCache.txt ]] && command -v ninja &>/dev/null; then
+  if ! grep -q "CMAKE_MAKE_PROGRAM.*ninja" graft-cpp/build/CMakeCache.txt 2>/dev/null; then
+    rm -f graft-cpp/build/CMakeCache.txt
+  fi
+fi
 if command -v ninja &>/dev/null; then
   CMAKE_FLAGS="${CMAKE_FLAGS} -G Ninja"
 fi
