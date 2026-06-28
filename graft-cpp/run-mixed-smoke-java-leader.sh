@@ -73,8 +73,16 @@ grep -q "success: true" <<<"${get_output}"
 grep -q "get.value: v1" <<<"${get_output}"
 
 echo
-echo "==> C++ dump-state -> C++ follower"
-dump_output="$("${cpp_bin}" dump-state "${cpp_state}")"
+echo "==> C++ dump-state -> C++ follower (waiting for replication)"
+kv_found=false
+for _ in $(seq 1 20); do
+  dump_output="$("${cpp_bin}" dump-state "${cpp_state}")"
+  if grep -q "kv\\[k\\]=v1" <<<"${dump_output}"; then
+    kv_found=true
+    break
+  fi
+  sleep 0.5
+done
 echo "${dump_output}"
 grep -q "peer_id: ${CPP_PEER_ID}" <<<"${dump_output}"
 grep -Eq "commit_index: ([1-9][0-9]*)" <<<"${dump_output}"
