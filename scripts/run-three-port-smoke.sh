@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 # Combined three-port smoke test: Rust ↔ Java ↔ C++
 # Mirrors individual two-port suites and combines them into one.
-#
-# By default runs two scenarios (Rust leader, C++ leader) which work
-# reliably in CI. Set RAFT_FULL_THREE_PORT=1 to also include the Java
-# leader scenario (requires Netty transport connectivity to C++/Rust).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -298,9 +294,8 @@ cleanup
 trap - EXIT
 
 # ======================================================================
-# Scenario 3 (optional, local only): Java leader, C++ + Rust followers
+# Scenario 3: Java leader, C++ + Rust followers
 # ======================================================================
-if [[ "${RAFT_FULL_THREE_PORT:-}" == "1" ]]; then
 echo
 echo "==> Scenario 3: Java leader, C++ + Rust followers"
 
@@ -371,7 +366,6 @@ grep -Eq "last_applied: ([1-9][0-9]*)" <<<"${r_tel}"
 
 cleanup
 trap - EXIT
-fi
 
 echo
 echo "Three-port smoke suite passed."
