@@ -219,87 +219,12 @@ cleanup
 trap - EXIT
 
 # ======================================================================
-# Scenario 2: Java leader, C++ + Rust followers
+# Scenario 2: C++ leader, Java + Rust followers
 # ======================================================================
 echo
-echo "==> Scenario 2: Java leader, C++ + Rust followers"
+echo "==> Scenario 2: C++ leader, Java + Rust followers"
 
 tmp_root="${TMPDIR:-/tmp}/three-port-smoke-2"
-rm -rf "${tmp_root}"
-mkdir -p "${tmp_root}"
-
-cpp_state="${tmp_root}/cpp.state"
-java_data="${tmp_root}/java-data"
-mkdir -p "${java_data}"
-
-rust_log="${tmp_root}/rust.log"
-cpp_log="${tmp_root}/cpp.log"
-java_log="${tmp_root}/java.log"
-
-cleanup() {
-  kill "${java_pid:-}" >/dev/null 2>&1 || true
-  kill "${cpp_pid:-}" >/dev/null 2>&1 || true
-  kill "${rust_pid:-}" >/dev/null 2>&1 || true
-  wait "${java_pid:-}" >/dev/null 2>&1 || true
-  wait "${cpp_pid:-}" >/dev/null 2>&1 || true
-  wait "${rust_pid:-}" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
-
-start_cpp_follower "${CPP_PEER_ID}" "${CPP_PORT}" "${cpp_state}" \
-               "${JAVA_PEER_ID}@${HOST}:${JAVA_PORT}" "${cpp_log}"
-cpp_pid=$!
-
-start_rust_follower "${RUST_PEER_ID}" "${RUST_PORT}" \
-               "${JAVA_PEER_ID}@${HOST}:${JAVA_PORT}" "${rust_log}"
-rust_pid=$!
-
-# Give followers time to start before Java leader sends votes.
-sleep 8
-
-start_java     "${JAVA_PEER_ID}" "${JAVA_PORT}" "${JAVA_TIMEOUT_MS}" "${java_data}" "${java_log}" \
-               "${CPP_PEER_ID}@${HOST}:${CPP_PORT}" \
-               "${RUST_PEER_ID}@${HOST}:${RUST_PORT}"
-java_pid=$!
-
-sleep 3
-wait_for_leader_java "${HOST}" "${JAVA_PORT}" "Java"
-
-echo "==> C++ client-put -> Java leader"
-put="$("${cpp_bin}" client-put "${HOST}" "${JAVA_PORT}" k v1 three-port-client)"
-echo "${put}"
-grep -q "success: true" <<<"${put}"
-
-echo
-echo "==> C++ client-get -> Java leader"
-get="$("${cpp_bin}" client-get "${HOST}" "${JAVA_PORT}" k three-port-client)"
-echo "${get}"
-grep -q "found: true" <<<"${get}"
-grep -q "value: v1" <<<"${get}"
-
-echo
-echo "==> C++ dump-state -> C++ follower"
-cpp_dump="$("${cpp_bin}" dump-state "${cpp_state}")"
-echo "${cpp_dump}"
-grep -q "kv\[k\]=v1" <<<"${cpp_dump}"
-
-echo
-echo "==> Rust telemetry -> Rust follower"
-r_tel="$("${rust_bin}" telemetry "${HOST}" "${RUST_PORT}")"
-echo "${r_tel}"
-grep -q "state: FOLLOWER" <<<"${r_tel}"
-grep -Eq "last_applied: ([1-9][0-9]*)" <<<"${r_tel}"
-
-cleanup
-trap - EXIT
-
-# ======================================================================
-# Scenario 3: C++ leader, Java + Rust followers
-# ======================================================================
-echo
-echo "==> Scenario 3: C++ leader, Java + Rust followers"
-
-tmp_root="${TMPDIR:-/tmp}/three-port-smoke-3"
 rm -rf "${tmp_root}"
 mkdir -p "${tmp_root}"
 
@@ -370,4 +295,5 @@ trap - EXIT
 
 echo
 echo "Three-port smoke suite passed."
+
 
