@@ -17,6 +17,7 @@
 package org.gautelis.raft.app.compensator;
 
 import org.gautelis.raft.ClusterConfiguration;
+import org.gautelis.raft.MembershipChangeListener;
 import org.gautelis.raft.RaftNode;
 import org.gautelis.raft.bootstrap.AdapterSpec;
 import org.gautelis.raft.bootstrap.BasicAdapter;
