@@ -485,8 +485,15 @@ fn run_server(
     active: bool,
     workload: Option<(u64, u64)>,
 ) -> Result<(), String> {
+    // Prefer IPv6 dual-stack for wildcard and loopback binds so that
+    // both v4 and v6 clients (including Java Netty's default v6
+    // preference) can reach the server on the same port.
+    let bind_host = match host {
+        "0.0.0.0" | "127.0.0.1" | "::1" | "localhost" => "::",
+        _ => host,
+    };
     let bind_addr =
-        SocketAddr::from_str(&format!("{}:{}", host, port)).map_err(|e| e.to_string())?;
+        SocketAddr::from_str(&format!("{}:{}", bind_host, port)).map_err(|e| e.to_string())?;
     let me = Peer::voter(peer_id.to_string(), bind_addr);
 
     let peer_specs = parse_peers(peers);

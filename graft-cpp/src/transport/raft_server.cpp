@@ -276,11 +276,34 @@ namespace graft {
         std::vector<std::uint8_t> write_buffer_;
     };
 
+    static boost::asio::ip::tcp::acceptor make_acceptor(boost::asio::io_context &io_context,
+                                                         boost::asio::ip::tcp::endpoint &ep,
+                                                         const std::string &bind_host,
+                                                         std::uint16_t port) {
+        // Prefer IPv6 dual-stack for wildcard and loopback binds so that
+        // both v4 and v6 clients (including Java Netty's default v6
+        // preference) can reach the server on the same port.
+        if (bind_host == "0.0.0.0" || bind_host == "127.0.0.1" || bind_host == "::1" || bind_host == "localhost") {
+            boost::system::error_code ec;
+            boost::asio::ip::tcp::acceptor acc(io_context);
+            acc.open(boost::asio::ip::tcp::v6(), ec);
+            if (!ec) {
+                acc.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+                acc.set_option(boost::asio::ip::v6_only(false), ec);
+            }
+            if (!ec) {
+                ep = boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), port);
+                return acc;
+            }
+        }
+        ep = boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(bind_host), port);
+        return boost::asio::ip::tcp::acceptor(io_context, ep);
+    }
+
     RaftServer::RaftServer(boost::asio::io_context &io_context, std::string bind_host, std::uint16_t port,
                            RpcHandlerPtr handler)
         : io_context_(io_context),
-          endpoint_(boost::asio::ip::make_address(bind_host), port),
-          acceptor_(io_context_, endpoint_),
+          acceptor_(make_acceptor(io_context, endpoint_, bind_host, port)),
           handler_(std::move(handler)) {
         if (!handler_) {
             throw std::runtime_error("raft server requires a handler");
