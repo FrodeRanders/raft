@@ -372,17 +372,33 @@ grep -q "found: true" <<<"${get}"
 grep -q "value: v1" <<<"${get}"
 
 echo
-echo "==> C++ dump-state -> C++ follower"
-cpp_dump="$("${cpp_bin}" dump-state "${cpp_state}")"
+echo "==> C++ dump-state -> C++ follower (waiting for replication)"
+kv_found=false
+for _ in $(seq 1 30); do
+  cpp_dump="$("${cpp_bin}" dump-state "${cpp_state}")"
+  if grep -q "kv\[k\]=v1" <<<"${cpp_dump}"; then
+    kv_found=true
+    break
+  fi
+  sleep 0.5
+done
 echo "${cpp_dump}"
-grep -q "kv\[k\]=v1" <<<"${cpp_dump}"
+[[ "${kv_found}" == "true" ]] || { echo "ERROR: C++ follower did not replicate kv[k]=v1" >&2; exit 1; }
 
 echo
-echo "==> Rust telemetry -> Rust follower"
-r_tel="$("${rust_bin}" telemetry "${HOST}" "${RUST_PORT}")"
+echo "==> Rust telemetry -> Rust follower (waiting for replication)"
+applied_found2=false
+for _ in $(seq 1 30); do
+  r_tel="$("${rust_bin}" telemetry "${HOST}" "${RUST_PORT}")"
+  if grep -q "state: FOLLOWER" <<<"${r_tel}" && grep -Eq "last_applied: ([2-9]|[1-9][0-9]+)" <<<"${r_tel}"; then
+    applied_found2=true
+    break
+  fi
+  sleep 0.5
+done
 echo "${r_tel}"
 grep -q "state: FOLLOWER" <<<"${r_tel}"
-grep -Eq "last_applied: ([1-9][0-9]*)" <<<"${r_tel}"
+[[ "${applied_found2}" == "true" ]] || { echo "ERROR: Rust follower did not replicate entry" >&2; exit 1; }
 
 cleanup
 trap - EXIT
