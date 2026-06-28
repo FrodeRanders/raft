@@ -293,6 +293,12 @@ namespace graft {
             }
             if (!ec) {
                 ep = boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), port);
+                acc.bind(ep, ec);
+            }
+            if (!ec) {
+                acc.listen(boost::asio::socket_base::max_listen_connections, ec);
+            }
+            if (!ec) {
                 return acc;
             }
         }
