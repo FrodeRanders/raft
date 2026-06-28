@@ -162,6 +162,10 @@ cleanup() {
   wait "${java_pid:-}" >/dev/null 2>&1 || true
   wait "${cpp_pid:-}" >/dev/null 2>&1 || true
   wait "${rust_pid:-}" >/dev/null 2>&1 || true
+  # Kill any orphaned Java processes that Maven forked (PID-only kill
+  # only terminates the mvn wrapper, not the JVM child).
+  pkill -f JavaPeerMain >/dev/null 2>&1 || true
+  pkill -f InteropProbe >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -243,6 +247,10 @@ cleanup() {
   wait "${java_pid:-}" >/dev/null 2>&1 || true
   wait "${cpp_pid:-}" >/dev/null 2>&1 || true
   wait "${rust_pid:-}" >/dev/null 2>&1 || true
+  # Kill any orphaned Java processes that Maven forked (PID-only kill
+  # only terminates the mvn wrapper, not the JVM child).
+  pkill -f JavaPeerMain >/dev/null 2>&1 || true
+  pkill -f InteropProbe >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -326,6 +334,10 @@ cleanup() {
   wait "${java_pid:-}" >/dev/null 2>&1 || true
   wait "${cpp_pid:-}" >/dev/null 2>&1 || true
   wait "${rust_pid:-}" >/dev/null 2>&1 || true
+  # Kill any orphaned Java processes that Maven forked (PID-only kill
+  # only terminates the mvn wrapper, not the JVM child).
+  pkill -f JavaPeerMain >/dev/null 2>&1 || true
+  pkill -f InteropProbe >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
