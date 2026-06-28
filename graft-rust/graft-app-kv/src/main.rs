@@ -491,7 +491,7 @@ fn run_server(
     // -Djava.net.preferIPv4Stack=true for compatibility.
     let bind_host = if cfg!(target_os = "linux") {
         match host {
-            "0.0.0.0" | "127.0.0.1" | "::1" | "localhost" => "::",
+            "0.0.0.0" | "127.0.0.1" | "::1" | "localhost" => "[::]",
             _ => host,
         }
     } else {
