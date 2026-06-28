@@ -8,7 +8,7 @@ usage() {
 Usage: ./run-docker-srv.sh [suite] [extra Jepsen args...]
 
 Suites:
-  smoke      baseline Java, C++, and mixed Docker/SRV runs
+  smoke      baseline Java, C++, Rust, and mixed Docker/SRV runs
   partition  Docker-network partition scenarios
   all        smoke + partition
 
@@ -77,6 +77,7 @@ run_case() {
 run_smoke() {
   run_case docker-srv-java-baseline java --time-limit 8 --concurrency 4
   run_case docker-srv-cpp-baseline cpp --time-limit 8 --concurrency 4 --client-impl cpp
+  run_case docker-srv-rust-baseline rust --time-limit 8 --concurrency 4 --client-impl rust
   run_case docker-srv-mixed-baseline mixed --time-limit 8 --concurrency 4 --client-impl mixed
 }
 
@@ -84,6 +85,7 @@ run_partition() {
   run_case docker-srv-java-partition-one java --time-limit 12 --concurrency 4 --nemesis partition-one --nemesis-interval 3
   run_case docker-srv-mixed-process-pause mixed --time-limit 12 --concurrency 4 --client-impl mixed --nemesis process-pause --nemesis-interval 3
   run_case docker-srv-mixed-partition-leader mixed --time-limit 12 --concurrency 4 --client-impl mixed --nemesis partition-leader --nemesis-interval 3
+  run_case docker-srv-rust-partition-one rust --time-limit 12 --concurrency 4 --client-impl rust --nemesis partition-one --nemesis-interval 3
 }
 
 case "${suite}" in
