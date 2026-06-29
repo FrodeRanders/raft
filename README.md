@@ -1,5 +1,10 @@
 # Graft
 
+[![CI](https://github.com/FrodeRanders/raft/actions/workflows/ci.yml/badge.svg)](https://github.com/FrodeRanders/raft/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Java](https://img.shields.io/badge/Java-21-orange.svg)](https://adoptium.net/)
+[![Version](https://img.shields.io/badge/version-1.0--SNAPSHOT-yellow.svg)](pom.xml)
+
 This repo contains three *interoperable* implementations of the Raft consensus protocol, making it possible to build clusters with applications developed in Java, C++, and Rust:
 
 - An asynchronous Raft **reference implementation** in Java, built on [Netty 4.2](https://netty.io).
