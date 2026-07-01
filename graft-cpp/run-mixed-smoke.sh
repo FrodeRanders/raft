@@ -56,10 +56,25 @@ cpp_pid=$!
 sleep 5
 
 echo "==> Java client-put -> C++ leader"
-put_output="$(./run-java-probe.sh client-put "${HOST}" "${CPP_PORT}" k v1 mixed-java-client)"
+put_success=false
+put_output=""
+for attempt in $(seq 1 10); do
+    put_output="$(./run-java-probe.sh client-put "${HOST}" "${CPP_PORT}" k v1 mixed-java-client)"
+    if echo "${put_output}" | grep -q "success: true" && echo "${put_output}" | grep -q "status: ACCEPTED"; then
+        put_success=true
+        echo "client-put succeeded on attempt ${attempt}"
+        break
+    fi
+    if [[ "${attempt}" -lt 10 ]]; then
+        echo "client-put rejected (attempt ${attempt}), waiting for leader election..."
+        sleep 2
+    fi
+done
 echo "${put_output}"
-grep -q "success: true" <<<"${put_output}"
-grep -q "status: ACCEPTED" <<<"${put_output}"
+if [[ "${put_success}" != true ]]; then
+    echo "FAILED: client-put was never accepted after 10 attempts"
+    exit 1
+fi
 
 echo
 echo "==> Java client-get -> C++ leader"
