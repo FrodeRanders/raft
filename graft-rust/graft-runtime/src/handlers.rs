@@ -865,12 +865,7 @@ fn handle_reconfig_status(handler: &RaftHandler, now_millis: i64, payload: &[u8]
         reconfiguration_active: joint,
         joint_consensus: joint,
         reconfiguration_age_millis: reconfig_age,
-        cluster_health: if is_stuck {
-            "DEGRADED"
-        } else {
-            "OK"
-        }
-        .to_string(),
+        cluster_health: if is_stuck { "DEGRADED" } else { "OK" }.to_string(),
         cluster_status_reason: if is_stuck {
             "Joint consensus transition has not progressed"
         } else {

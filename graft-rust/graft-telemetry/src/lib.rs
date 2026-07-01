@@ -149,10 +149,7 @@ fn format_prometheus_metrics(node: &RaftNode) -> String {
     let lt = node.log_store.last_term();
     let si = node.log_store.snapshot_index();
     let st = node.log_store.snapshot_term();
-    let voting = node
-        .cluster_configuration
-        .current_voting_members()
-        .len();
+    let voting = node.cluster_configuration.current_voting_members().len();
     let total = node.cluster_configuration.current_members().len();
     let joined = node.joining;
     let decommissioned = node.decommissioned;
@@ -184,7 +181,11 @@ fn format_prometheus_metrics(node: &RaftNode) -> String {
 
     // Raft state metrics (matching Java Prometheus exporter)
     gauge!("raft_term", "Current Raft term.", node.current_term);
-    gauge!("raft_state", "Node state (0=follower, 1=candidate, 2=leader).", state_num);
+    gauge!(
+        "raft_state",
+        "Node state (0=follower, 1=candidate, 2=leader).",
+        state_num
+    );
     gauge!("raft_commit_index", "Latest committed log index.", ci);
     gauge!("raft_last_applied", "Last applied log index.", la);
     gauge!("raft_last_log_index", "Last log index.", li);
@@ -193,12 +194,36 @@ fn format_prometheus_metrics(node: &RaftNode) -> String {
     gauge!("raft_snapshot_term", "Snapshot term.", st);
     gauge!("raft_members_total", "Total cluster members.", total);
     gauge!("raft_voting_members", "Voting members.", voting);
-    gauge!("raft_joint_consensus", "Joint consensus active (1=yes, 0=no).", joint);
-    gauge!("raft_followers_replicating", "Number of followers caught up to commit index.", followers_replicating);
-    gauge!("raft_pending_joins", "Number of pending join requests.", pending_joins);
-    gauge!("raft_joining", "Node is joining (1=yes, 0=no).", if joined { 1 } else { 0 });
-    gauge!("raft_decommissioned", "Node is decommissioned (1=yes, 0=no).", if decommissioned { 1 } else { 0 });
-    gauge!("raft_reconfiguration_age_millis", "Milliseconds since reconfiguration started.", reconfig_age);
+    gauge!(
+        "raft_joint_consensus",
+        "Joint consensus active (1=yes, 0=no).",
+        joint
+    );
+    gauge!(
+        "raft_followers_replicating",
+        "Number of followers caught up to commit index.",
+        followers_replicating
+    );
+    gauge!(
+        "raft_pending_joins",
+        "Number of pending join requests.",
+        pending_joins
+    );
+    gauge!(
+        "raft_joining",
+        "Node is joining (1=yes, 0=no).",
+        if joined { 1 } else { 0 }
+    );
+    gauge!(
+        "raft_decommissioned",
+        "Node is decommissioned (1=yes, 0=no).",
+        if decommissioned { 1 } else { 0 }
+    );
+    gauge!(
+        "raft_reconfiguration_age_millis",
+        "Milliseconds since reconfiguration started.",
+        reconfig_age
+    );
 
     buf
 }
@@ -252,11 +277,7 @@ fn format_otel_json_log(node: &RaftNode) -> String {
 /// Serves Prometheus metrics over HTTP using a raw TCP listener.
 /// This avoids pulling in a full HTTP framework — tokio is already a
 /// dependency and the Prometheus scrape protocol is trivial.
-async fn serve_prometheus(
-    node: Arc<Mutex<RaftNode>>,
-    bind_addr: SocketAddr,
-    metrics_path: &str,
-) {
+async fn serve_prometheus(node: Arc<Mutex<RaftNode>>, bind_addr: SocketAddr, metrics_path: &str) {
     let listener = match TcpListener::bind(bind_addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -348,10 +369,7 @@ fn format_otlp_json(node: &RaftNode) -> String {
         .map(|s| s.elapsed().as_millis() as i64)
         .unwrap_or(0);
 
-    let voting = node
-        .cluster_configuration
-        .current_voting_members()
-        .len();
+    let voting = node.cluster_configuration.current_voting_members().len();
     let total = node.cluster_configuration.current_members().len();
 
     serde_json::json!({
@@ -437,7 +455,10 @@ async fn push_otlp(
 /// and writes it to the tracing INFO level.  This matches the Java
 /// `OpenTelemetryJsonExporter` pattern of emitting to a named logger.
 async fn publish_otel_log(node: Arc<Mutex<RaftNode>>, interval: Duration) {
-    info!("OTEL JSON log telemetry export started (interval={}s)", interval.as_secs());
+    info!(
+        "OTEL JSON log telemetry export started (interval={}s)",
+        interval.as_secs()
+    );
 
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -477,7 +498,8 @@ impl TelemetryPublisher {
     pub fn prometheus_bind_addr(&self) -> Option<SocketAddr> {
         match &self.exporter {
             TelemetryExporter::Prometheus { host, port, .. } => Some(SocketAddr::new(
-                host.parse().unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
+                host.parse()
+                    .unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
                 *port,
             )),
             _ => None,
@@ -493,7 +515,8 @@ impl TelemetryPublisher {
             }
             TelemetryExporter::Prometheus { host, port, path } => {
                 let bind_addr = SocketAddr::new(
-                    host.parse().unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
+                    host.parse()
+                        .unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
                     *port,
                 );
                 let node = self.node.clone();

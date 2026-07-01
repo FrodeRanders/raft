@@ -47,7 +47,10 @@ use crate::error::TransportError;
 ///
 /// Returns `TransportError::ConnectionClosed` when the peer cleanly shuts
 /// down the connection (read returns 0 bytes).
-pub async fn read_envelope(stream: &mut TcpStream, buf: &mut BytesMut) -> Result<Envelope, TransportError> {
+pub async fn read_envelope(
+    stream: &mut TcpStream,
+    buf: &mut BytesMut,
+) -> Result<Envelope, TransportError> {
     loop {
         // Try to parse a complete frame from the buffer first.
         if let Some(envelope) = try_parse_envelope(buf)? {
@@ -98,7 +101,10 @@ fn try_parse_envelope(buf: &mut BytesMut) -> Result<Option<Envelope>, TransportE
 /// Serializes an Envelope and writes it to the TCP stream with a varint32
 /// length prefix. The frame is written as a single `write_all` to avoid
 /// fragmentation.
-pub async fn write_envelope(stream: &mut TcpStream, envelope: &Envelope) -> Result<(), TransportError> {
+pub async fn write_envelope(
+    stream: &mut TcpStream,
+    envelope: &Envelope,
+) -> Result<(), TransportError> {
     let payload = envelope.encode_to_vec();
     let mut frame = BytesMut::with_capacity(5 + payload.len());
     graft_proto::encode_varint32(payload.len() as u32, &mut frame);

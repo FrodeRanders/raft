@@ -53,7 +53,11 @@ impl Peer {
 
     /// Convenience constructor for a voting peer.
     pub fn voter(id: String, address: SocketAddr) -> Self {
-        Self { id, address, role: Role::Voter }
+        Self {
+            id,
+            address,
+            role: Role::Voter,
+        }
     }
 
     pub fn is_voter(&self) -> bool {
@@ -85,14 +89,22 @@ pub struct LogEntry {
 
 impl LogEntry {
     pub fn new(term: u64, peer_id: String, data: Vec<u8>) -> Self {
-        Self { term, peer_id, data }
+        Self {
+            term,
+            peer_id,
+            data,
+        }
     }
 
     /// Creates a no-op entry for leader-election anchoring (Figure 2 leader
     /// completeness). The leader appends a no-op in its own term after winning
     /// an election so that prior entries become indirectly committed.
     pub fn noop(term: u64, peer_id: String) -> Self {
-        Self { term, peer_id, data: Vec::new() }
+        Self {
+            term,
+            peer_id,
+            data: Vec::new(),
+        }
     }
 
     /// No-op entries carry empty data and are skipped during commit/apply.

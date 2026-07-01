@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-use std::collections::HashSet;
 use indexmap::IndexMap;
+use std::collections::HashSet;
 
 use crate::types::Peer;
 
@@ -50,10 +50,8 @@ impl ClusterConfiguration {
     /// Panics if the list is empty.
     pub fn stable(members: Vec<Peer>) -> Self {
         assert!(!members.is_empty(), "must have at least one member");
-        let current_members: IndexMap<String, Peer> = members
-            .into_iter()
-            .map(|p| (p.id.clone(), p))
-            .collect();
+        let current_members: IndexMap<String, Peer> =
+            members.into_iter().map(|p| (p.id.clone(), p)).collect();
         Self {
             current_members,
             next_members: IndexMap::new(),
@@ -196,12 +194,7 @@ impl ClusterConfiguration {
     /// Quorum size for next voting members; falls back to current if stable.
     pub fn next_majority_size(&self) -> usize {
         if self.is_joint_consensus() {
-            majority_size(
-                self.next_members
-                    .values()
-                    .filter(|p| p.is_voter())
-                    .count(),
-            )
+            majority_size(self.next_members.values().filter(|p| p.is_voter()).count())
         } else {
             self.current_majority_size()
         }
@@ -248,8 +241,7 @@ impl ClusterConfiguration {
     /// Deep equality check — true when both current and next member maps
     /// are identical.
     pub fn same_membership_as(&self, other: &ClusterConfiguration) -> bool {
-        self.current_members == other.current_members
-            && self.next_members == other.next_members
+        self.current_members == other.current_members && self.next_members == other.next_members
     }
 }
 

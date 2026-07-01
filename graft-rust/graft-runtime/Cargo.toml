@@ -1,15 +1,21 @@
 [package]
-name = "graft-runtime"
+name = "gautelis-graft-runtime"
+description = "Async runtime for Graft Raft node operation"
+repository = "https://github.com/FrodeRanders/raft"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+
+[lib]
+name = "graft_runtime"
+
 [dependencies]
-graft-proto = { path = "../graft-proto" }
-graft-core = { path = "../graft-core" }
-graft-storage = { path = "../graft-storage" }
-graft-transport = { path = "../graft-transport" }
-graft-telemetry = { path = "../graft-telemetry" }
+gautelis-graft-proto = { path = "../graft-proto" }
+gautelis-graft-core = { path = "../graft-core" }
+gautelis-graft-storage = { path = "../graft-storage" }
+gautelis-graft-transport = { path = "../graft-transport" }
+gautelis-graft-telemetry = { path = "../graft-telemetry" }
 prost.workspace = true
 bytes.workspace = true
 tokio.workspace = true

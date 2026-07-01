@@ -73,10 +73,16 @@ pub fn decode_varint32(buf: &mut impl Buf) -> io::Result<u32> {
 
     loop {
         if shift >= 35 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "malformed varint32"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "malformed varint32",
+            ));
         }
         if !buf.has_remaining() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete varint32"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "incomplete varint32",
+            ));
         }
         let byte = buf.get_u8();
         result |= ((byte & 0x7F) as u32) << shift;
@@ -105,7 +111,10 @@ pub fn encode_frame(message: &impl Message) -> BytesMut {
 pub fn decode_frame<T: Message + Default>(buf: &mut BytesMut) -> io::Result<T> {
     let len = decode_varint32(buf)? as usize;
     if buf.remaining() < len {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame"));
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "incomplete frame",
+        ));
     }
     let payload = buf.split_to(len);
     T::decode(&payload[..]).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))

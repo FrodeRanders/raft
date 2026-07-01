@@ -32,7 +32,8 @@ pub fn encode_join_command(peer: &raft::PeerSpec) -> Vec<u8> {
         command: Some(Command::Join(raft::JoinPeerCommand {
             member: Some(peer.clone()),
         })),
-    }.encode_to_vec()
+    }
+    .encode_to_vec()
 }
 
 /// Encodes a JOINT command: enter joint consensus with the given members.
@@ -41,12 +42,14 @@ pub fn encode_joint_command(members: &[raft::PeerSpec]) -> Vec<u8> {
         command: Some(Command::Joint(raft::JointConfigurationCommand {
             members: members.to_vec(),
         })),
-    }.encode_to_vec()
+    }
+    .encode_to_vec()
 }
 
 /// Encodes a FINALIZE command: exit joint consensus.
 pub fn encode_finalize_command() -> Vec<u8> {
     raft::InternalRaftCommand {
         command: Some(Command::Finalize(raft::FinalizeConfigurationCommand {})),
-    }.encode_to_vec()
+    }
+    .encode_to_vec()
 }

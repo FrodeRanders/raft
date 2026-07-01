@@ -5,11 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dev-dependencies]
-graft-proto = { path = "../graft-proto" }
-graft-core = { path = "../graft-core" }
-graft-storage = { path = "../graft-storage" }
-graft-transport = { path = "../graft-transport" }
-graft-runtime = { path = "../graft-runtime" }
+gautelis-graft-proto = { path = "../graft-proto" }
+gautelis-graft-core = { path = "../graft-core" }
+gautelis-graft-storage = { path = "../graft-storage" }
+gautelis-graft-transport = { path = "../graft-transport" }
+gautelis-graft-runtime = { path = "../graft-runtime" }
 tokio.workspace = true
 prost.workspace = true
 bytes.workspace = true

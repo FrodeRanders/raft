@@ -420,9 +420,7 @@ fn dump_state(state_file: &str) -> Result<(), String> {
         // Reconstruct KV state from snapshot
         if !snapshot_data.is_empty() {
             let app_snapshot = snapshot_codec::unwrap_snapshot_payload(&snapshot_data);
-            if let Some(restored) =
-                snapshot_codec::deserialize_key_value_snapshot(&app_snapshot)
-            {
+            if let Some(restored) = snapshot_codec::deserialize_key_value_snapshot(&app_snapshot) {
                 kv = restored;
             }
         }
@@ -433,9 +431,7 @@ fn dump_state(state_file: &str) -> Result<(), String> {
                 continue;
             }
             last_applied = std::cmp::max(last_applied, *index);
-            if let Ok(cmd) =
-                graft_proto::raft::StateMachineCommand::decode(&data[..])
-            {
+            if let Ok(cmd) = graft_proto::raft::StateMachineCommand::decode(&data[..]) {
                 graft_app_kv::KeyValueStateMachine::apply_command(&mut kv, &cmd);
             }
         }
@@ -448,7 +444,14 @@ fn dump_state(state_file: &str) -> Result<(), String> {
             .unwrap_or(snapshot_index);
     }
 
-    println!("peer_id: {}", if peer_id.is_empty() { "(unknown)" } else { &peer_id });
+    println!(
+        "peer_id: {}",
+        if peer_id.is_empty() {
+            "(unknown)"
+        } else {
+            &peer_id
+        }
+    );
     println!("current_term: {}", current_term);
     if !voted_for.is_empty() {
         println!("voted_for: {}", voted_for);
@@ -725,11 +728,9 @@ fn client_put(host: &str, port: u16, key: &str, value: &str, peer_id: &str) -> R
 
 fn client_get(host: &str, port: u16, key: &str, peer_id: &str) -> Result<(), String> {
     let q = raft::StateMachineQuery {
-        query: Some(raft::state_machine_query::Query::Get(
-            raft::GetValueQuery {
-                key: key.to_string(),
-            },
-        )),
+        query: Some(raft::state_machine_query::Query::Get(raft::GetValueQuery {
+            key: key.to_string(),
+        })),
     };
     let req = raft::ClientQueryRequest {
         term: 0,
@@ -1109,13 +1110,17 @@ fn reconfiguration_status(host: &str, port: u16) -> Result<(), String> {
         "ReconfigurationStatusRequest",
         req.encode_to_vec(),
     )?;
-    let resp = raft::ReconfigurationStatusResponse::decode(&resp_bytes[..]).map_err(|e| e.to_string())?;
+    let resp =
+        raft::ReconfigurationStatusResponse::decode(&resp_bytes[..]).map_err(|e| e.to_string())?;
     println!("success: {}", resp.success);
     println!("status: {}", resp.status);
     println!("joint_consensus: {}", resp.joint_consensus);
     println!("reconfiguration_active: {}", resp.reconfiguration_active);
     if resp.joint_consensus {
-        println!("reconfiguration_age_millis: {}", resp.reconfiguration_age_millis);
+        println!(
+            "reconfiguration_age_millis: {}",
+            resp.reconfiguration_age_millis
+        );
     }
     Ok(())
 }
@@ -1186,11 +1191,9 @@ fn replicate_once(
     // Poll until the key is readable (committed)
     for _ in 0..30 {
         let q = raft::StateMachineQuery {
-            query: Some(raft::state_machine_query::Query::Get(
-                raft::GetValueQuery {
-                    key: key.to_string(),
-                },
-            )),
+            query: Some(raft::state_machine_query::Query::Get(raft::GetValueQuery {
+                key: key.to_string(),
+            })),
         };
         let req = raft::ClientQueryRequest {
             term: 0,

@@ -58,9 +58,18 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
             break;
         }
         let v0 = DECODE.get(bytes[i] as usize).copied().unwrap_or(-1);
-        let v1 = DECODE.get(bytes.get(i + 1).copied().unwrap_or(0) as usize).copied().unwrap_or(-1);
-        let v2 = DECODE.get(bytes.get(i + 2).copied().unwrap_or(0) as usize).copied().unwrap_or(-1);
-        let v3 = DECODE.get(bytes.get(i + 3).copied().unwrap_or(0) as usize).copied().unwrap_or(-1);
+        let v1 = DECODE
+            .get(bytes.get(i + 1).copied().unwrap_or(0) as usize)
+            .copied()
+            .unwrap_or(-1);
+        let v2 = DECODE
+            .get(bytes.get(i + 2).copied().unwrap_or(0) as usize)
+            .copied()
+            .unwrap_or(-1);
+        let v3 = DECODE
+            .get(bytes.get(i + 3).copied().unwrap_or(0) as usize)
+            .copied()
+            .unwrap_or(-1);
         if v0 < 0 || v1 < 0 {
             return None;
         }

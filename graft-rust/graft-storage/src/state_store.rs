@@ -74,7 +74,8 @@ impl FilePersistentStateStore {
                         }
                         "voted" => {
                             let v = value.trim().to_string();
-                            *self.voted_for.lock().unwrap() = if v.is_empty() { None } else { Some(v) };
+                            *self.voted_for.lock().unwrap() =
+                                if v.is_empty() { None } else { Some(v) };
                         }
                         _ => {}
                     }

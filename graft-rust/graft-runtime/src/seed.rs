@@ -117,7 +117,11 @@ impl DnsSrvSeedProvider {
                     let host = parts[3].trim_end_matches('.');
                     // Use the hostname as the peer id (stripping domain suffix)
                     let peer_id = host.split('.').next().unwrap_or(host).to_string();
-                    Some(SeedEndpoint { peer_id, host: host.to_string(), port })
+                    Some(SeedEndpoint {
+                        peer_id,
+                        host: host.to_string(),
+                        port,
+                    })
                 } else {
                     None
                 }
@@ -139,7 +143,11 @@ impl DnsSrvSeedProvider {
                         let port: u16 = parts[pos + 3].parse().ok()?;
                         let host = parts[pos + 4].trim_end_matches('.');
                         let peer_id = host.split('.').next().unwrap_or(host).to_string();
-                        return Some(SeedEndpoint { peer_id, host: host.to_string(), port });
+                        return Some(SeedEndpoint {
+                            peer_id,
+                            host: host.to_string(),
+                            port,
+                        });
                     }
                 }
                 None

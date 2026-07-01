@@ -20,7 +20,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use graft_core::raft_node::{LogStore as LogStoreTrait, PersistentStateStore as PersistentStateStoreTrait};
+use graft_core::raft_node::{
+    LogStore as LogStoreTrait, PersistentStateStore as PersistentStateStoreTrait,
+};
 use graft_core::types::LogEntry;
 
 /// A file-backed Raft log store that persists log entries and snapshot
@@ -81,7 +83,10 @@ impl FileLogStore {
         let mut entries = Vec::new();
 
         for line in reader.lines() {
-            let line = match line { Ok(l) => l, Err(_) => continue };
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
             if let Some((key, value)) = line.split_once('=') {
                 match key.trim() {
                     "snapshot_index" => {
@@ -193,26 +198,39 @@ impl LogStoreTrait for FileLogStore {
     fn last_index(&self) -> u64 {
         let entries = self.entries.lock().unwrap();
         let si = *self.snapshot_index.lock().unwrap();
-        if entries.is_empty() { si } else { si + entries.len() as u64 }
+        if entries.is_empty() {
+            si
+        } else {
+            si + entries.len() as u64
+        }
     }
     fn last_term(&self) -> u64 {
         let entries = self.entries.lock().unwrap();
-        entries.last().map(|e| e.term).unwrap_or_else(|| {
-            *self.snapshot_term.lock().unwrap()
-        })
+        entries
+            .last()
+            .map(|e| e.term)
+            .unwrap_or_else(|| *self.snapshot_term.lock().unwrap())
     }
     fn term_at(&self, index: u64) -> u64 {
-        if index == 0 { return 0; }
+        if index == 0 {
+            return 0;
+        }
         let si = *self.snapshot_index.lock().unwrap();
-        if index == si { return *self.snapshot_term.lock().unwrap(); }
-        if index < si { return 0; }
+        if index == si {
+            return *self.snapshot_term.lock().unwrap();
+        }
+        if index < si {
+            return 0;
+        }
         let entries = self.entries.lock().unwrap();
         let local = (index - si - 1) as usize;
         entries.get(local).map(|e| e.term).unwrap_or(0)
     }
     fn entry_at(&self, index: u64) -> Option<LogEntry> {
         let si = *self.snapshot_index.lock().unwrap();
-        if index <= si { return None; }
+        if index <= si {
+            return None;
+        }
         let entries = self.entries.lock().unwrap();
         let local = (index - si - 1) as usize;
         entries.get(local).cloned()
@@ -223,7 +241,9 @@ impl LogStoreTrait for FileLogStore {
     }
     fn truncate_from(&self, index: u64) {
         let si = *self.snapshot_index.lock().unwrap();
-        if index <= si { return; }
+        if index <= si {
+            return;
+        }
         let mut entries = self.entries.lock().unwrap();
         let local = (index - si - 1) as usize;
         if local < entries.len() {
@@ -233,15 +253,21 @@ impl LogStoreTrait for FileLogStore {
     }
     fn entries_from(&self, index: u64) -> Vec<LogEntry> {
         let si = *self.snapshot_index.lock().unwrap();
-        if index <= si { return vec![]; }
+        if index <= si {
+            return vec![];
+        }
         let entries = self.entries.lock().unwrap();
         let local = (index - si - 1) as usize;
-        if local >= entries.len() { return vec![]; }
+        if local >= entries.len() {
+            return vec![];
+        }
         entries[local..].to_vec()
     }
     fn compact_up_to(&self, index: u64) {
         let si = *self.snapshot_index.lock().unwrap();
-        if index <= si { return; }
+        if index <= si {
+            return;
+        }
         let remove_count = (index - si) as usize;
         let mut entries = self.entries.lock().unwrap();
         if remove_count <= entries.len() {
@@ -255,7 +281,12 @@ impl LogStoreTrait for FileLogStore {
     fn snapshot_data(&self) -> Vec<u8> {
         self.snapshot_data.lock().unwrap().clone()
     }
-    fn install_snapshot(&self, last_included_index: u64, last_included_term: u64, snapshot_data: Vec<u8>) {
+    fn install_snapshot(
+        &self,
+        last_included_index: u64,
+        last_included_term: u64,
+        snapshot_data: Vec<u8>,
+    ) {
         *self.snapshot_index.lock().unwrap() = last_included_index;
         *self.snapshot_term.lock().unwrap() = last_included_term;
         *self.snapshot_data.lock().unwrap() = snapshot_data;
@@ -292,7 +323,9 @@ pub fn base64_encode(data: &[u8]) -> String {
 
 pub fn base64_decode(s: &str) -> Vec<u8> {
     let s = s.trim();
-    if s.is_empty() { return vec![]; }
+    if s.is_empty() {
+        return vec![];
+    }
     let mut out = Vec::new();
     let mut buffer: u32 = 0;
     let mut bits = 0;
@@ -341,58 +374,95 @@ impl InMemoryLogStore {
 }
 
 impl LogStoreTrait for InMemoryLogStore {
-    fn snapshot_index(&self) -> u64 { *self.snapshot_index.lock().unwrap() }
-    fn snapshot_term(&self) -> u64 { *self.snapshot_term.lock().unwrap() }
+    fn snapshot_index(&self) -> u64 {
+        *self.snapshot_index.lock().unwrap()
+    }
+    fn snapshot_term(&self) -> u64 {
+        *self.snapshot_term.lock().unwrap()
+    }
     fn last_index(&self) -> u64 {
         let entries = self.entries.lock().unwrap();
         let si = *self.snapshot_index.lock().unwrap();
-        if entries.is_empty() { si } else { si + entries.len() as u64 }
+        if entries.is_empty() {
+            si
+        } else {
+            si + entries.len() as u64
+        }
     }
     fn last_term(&self) -> u64 {
         let entries = self.entries.lock().unwrap();
-        entries.last().map(|e| e.term).unwrap_or_else(|| *self.snapshot_term.lock().unwrap())
+        entries
+            .last()
+            .map(|e| e.term)
+            .unwrap_or_else(|| *self.snapshot_term.lock().unwrap())
     }
     fn term_at(&self, index: u64) -> u64 {
-        if index == 0 { return 0; }
+        if index == 0 {
+            return 0;
+        }
         let si = *self.snapshot_index.lock().unwrap();
-        if index == si { return *self.snapshot_term.lock().unwrap(); }
-        if index < si { return 0; }
+        if index == si {
+            return *self.snapshot_term.lock().unwrap();
+        }
+        if index < si {
+            return 0;
+        }
         let entries = self.entries.lock().unwrap();
         let local = (index - si - 1) as usize;
         entries.get(local).map(|e| e.term).unwrap_or(0)
     }
     fn entry_at(&self, index: u64) -> Option<LogEntry> {
         let si = *self.snapshot_index.lock().unwrap();
-        if index <= si { return None; }
+        if index <= si {
+            return None;
+        }
         let entries = self.entries.lock().unwrap();
         let local = (index - si - 1) as usize;
         entries.get(local).cloned()
     }
-    fn append(&self, new_entries: Vec<LogEntry>) { self.entries.lock().unwrap().extend(new_entries); }
+    fn append(&self, new_entries: Vec<LogEntry>) {
+        self.entries.lock().unwrap().extend(new_entries);
+    }
     fn truncate_from(&self, index: u64) {
         let si = *self.snapshot_index.lock().unwrap();
-        if index <= si { return; }
+        if index <= si {
+            return;
+        }
         let mut entries = self.entries.lock().unwrap();
         let local = (index - si - 1) as usize;
-        if local < entries.len() { entries.truncate(local); }
+        if local < entries.len() {
+            entries.truncate(local);
+        }
     }
     fn entries_from(&self, index: u64) -> Vec<LogEntry> {
         let si = *self.snapshot_index.lock().unwrap();
-        if index <= si { return vec![]; }
+        if index <= si {
+            return vec![];
+        }
         let entries = self.entries.lock().unwrap();
         let local = (index - si - 1) as usize;
-        if local >= entries.len() { return vec![]; }
+        if local >= entries.len() {
+            return vec![];
+        }
         entries[local..].to_vec()
     }
     fn compact_up_to(&self, index: u64) {
         let si = *self.snapshot_index.lock().unwrap();
-        if index <= si { return; }
+        if index <= si {
+            return;
+        }
         let remove_count = (index - si) as usize;
         let mut entries = self.entries.lock().unwrap();
-        if remove_count <= entries.len() { entries.drain(0..remove_count); } else { entries.clear(); }
+        if remove_count <= entries.len() {
+            entries.drain(0..remove_count);
+        } else {
+            entries.clear();
+        }
         *self.snapshot_index.lock().unwrap() = index;
     }
-    fn snapshot_data(&self) -> Vec<u8> { self.snapshot_data.lock().unwrap().clone() }
+    fn snapshot_data(&self) -> Vec<u8> {
+        self.snapshot_data.lock().unwrap().clone()
+    }
     fn install_snapshot(&self, li: u64, lt: u64, sd: Vec<u8>) {
         *self.snapshot_index.lock().unwrap() = li;
         *self.snapshot_term.lock().unwrap() = lt;
@@ -409,13 +479,24 @@ pub struct InMemoryPersistentStateStore {
 
 impl InMemoryPersistentStateStore {
     pub fn new() -> Self {
-        Self { current_term: Mutex::new(0), voted_for: Mutex::new(None) }
+        Self {
+            current_term: Mutex::new(0),
+            voted_for: Mutex::new(None),
+        }
     }
 }
 
 impl PersistentStateStoreTrait for InMemoryPersistentStateStore {
-    fn current_term(&self) -> u64 { *self.current_term.lock().unwrap() }
-    fn set_current_term(&self, term: u64) { *self.current_term.lock().unwrap() = term; }
-    fn voted_for(&self) -> Option<String> { self.voted_for.lock().unwrap().clone() }
-    fn set_voted_for(&self, peer_id: Option<String>) { *self.voted_for.lock().unwrap() = peer_id; }
+    fn current_term(&self) -> u64 {
+        *self.current_term.lock().unwrap()
+    }
+    fn set_current_term(&self, term: u64) {
+        *self.current_term.lock().unwrap() = term;
+    }
+    fn voted_for(&self) -> Option<String> {
+        self.voted_for.lock().unwrap().clone()
+    }
+    fn set_voted_for(&self, peer_id: Option<String>) {
+        *self.voted_for.lock().unwrap() = peer_id;
+    }
 }

@@ -1318,11 +1318,8 @@ impl RaftNode {
             } else {
                 Vec::new()
             };
-            let wrapped = crate::snapshot_codec::wrap_snapshot_payload(
-                &current_ids,
-                &next_ids,
-                &sm_snapshot,
-            );
+            let wrapped =
+                crate::snapshot_codec::wrap_snapshot_payload(&current_ids, &next_ids, &sm_snapshot);
             let term = self.log_store.term_at(self.commit_index);
             self.log_store.compact_up_to(self.commit_index);
             self.log_store
@@ -1399,8 +1396,7 @@ impl RaftNode {
 
                 // Unwrap the membership envelope (Java/C++ compatible) to
                 // restore the cluster configuration at the snapshot boundary.
-                let app_snapshot =
-                    crate::snapshot_codec::unwrap_snapshot_payload(&installed_data);
+                let app_snapshot = crate::snapshot_codec::unwrap_snapshot_payload(&installed_data);
                 if let Some(ref sm) = self.state_machine {
                     sm.restore(&app_snapshot);
                 }

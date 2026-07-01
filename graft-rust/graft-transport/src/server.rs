@@ -43,8 +43,12 @@ use crate::error::TransportError;
 /// message, but callers will reject it because type/correlation/payload
 /// are absent.
 pub trait MessageHandler: Send + Sync {
-    fn handle(&self, correlation_id: &str, envelope_type: &str, payload: &[u8])
-        -> Result<Vec<u8>, String>;
+    fn handle(
+        &self,
+        correlation_id: &str,
+        envelope_type: &str,
+        payload: &[u8],
+    ) -> Result<Vec<u8>, String>;
 }
 
 // ---------------------------------------------------------------------------
@@ -115,13 +119,14 @@ async fn handle_connection(
         // Dispatch to the runtime handler. The handler is responsible for
         // parsing the inner protobuf message, calling into RaftNode, and
         // returning serialized response bytes.
-        let response_payload = match handler.handle(&correlation_id, &envelope_type, &envelope.payload) {
-            Ok(payload) => payload,
-            Err(e) => {
-                error!("Handler error for type {}: {}", envelope_type, e);
-                continue;
-            }
-        };
+        let response_payload =
+            match handler.handle(&correlation_id, &envelope_type, &envelope.payload) {
+                Ok(payload) => payload,
+                Err(e) => {
+                    error!("Handler error for type {}: {}", envelope_type, e);
+                    continue;
+                }
+            };
 
         // Wrap the response in an Envelope and send it back.
         let response = Envelope {

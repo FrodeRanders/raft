@@ -24,7 +24,7 @@ use dashmap::DashMap;
 use graft_proto::Envelope;
 use parking_lot::Mutex;
 use tokio::net::TcpStream;
-use tokio::sync::{Mutex as TokioMutex, oneshot};
+use tokio::sync::{oneshot, Mutex as TokioMutex};
 use tokio::time::timeout;
 
 use crate::codec;
@@ -91,16 +91,20 @@ impl RaftClient {
 
     /// Returns a pooled TCP connection to the given peer, establishing one
     /// if no cached connection exists.
-    async fn get_connection(&self, peer_id: &str) -> Result<Arc<TokioMutex<TcpStream>>, TransportError> {
+    async fn get_connection(
+        &self,
+        peer_id: &str,
+    ) -> Result<Arc<TokioMutex<TcpStream>>, TransportError> {
         if let Some(conn) = self.connections.get(peer_id) {
             return Ok(conn.clone());
         }
 
         let addr = {
             let addrs = self.peer_addrs.lock();
-            addrs.get(peer_id).copied().ok_or_else(|| {
-                TransportError::SendError(format!("unknown peer: {}", peer_id))
-            })?
+            addrs
+                .get(peer_id)
+                .copied()
+                .ok_or_else(|| TransportError::SendError(format!("unknown peer: {}", peer_id)))?
         };
 
         let stream = TcpStream::connect(addr).await?;
@@ -129,10 +133,8 @@ impl RaftClient {
         let correlation_id = self.next_correlation_id();
         let (tx, rx) = oneshot::channel();
 
-        self.pending.insert(
-            correlation_id.clone(),
-            PendingRequest { tx },
-        );
+        self.pending
+            .insert(correlation_id.clone(), PendingRequest { tx });
 
         let envelope = Envelope {
             correlation_id: correlation_id.clone(),
@@ -193,7 +195,8 @@ impl RaftClient {
         codec::write_envelope(&mut stream, &envelope).await?;
 
         let mut buf = bytes::BytesMut::with_capacity(8192);
-        let resp = timeout(REQUEST_TIMEOUT, codec::read_envelope(&mut stream, &mut buf)).await
+        let resp = timeout(REQUEST_TIMEOUT, codec::read_envelope(&mut stream, &mut buf))
+            .await
             .map_err(|_| TransportError::Timeout)??;
         Ok(resp.payload)
     }
@@ -202,8 +205,9 @@ impl RaftClient {
     /// if the peer is unknown.
     pub fn peer_addr(&self, peer_id: &str) -> Result<SocketAddr, TransportError> {
         let addrs = self.peer_addrs.lock();
-        addrs.get(peer_id).copied().ok_or_else(|| {
-            TransportError::SendError(format!("unknown peer: {}", peer_id))
-        })
+        addrs
+            .get(peer_id)
+            .copied()
+            .ok_or_else(|| TransportError::SendError(format!("unknown peer: {}", peer_id)))
     }
 }

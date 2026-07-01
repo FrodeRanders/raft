@@ -102,8 +102,8 @@ impl StateMachine for KeyValueStateMachine {
             Some(Command::Cas(cas)) => {
                 let current = store.get(&cas.key).cloned();
                 let current_present = current.is_some();
-                let current_value = String::from_utf8(current.clone().unwrap_or_default())
-                    .unwrap_or_default();
+                let current_value =
+                    String::from_utf8(current.clone().unwrap_or_default()).unwrap_or_default();
 
                 let matched = current_present == cas.expected_present
                     && (!cas.expected_present
@@ -213,14 +213,12 @@ mod tests {
         sm.apply(1, &put_cmd.encode_to_vec());
 
         let get_q = raft::StateMachineQuery {
-            query: Some(raft::state_machine_query::Query::Get(
-                raft::GetValueQuery {
-                    key: "k".to_string(),
-                },
-            )),
+            query: Some(raft::state_machine_query::Query::Get(raft::GetValueQuery {
+                key: "k".to_string(),
+            })),
         };
-        let get_result = raft::StateMachineQueryResult::decode(&sm.query(&get_q.encode_to_vec())[..])
-            .unwrap();
+        let get_result =
+            raft::StateMachineQueryResult::decode(&sm.query(&get_q.encode_to_vec())[..]).unwrap();
         if let Some(raft::state_machine_query_result::Result::Get(r)) = get_result.result {
             assert!(r.found);
             assert_eq!(r.value, "v1");
@@ -233,16 +231,17 @@ mod tests {
     fn cas_missing_expected_succeeds() {
         let sm = KeyValueStateMachine::new();
         let cas_cmd = raft::StateMachineCommand {
-            command: Some(raft::state_machine_command::Command::Cas(raft::CasCommand {
-                key: "k".to_string(),
-                expected_present: false,
-                expected_value: String::new(),
-                new_value: "v1".to_string(),
-            })),
+            command: Some(raft::state_machine_command::Command::Cas(
+                raft::CasCommand {
+                    key: "k".to_string(),
+                    expected_present: false,
+                    expected_value: String::new(),
+                    new_value: "v1".to_string(),
+                },
+            )),
         };
         let result_bytes = sm.apply_with_result(1, &cas_cmd.encode_to_vec());
-        let result =
-            raft::StateMachineCommandResult::decode(&result_bytes[..]).unwrap();
+        let result = raft::StateMachineCommandResult::decode(&result_bytes[..]).unwrap();
         if let Some(raft::state_machine_command_result::Result::Cas(r)) = result.result {
             assert!(r.matched);
             assert!(!r.current_present);
@@ -265,16 +264,17 @@ mod tests {
         sm.apply(1, &put_cmd.encode_to_vec());
 
         let cas_cmd = raft::StateMachineCommand {
-            command: Some(raft::state_machine_command::Command::Cas(raft::CasCommand {
-                key: "k".to_string(),
-                expected_present: true,
-                expected_value: "expected".to_string(),
-                new_value: "new".to_string(),
-            })),
+            command: Some(raft::state_machine_command::Command::Cas(
+                raft::CasCommand {
+                    key: "k".to_string(),
+                    expected_present: true,
+                    expected_value: "expected".to_string(),
+                    new_value: "new".to_string(),
+                },
+            )),
         };
         let result_bytes = sm.apply_with_result(1, &cas_cmd.encode_to_vec());
-        let result =
-            raft::StateMachineCommandResult::decode(&result_bytes[..]).unwrap();
+        let result = raft::StateMachineCommandResult::decode(&result_bytes[..]).unwrap();
         if let Some(raft::state_machine_command_result::Result::Cas(r)) = result.result {
             assert!(!r.matched);
             assert!(r.current_present);
@@ -302,14 +302,12 @@ mod tests {
         sm2.restore(&snap);
 
         let get = raft::StateMachineQuery {
-            query: Some(raft::state_machine_query::Query::Get(
-                raft::GetValueQuery {
-                    key: "k".to_string(),
-                },
-            )),
+            query: Some(raft::state_machine_query::Query::Get(raft::GetValueQuery {
+                key: "k".to_string(),
+            })),
         };
-        let result = raft::StateMachineQueryResult::decode(&sm2.query(&get.encode_to_vec())[..])
-            .unwrap();
+        let result =
+            raft::StateMachineQueryResult::decode(&sm2.query(&get.encode_to_vec())[..]).unwrap();
         if let Some(raft::state_machine_query_result::Result::Get(r)) = result.result {
             assert!(r.found);
             assert_eq!(r.value, "v1");

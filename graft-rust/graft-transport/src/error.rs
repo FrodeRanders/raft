@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-use std::io;
 use prost::DecodeError;
+use std::io;
 use tokio::sync::oneshot;
 
 /// Unified error type covering all transport-layer failure modes:

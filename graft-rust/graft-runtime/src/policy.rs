@@ -253,13 +253,25 @@ pub enum AdmissionAction {
 
 impl AdmissionDecision {
     pub fn accept() -> Self {
-        Self { action: AdmissionAction::Accept, status: "ADMITTED".to_string(), message: String::new() }
+        Self {
+            action: AdmissionAction::Accept,
+            status: "ADMITTED".to_string(),
+            message: String::new(),
+        }
     }
     pub fn redirect(status: &str, message: &str) -> Self {
-        Self { action: AdmissionAction::Redirect, status: status.to_string(), message: message.to_string() }
+        Self {
+            action: AdmissionAction::Redirect,
+            status: status.to_string(),
+            message: message.to_string(),
+        }
     }
     pub fn reject(status: &str, message: &str) -> Self {
-        Self { action: AdmissionAction::Reject, status: status.to_string(), message: message.to_string() }
+        Self {
+            action: AdmissionAction::Reject,
+            status: status.to_string(),
+            message: message.to_string(),
+        }
     }
 }
 
@@ -357,7 +369,9 @@ pub struct StuckDetector {
 
 impl StuckDetector {
     pub fn new(stuck_threshold_millis: u64) -> Self {
-        Self { stuck_threshold_millis }
+        Self {
+            stuck_threshold_millis,
+        }
     }
 
     /// Returns true if the node is in joint consensus and the transition
