@@ -108,7 +108,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            graft-rust/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('graft-rust/Cargo.lock') }}
 
       - name: Build vopn dependency
