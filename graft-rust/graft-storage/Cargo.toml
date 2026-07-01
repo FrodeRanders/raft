@@ -11,8 +11,8 @@ license.workspace = true
 name = "graft_storage"
 
 [dependencies]
-gautelis-graft-proto = { path = "../graft-proto" }
-gautelis-graft-core = { path = "../graft-core" }
+gautelis-graft-proto = { version = "0.1.0", path = "../graft-proto" }
+gautelis-graft-core = { version = "0.1.0", path = "../graft-core" }
 prost.workspace = true
 bytes.workspace = true
 tokio.workspace = true

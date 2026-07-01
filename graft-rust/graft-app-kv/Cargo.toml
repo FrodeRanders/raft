@@ -9,12 +9,12 @@ name = "graft-kv"
 path = "src/main.rs"
 
 [dependencies]
-gautelis-graft-proto = { path = "../graft-proto" }
-gautelis-graft-core = { path = "../graft-core" }
-gautelis-graft-storage = { path = "../graft-storage" }
-gautelis-graft-transport = { path = "../graft-transport" }
-gautelis-graft-runtime = { path = "../graft-runtime" }
-gautelis-graft-telemetry = { path = "../graft-telemetry" }
+gautelis-graft-proto = { version = "0.1.0", path = "../graft-proto" }
+gautelis-graft-core = { version = "0.1.0", path = "../graft-core" }
+gautelis-graft-storage = { version = "0.1.0", path = "../graft-storage" }
+gautelis-graft-transport = { version = "0.1.0", path = "../graft-transport" }
+gautelis-graft-runtime = { version = "0.1.0", path = "../graft-runtime" }
+gautelis-graft-telemetry = { version = "0.1.0", path = "../graft-telemetry" }
 prost.workspace = true
 tokio.workspace = true
 tracing.workspace = true

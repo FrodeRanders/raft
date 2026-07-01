@@ -5,11 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dev-dependencies]
-gautelis-graft-proto = { path = "../graft-proto" }
-gautelis-graft-core = { path = "../graft-core" }
-gautelis-graft-storage = { path = "../graft-storage" }
-gautelis-graft-transport = { path = "../graft-transport" }
-gautelis-graft-runtime = { path = "../graft-runtime" }
+gautelis-graft-proto = { version = "0.1.0", path = "../graft-proto" }
+gautelis-graft-core = { version = "0.1.0", path = "../graft-core" }
+gautelis-graft-storage = { version = "0.1.0", path = "../graft-storage" }
+gautelis-graft-transport = { version = "0.1.0", path = "../graft-transport" }
+gautelis-graft-runtime = { version = "0.1.0", path = "../graft-runtime" }
 tokio.workspace = true
 prost.workspace = true
 bytes.workspace = true

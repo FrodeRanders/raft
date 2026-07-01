@@ -11,7 +11,7 @@ license.workspace = true
 name = "graft_telemetry"
 
 [dependencies]
-gautelis-graft-core = { path = "../graft-core" }
+gautelis-graft-core = { version = "0.1.0", path = "../graft-core" }
 tokio.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
