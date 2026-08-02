@@ -137,7 +137,7 @@ At a high level, the Jepsen tests check that the key-value demo remains lineariz
 - aggressive snapshot/compaction settings during faults
 - 5-node and 7-node quorum topologies
 - single-key CAS-register and multi-key workloads
-- mixed Java/C++ clusters, including C++ client operations and C++ leader membership admission/promotion
+- mixed Java/C++/Rust clusters, including Java/C++/Rust client operations and Java/C++/Rust leader membership admission/promotion
 
 The default `mvn test` path now includes a small Jepsen smoke suite in addition to the normal Java tests. That smoke suite covers:
 
