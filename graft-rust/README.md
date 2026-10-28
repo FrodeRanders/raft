@@ -127,7 +127,7 @@ For the `RaftNode` consensus state (the hot path), a standard **`parking_lot::Mu
 | `thiserror` | Derive `Error` for transport and consensus error types |
 | `anyhow` | Flexible error handling in the runtime and app layers |
 | `tracing` / `tracing-subscriber` | Structured logging and span instrumentation |
-| `serde` / `serde_json` | JSON serialization for app commands and snapshots |
+| `serde` / `serde_json` | Membership envelopes and legacy local KV snapshot recovery |
 | `clap` (derive) | CLI argument parsing for the KV app binary |
 | `tempfile` | Scratch directories/files in tests |
 
@@ -141,7 +141,7 @@ For the `RaftNode` consensus state (the hot path), a standard **`parking_lot::Mu
 - **Log replication**: Leader tracks per-follower `nextIndex` / `matchIndex`. On mismatch, `nextIndex` decrements; on success, `matchIndex` advances. Commit index advances when a quorum of the current (and during joint consensus, both old and new) configuration has replicated.
 - **Snapshotting**: Chunked `InstallSnapshot` RPC. Leader sends one chunk per heartbeat tick, tracking per-follower byte offsets. Follower accumulates chunks and installs atomically when `done=true`.
 - **Membership**: Joint-consensus via `InternalRaftCommand` protobuf entries (Join → Joint → Finalize). Auto-finalize triggers when all new members have caught up. `configuration_at(index)` replays committed config commands to reconstruct membership at any log index for historically-correct quorum checks.
-- **Read barriers**: Linearizable reads use a read lease (leader contacted a majority within a configurable window) or an explicit contact-majority barrier.
+- **Read barriers**: Each distributed read appends a fresh no-op and waits for current-term quorum commit and application. Delayed replies cannot renew authority for later reads. See [consensus hardening](../docs/consensus-hardening.md) for regression traces and storage changes.
 
 `RaftNode` has **zero I/O dependencies**. It depends on three traits injected by the runtime:
 
@@ -182,7 +182,7 @@ Two backend families:
 | In-memory | `InMemoryLogStore` | `InMemoryPersistentStateStore` |
 | File-backed | `FileLogStore` | `FilePersistentStateStore` |
 
-File backends use simple line-oriented key=value formats (base64 for binary data) with atomic writes via tempfile → rename → fsync. Suitable for testing and development; not designed as production append-only stores.
+File backends use simple line-oriented key=value formats (base64 for binary data) with atomic publication via temporary-file sync → rename → parent-directory sync. Failed durable mutations stop the process. Suitable for testing and development; not designed as production append-only stores.
 
 ## Telemetry Export
 

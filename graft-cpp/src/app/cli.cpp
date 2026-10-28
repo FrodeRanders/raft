@@ -1480,7 +1480,7 @@ namespace {
             handler,
             std::move(peers),
             [handler](const graft::RaftNode &current_node) {
-                handler->store().save(current_node.persistent_state());
+                handler->store().save(current_node);
             }
         );
     }
@@ -1523,7 +1523,7 @@ namespace {
             handler,
             std::move(peers),
             [handler](const graft::RaftNode &current_node) {
-                handler->store().save(current_node.persistent_state());
+                handler->store().save(current_node);
             },
             replicate_interval,
             "workload",
@@ -1801,18 +1801,18 @@ namespace {
         if (const auto persisted = store.load(); persisted.has_value()) {
             node->apply_persistent_state(*persisted);
         } else {
-            store.save(node->persistent_state());
+            store.save(*node);
         }
 
         node->become_leader();
-        store.save(node->persistent_state());
+        store.save(*node);
 
         graft::RaftRuntime runtime(
             io_context,
             node,
             std::move(peers),
             [&store](const graft::RaftNode &current_node) {
-                store.save(current_node.persistent_state());
+                store.save(current_node);
             }
         );
 
@@ -1852,11 +1852,11 @@ namespace {
         if (const auto persisted = store.load(); persisted.has_value()) {
             node->apply_persistent_state(*persisted);
         } else {
-            store.save(node->persistent_state());
+            store.save(*node);
         }
 
         const auto compacted = node->compact_snapshot_to(index, snapshot_data);
-        store.save(node->persistent_state());
+        store.save(*node);
 
         std::cout
                 << "compacted: " << (compacted ? "true" : "false") << '\n'

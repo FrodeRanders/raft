@@ -148,6 +148,8 @@ pub trait RaftTransport: Send + Sync {
 /// at which point the snapshot is installed into the LogStore.
 #[derive(Debug, Clone)]
 pub struct PendingSnapshot {
+    pub leader_id: String,
+    pub leader_term: u64,
     /// The last log index covered by this snapshot.
     pub last_included_index: u64,
     /// Term of the last included index.
@@ -360,6 +362,16 @@ impl RaftNode {
             state_machine,
         };
 
+        if snapshot_index > 0 {
+            if let Some((config, _)) =
+                crate::snapshot_codec::decode_membership_payload(&node.log_store.snapshot_data())
+            {
+                node.snapshot_configuration = config.clone();
+                node.cluster_configuration = config;
+            }
+        }
+        node.decommissioned = !node.active_configuration().contains(&node.me.id);
+        node.refresh_replication_members();
         // Seed the election timer so the node doesn't immediately elect.
         if snapshot_index > 0 {
             if let Some(ref sm) = node.state_machine {
@@ -416,15 +428,15 @@ impl RaftNode {
     // Configuration helpers
     // -----------------------------------------------------------------------
 
-    /// The currently-active cluster configuration (committed).
-    pub fn active_configuration(&self) -> &ClusterConfiguration {
-        &self.cluster_configuration
+    /// Election membership reconstructed from the snapshot and retained log.
+    pub fn active_configuration(&self) -> ClusterConfiguration {
+        self.configuration_at(self.log_store.last_index())
     }
 
     /// Remote voting peers in the given configuration (excludes self).
     fn remote_voting_peers_for(&self, config: &ClusterConfiguration) -> Vec<Peer> {
         config
-            .current_voting_members()
+            .all_voting_members()
             .into_iter()
             .filter(|p| p.id != self.me.id)
             .cloned()
@@ -444,13 +456,13 @@ impl RaftNode {
 
     /// True when this node is a voter in the active configuration.
     pub fn is_voter_in_active_config(&self) -> bool {
-        self.cluster_configuration.is_voter(&self.me.id)
+        self.active_configuration().is_voter(&self.me.id)
     }
 
     /// True when this node appears in either membership set of the active
     /// configuration.
     pub fn is_peer_in_active_config(&self) -> bool {
-        self.cluster_configuration.contains(&self.me.id)
+        self.active_configuration().contains(&self.me.id)
     }
 
     // -----------------------------------------------------------------------
@@ -471,8 +483,6 @@ impl RaftNode {
             if self.state != NodeState::Follower {
                 self.become_follower(now);
             }
-            self.voted_for = None;
-            self.persistent_state.set_voted_for(None);
             self.refresh_timeout(now);
             return;
         }
@@ -484,8 +494,6 @@ impl RaftNode {
             if self.state != NodeState::Follower {
                 self.become_follower(now);
             }
-            self.voted_for = None;
-            self.persistent_state.set_voted_for(None);
             self.refresh_timeout(now);
             return;
         }
@@ -519,6 +527,7 @@ impl RaftNode {
 
         // Figure 2 ("Candidates"): on conversion to candidate.
         self.state = NodeState::Candidate;
+        self.pending_snapshot = None;
         self.known_leader_id = None;
         self.current_term += 1;
         self.persistent_state.set_current_term(self.current_term);
@@ -533,7 +542,7 @@ impl RaftNode {
         // receiver implementation: §5.4.1 election restriction).
         let last_index = self.log_store.last_index();
         let last_term = self.log_store.last_term();
-        let peers = self.remote_voting_peers_for(self.active_configuration());
+        let peers = self.remote_voting_peers_for(&self.active_configuration());
 
         tracing::info!(
             "{} starting election for term {}, lastIndex={}, lastTerm={}",
@@ -587,12 +596,14 @@ impl RaftNode {
         if max_term > self.current_term {
             self.current_term = max_term;
             self.persistent_state.set_current_term(max_term);
+            self.voted_for = None;
+            self.persistent_state.set_voted_for(None);
             self.become_follower(now);
             return;
         }
 
         // Discard responses from a previous election round.
-        if self.current_term != election_term {
+        if self.current_term != election_term || self.state != NodeState::Candidate {
             return;
         }
 
@@ -600,7 +611,7 @@ impl RaftNode {
         votes_granted.insert(self.me.id.clone());
 
         for response in &responses {
-            if response.vote_granted {
+            if response.vote_granted && response.current_term == election_term {
                 votes_granted.insert(response.peer_id.clone());
             } else if response.current_term > self.current_term {
                 // Seen a higher term from a rejection — step down.
@@ -643,11 +654,12 @@ impl RaftNode {
 
         self.next_index.clear();
         self.match_index.clear();
+        self.snapshot_offsets.clear();
         self.consecutive_follower_failures.clear();
         self.last_follower_failure_millis.clear();
         self.last_follower_contact_millis.clear();
 
-        let config = self.cluster_configuration.clone();
+        let config = self.active_configuration();
         for peer in self.remote_replicated_peers_for(&config) {
             self.next_index.insert(peer.id.clone(), next);
             self.match_index
@@ -680,7 +692,7 @@ impl RaftNode {
             return;
         }
 
-        let config = self.cluster_configuration.clone();
+        let config = self.active_configuration();
         for peer in self.remote_replicated_peers_for(&config) {
             let snapshot_index = self.log_store.snapshot_index();
             let last_index = self.log_store.last_index();
@@ -740,8 +752,7 @@ impl RaftNode {
         self.state = NodeState::Follower;
         self.known_leader_id = None;
         self.clear_pending_auto_finalize();
-        self.voted_for = None;
-        self.persistent_state.set_voted_for(None);
+        self.pending_snapshot = None;
         self.election_sequence_counter = 0;
         self.refresh_timeout(now);
     }
@@ -779,17 +790,43 @@ impl RaftNode {
             };
         }
 
+        if req.leader_id == self.me.id
+            || (!self.joining
+                && !self.active_configuration().is_voter(&req.leader_id)
+                && !self.cluster_configuration.is_voter(&req.leader_id))
+        {
+            return AppendEntriesResponse {
+                term: self.current_term,
+                peer_id: self.me.id.clone(),
+                success: false,
+                match_index: self.log_store.last_index() as i64,
+            };
+        }
+
         // Figure 2 rule 2: if term > currentTerm, or candidate receives
         // AppendEntries, step down to follower.
-        if req.term > self.current_term || self.state == NodeState::Candidate {
+        if req.term > self.current_term {
             self.current_term = req.term;
             self.persistent_state.set_current_term(req.term);
+            self.voted_for = None;
+            self.persistent_state.set_voted_for(None);
+            self.become_follower(now);
+        } else if self.state != NodeState::Follower {
             self.become_follower(now);
         }
 
         // A valid heartbeat — record the leader and reset the election clock.
         self.known_leader_id = Some(req.leader_id.clone());
         self.refresh_timeout(now);
+
+        if req.prev_log_index < self.log_store.snapshot_index() {
+            return AppendEntriesResponse {
+                term: self.current_term,
+                peer_id: self.me.id.clone(),
+                success: false,
+                match_index: self.log_store.snapshot_index() as i64,
+            };
+        }
 
         // Figure 2 rule 3: log consistency check. Reject if follower's log
         // doesn't contain an entry at prevLogIndex whose term matches
@@ -811,12 +848,24 @@ impl RaftNode {
         // all that follow. Then append new entries.
         let entries_len = req.entries.len() as u64;
 
-        if !req.entries.is_empty() {
-            if req.prev_log_index < self.log_store.last_index() {
-                self.log_store.truncate_from(req.prev_log_index + 1);
+        for (offset, incoming) in req.entries.iter().enumerate() {
+            let index = req.prev_log_index + 1 + offset as u64;
+            if let Some(local) = self.log_store.entry_at(index) {
+                if local.term == incoming.term {
+                    continue;
+                }
+                if index <= self.commit_index {
+                    return AppendEntriesResponse {
+                        term: self.current_term,
+                        peer_id: self.me.id.clone(),
+                        success: false,
+                        match_index: self.commit_index as i64,
+                    };
+                }
+                self.log_store.truncate_from(index);
             }
-
-            self.log_store.append(req.entries);
+            self.log_store.append(req.entries[offset..].to_vec());
+            break;
         }
 
         // Figure 2 rule 5: if leaderCommit > commitIndex, set commitIndex =
@@ -824,7 +873,9 @@ impl RaftNode {
         // entries to the state machine.
         let last_new_entry = req.prev_log_index + entries_len;
         if req.leader_commit > self.commit_index {
-            self.commit_index = std::cmp::min(req.leader_commit, last_new_entry);
+            self.commit_index = self
+                .commit_index
+                .max(std::cmp::min(req.leader_commit, last_new_entry));
             self.apply_committed_entries();
         }
 
@@ -858,6 +909,8 @@ impl RaftNode {
         if req.term > self.current_term {
             self.current_term = req.term;
             self.persistent_state.set_current_term(req.term);
+            self.voted_for = None;
+            self.persistent_state.set_voted_for(None);
             self.become_follower(now);
         }
 
@@ -867,7 +920,10 @@ impl RaftNode {
             || (req.last_log_term == self.log_store.last_term()
                 && req.last_log_index >= self.log_store.last_index());
 
-        let can_grant = req.term >= self.current_term
+        let can_grant = !self.joining
+            && self.active_configuration().is_voter(&self.me.id)
+            && self.active_configuration().is_voter(&req.candidate_id)
+            && req.term == self.current_term
             && (self.voted_for.is_none() || self.voted_for.as_deref() == Some(&req.candidate_id))
             && candidate_log_is_up_to_date;
 
@@ -908,15 +964,23 @@ impl RaftNode {
         peer_id: &str,
     ) {
         let now = Instant::now();
-        if self.state != NodeState::Leader {
-            return;
-        }
-
         // Figure 2: higher term → step down.
         if resp.term > self.current_term {
             self.current_term = resp.term;
             self.persistent_state.set_current_term(resp.term);
+            self.voted_for = None;
+            self.persistent_state.set_voted_for(None);
             self.become_follower(now);
+            return;
+        }
+
+        if self.state != NodeState::Leader
+            || resp.term != self.current_term
+            || req.term != self.current_term
+            || resp.peer_id != peer_id
+            || !self.active_configuration().contains(peer_id)
+                && !self.pending_join_ids.contains(peer_id)
+        {
             return;
         }
 
@@ -932,11 +996,15 @@ impl RaftNode {
             // If the follower's matchIndex is at or behind the snapshot,
             // the follower needs a full snapshot catch-up.
             if resp.match_index as u64 <= snapshot_index {
-                self.next_index.insert(peer_id.to_string(), snapshot_index);
+                self.next_index.insert(
+                    peer_id.to_string(),
+                    snapshot_index.max(self.match_index.get(peer_id).copied().unwrap_or(0) + 1),
+                );
             } else {
                 // Standard Raft conflict resolution: decrement nextIndex
                 // and retry. Don't go below snapshot_index + 1.
-                let floor = snapshot_index + 1;
+                let floor = (snapshot_index + 1)
+                    .max(self.match_index.get(peer_id).copied().unwrap_or(0) + 1);
                 let new_next = std::cmp::max(floor, current_next.saturating_sub(1));
                 self.next_index.insert(peer_id.to_string(), new_next);
             }
@@ -945,8 +1013,17 @@ impl RaftNode {
 
         // Success: follower accepted entries up to `advanced`.
         let advanced = req.prev_log_index + req.entries.len() as u64;
-        self.next_index.insert(peer_id.to_string(), advanced + 1);
-        self.match_index.insert(peer_id.to_string(), advanced);
+        if advanced > self.log_store.last_index() {
+            return;
+        }
+        self.next_index
+            .entry(peer_id.to_string())
+            .and_modify(|n| *n = (*n).max(advanced + 1))
+            .or_insert(advanced + 1);
+        self.match_index
+            .entry(peer_id.to_string())
+            .and_modify(|n| *n = (*n).max(advanced))
+            .or_insert(advanced);
         self.record_follower_replication_success(peer_id);
 
         // A standard Raft guard: the leader advances commit by counting
@@ -954,6 +1031,54 @@ impl RaftNode {
         // older entries (the no-op handles this during election).
         self.advance_commit_index_from_majority();
         self.maybe_auto_finalize_joint_configuration();
+    }
+
+    pub fn handle_install_snapshot_response(
+        &mut self,
+        resp: InstallSnapshotResponse,
+        req: InstallSnapshotRequest,
+        peer: &str,
+    ) {
+        if resp.term > self.current_term {
+            self.current_term = resp.term;
+            self.persistent_state.set_current_term(resp.term);
+            self.voted_for = None;
+            self.persistent_state.set_voted_for(None);
+            self.become_follower(Instant::now());
+            return;
+        }
+        if self.state != NodeState::Leader
+            || req.term != self.current_term
+            || resp.term != self.current_term
+            || resp.peer_id != peer
+            || !self.active_configuration().contains(peer) && !self.pending_join_ids.contains(peer)
+        {
+            return;
+        }
+        if req.last_included_index != self.log_store.snapshot_index() {
+            self.snapshot_offsets.remove(peer);
+            return;
+        }
+        if !resp.success {
+            self.snapshot_offsets.remove(peer);
+            return;
+        }
+        if !req.done {
+            self.snapshot_offsets
+                .insert(peer.to_string(), req.offset + req.data.len() as u64);
+            return;
+        }
+        let index = req.last_included_index;
+        self.snapshot_offsets.remove(peer);
+        self.next_index
+            .entry(peer.to_string())
+            .and_modify(|n| *n = (*n).max(index + 1))
+            .or_insert(index + 1);
+        self.match_index
+            .entry(peer.to_string())
+            .and_modify(|n| *n = (*n).max(index))
+            .or_insert(index);
+        self.advance_commit_index_from_majority();
     }
 
     // -- Follower reachability bookkeeping (operational telemetry) --
@@ -1006,7 +1131,7 @@ impl RaftNode {
             let mut replicated: HashSet<String> = HashSet::new();
             replicated.insert(self.me.id.clone());
 
-            let config = self.cluster_configuration.clone();
+            let config = self.configuration_at(n);
             for peer in self.remote_voting_peers_for(&config) {
                 let mi = self.match_index.get(&peer.id).copied().unwrap_or(0);
                 if mi >= n {
@@ -1082,17 +1207,53 @@ impl RaftNode {
     /// snapshot configuration is used. Otherwise, replays configuration
     /// commands from the snapshot boundary to the target index.
     fn configuration_at(&self, index: u64) -> ClusterConfiguration {
-        if index <= self.log_store.snapshot_index() {
-            return self.snapshot_configuration.clone();
-        }
-
         let mut config = self.snapshot_configuration.clone();
-        for i in (self.log_store.snapshot_index() + 1)..=index {
-            if let Some(committed) = self.committed_configurations.get(&i) {
-                config = committed.clone();
+        for i in self.log_store.snapshot_index().saturating_add(1)..=index {
+            if let Some(entry) = self.log_store.entry_at(i) {
+                config = Self::configuration_after(config, &entry.data);
             }
         }
         config
+    }
+
+    fn configuration_after(config: ClusterConfiguration, bytes: &[u8]) -> ClusterConfiguration {
+        use graft_proto::raft::{internal_raft_command::Command, InternalRaftCommand};
+        match InternalRaftCommand::decode(bytes)
+            .ok()
+            .and_then(|c| c.command)
+        {
+            Some(Command::Joint(joint)) => {
+                config.transition_to(joint.members.iter().map(Self::peer_from_spec).collect())
+            }
+            Some(Command::Finalize(_)) => config.finalize_transition(),
+            _ => config,
+        }
+    }
+
+    fn peer_from_spec(ps: &graft_proto::raft::PeerSpec) -> Peer {
+        let ip = ps.host.parse().expect("invalid Raft peer IP address");
+        let port = u16::try_from(ps.port).expect("invalid Raft peer port");
+        Peer::new(
+            ps.id.clone(),
+            std::net::SocketAddr::new(ip, port),
+            if ps.role.eq_ignore_ascii_case("LEARNER") {
+                crate::types::Role::Learner
+            } else {
+                crate::types::Role::Voter
+            },
+        )
+    }
+
+    pub fn refresh_replication_members(&mut self) {
+        for peer in self.active_configuration().all_members() {
+            self.known_peers.insert(peer.id.clone(), peer.clone());
+            if peer.id != self.me.id {
+                self.next_index
+                    .entry(peer.id.clone())
+                    .or_insert(self.log_store.last_index() + 1);
+                self.match_index.entry(peer.id.clone()).or_insert(0);
+            }
+        }
     }
 
     /// Attempts to interpret `data` as a protobuf-encoded
@@ -1129,6 +1290,10 @@ impl RaftNode {
                     tracing::info!("{} JOIN: admitting peer {}", self.me.id, peer.id);
                     self.known_peers.insert(peer.id.clone(), peer.clone());
                     self.pending_join_ids.insert(peer.id.clone());
+                    if peer.id != self.me.id {
+                        self.next_index.entry(peer.id.clone()).or_insert(1);
+                        self.match_index.entry(peer.id.clone()).or_insert(0);
+                    }
                     return true;
                 }
                 false
@@ -1168,7 +1333,7 @@ impl RaftNode {
                 let old_config = self.cluster_configuration.clone();
                 self.cluster_configuration = old_config.transition_to(proposed);
                 self.pending_auto_finalize_members = proposed_ids.iter().cloned().collect();
-                self.pending_auto_finalize_fence_index = self.commit_index + 1;
+                self.pending_auto_finalize_fence_index = self.last_applied;
 
                 if proposed_ids.contains(&self.me.id) {
                     self.joining = false;
@@ -1218,6 +1383,9 @@ impl RaftNode {
                     .collect();
                 self.known_peers.retain(|id, _| current_ids.contains(id));
 
+                if !self.cluster_configuration.is_voter(&self.me.id) {
+                    self.become_follower(std::time::Instant::now());
+                }
                 if !current_ids.contains(&self.me.id) {
                     tracing::info!("{} removed from configuration — stepping down", self.me.id);
                     if self.state == crate::types::NodeState::Leader {
@@ -1253,7 +1421,7 @@ impl RaftNode {
         let all_caught_up = self
             .pending_auto_finalize_members
             .iter()
-            .all(|id| self.match_index.get(id).copied().unwrap_or(0) >= fence);
+            .all(|id| id == &self.me.id || self.match_index.get(id).copied().unwrap_or(0) >= fence);
 
         if all_caught_up {
             let finalize_cmd = graft_proto::raft::InternalRaftCommand {
@@ -1303,28 +1471,25 @@ impl RaftNode {
             // Wrap application bytes with current cluster membership so a
             // follower or restarted node can recover the correct configuration
             // at the compaction boundary. Matches Java/C++ SnapshotCodec.
-            let current_ids: Vec<String> = self
+            let current: Vec<Peer> = self
                 .cluster_configuration
-                .current_voting_members()
-                .iter()
-                .map(|p| p.id.clone())
+                .current_members()
+                .into_iter()
+                .cloned()
                 .collect();
-            let next_ids: Vec<String> = if self.cluster_configuration.is_joint_consensus() {
-                self.cluster_configuration
-                    .next_voting_members()
-                    .iter()
-                    .map(|p| p.id.clone())
-                    .collect()
-            } else {
-                Vec::new()
-            };
+            let next: Vec<Peer> = self
+                .cluster_configuration
+                .next_members()
+                .into_iter()
+                .cloned()
+                .collect();
             let wrapped =
-                crate::snapshot_codec::wrap_snapshot_payload(&current_ids, &next_ids, &sm_snapshot);
+                crate::snapshot_codec::wrap_membership_payload(&current, &next, &sm_snapshot);
             let term = self.log_store.term_at(self.commit_index);
-            self.log_store.compact_up_to(self.commit_index);
             self.log_store
                 .install_snapshot(self.commit_index, term, wrapped);
             self.snapshot_configuration = self.cluster_configuration.clone();
+            self.snapshot_offsets.clear();
             self.trim_applied_command_results();
         }
     }
@@ -1345,68 +1510,106 @@ impl RaftNode {
         &mut self,
         req: InstallSnapshotRequest,
     ) -> InstallSnapshotResponse {
-        let now = Instant::now();
-
-        // Reject stale snapshots.
-        if req.term < self.current_term {
-            return InstallSnapshotResponse {
-                term: self.current_term,
-                peer_id: self.me.id.clone(),
-                success: false,
-                last_included_index: 0,
-            };
+        let response = |term, success, index| InstallSnapshotResponse {
+            term,
+            peer_id: self.me.id.clone(),
+            success,
+            last_included_index: index,
+        };
+        if req.term < self.current_term
+            || req.leader_id == self.me.id
+            || (!self.joining
+                && !self.active_configuration().is_voter(&req.leader_id)
+                && !self.cluster_configuration.is_voter(&req.leader_id))
+        {
+            return response(self.current_term, false, self.log_store.snapshot_index());
         }
-
-        // Higher term → recognize the new leader and become follower.
         if req.term > self.current_term {
             self.current_term = req.term;
             self.persistent_state.set_current_term(req.term);
-            self.become_follower(now);
+            self.voted_for = None;
+            self.persistent_state.set_voted_for(None);
+            self.become_follower(Instant::now());
+        } else if self.state != NodeState::Follower {
+            self.become_follower(Instant::now());
         }
-
         self.known_leader_id = Some(req.leader_id.clone());
-        self.refresh_timeout(now);
-
-        // First chunk: start a new pending snapshot.
+        self.refresh_timeout(Instant::now());
+        if req.last_included_index <= self.commit_index {
+            self.pending_snapshot = None;
+            return InstallSnapshotResponse {
+                term: self.current_term,
+                peer_id: self.me.id.clone(),
+                success: true,
+                last_included_index: req.last_included_index,
+            };
+        }
         if req.offset == 0 {
             self.pending_snapshot = Some(PendingSnapshot {
+                leader_id: req.leader_id.clone(),
+                leader_term: req.term,
                 last_included_index: req.last_included_index,
                 last_included_term: req.last_included_term,
                 offset: 0,
                 data: Vec::new(),
             });
         }
-
-        if let Some(ref mut pending) = self.pending_snapshot {
-            pending.data.extend_from_slice(&req.data);
-            pending.offset += req.data.len() as u64;
-
-            // Final chunk: install the complete snapshot.
-            if req.done {
-                self.log_store.install_snapshot(
-                    pending.last_included_index,
-                    pending.last_included_term,
-                    std::mem::take(&mut pending.data),
-                );
-                let installed_index = pending.last_included_index;
-                let installed_data = self.log_store.snapshot_data();
-                self.pending_snapshot = None;
-                self.commit_index = self.commit_index.max(installed_index);
-                self.last_applied = self.last_applied.max(installed_index);
-
-                // Unwrap the membership envelope (Java/C++ compatible) to
-                // restore the cluster configuration at the snapshot boundary.
-                let app_snapshot = crate::snapshot_codec::unwrap_snapshot_payload(&installed_data);
-                if let Some(ref sm) = self.state_machine {
-                    sm.restore(&app_snapshot);
-                }
-
-                // Update snapshot_configuration so configuration_at() can
-                // reconstruct the membership for post-snapshot log entries.
-                self.snapshot_configuration = self.cluster_configuration.clone();
-            }
+        let Some(pending) = self.pending_snapshot.as_mut() else {
+            return InstallSnapshotResponse {
+                term: self.current_term,
+                peer_id: self.me.id.clone(),
+                success: false,
+                last_included_index: self.log_store.snapshot_index(),
+            };
+        };
+        if pending.leader_id != req.leader_id
+            || pending.leader_term != req.term
+            || pending.last_included_index != req.last_included_index
+            || pending.last_included_term != req.last_included_term
+            || pending.offset != req.offset
+        {
+            return InstallSnapshotResponse {
+                term: self.current_term,
+                peer_id: self.me.id.clone(),
+                success: false,
+                last_included_index: self.log_store.snapshot_index(),
+            };
         }
-
+        pending.data.extend_from_slice(&req.data);
+        pending.offset += req.data.len() as u64;
+        if req.done {
+            let pending = self.pending_snapshot.take().unwrap();
+            let envelope = crate::snapshot_codec::decode_membership_payload(&pending.data);
+            let application = envelope
+                .as_ref()
+                .map(|(_, app)| app.as_slice())
+                .unwrap_or(&pending.data);
+            if let Some(sm) = &self.state_machine {
+                sm.restore(application);
+            }
+            self.log_store.install_snapshot(
+                pending.last_included_index,
+                pending.last_included_term,
+                pending.data,
+            );
+            if let Some((config, _)) = envelope {
+                self.cluster_configuration = config;
+                self.decommissioned = !self.cluster_configuration.contains(&self.me.id);
+                if !self.decommissioned {
+                    self.joining = false;
+                }
+                self.known_peers = self
+                    .cluster_configuration
+                    .all_members()
+                    .into_iter()
+                    .map(|p| (p.id.clone(), p.clone()))
+                    .collect();
+            }
+            self.snapshot_configuration = self.cluster_configuration.clone();
+            self.committed_configurations.clear();
+            self.commit_index = pending.last_included_index;
+            self.last_applied = pending.last_included_index;
+        }
         InstallSnapshotResponse {
             term: self.current_term,
             peer_id: self.me.id.clone(),
@@ -1427,7 +1630,7 @@ impl RaftNode {
             self.decommissioned = false;
             return;
         }
-        if !self.is_peer_in_active_config() || self.cluster_configuration.is_learner(&self.me.id) {
+        if !self.is_peer_in_active_config() {
             self.decommissioned = true;
         }
     }
@@ -1468,52 +1671,31 @@ impl RaftNode {
             command,
         )]);
 
+        let submitted_index = self.log_store.last_index();
+        self.refresh_replication_members();
         // Immediately attempt to commit — if a majority is reachable,
         // the entry commits without waiting for the next heartbeat.
         self.advance_commit_index_from_majority();
-        Ok(self.log_store.last_index())
+        Ok(submitted_index)
     }
 
     // -----------------------------------------------------------------------
     // Linearizable read barrier
     // -----------------------------------------------------------------------
 
-    /// Returns true when the leader can serve a linearizable read without
-    /// an additional round-trip to a majority of followers.
-    ///
-    /// Two conditions are checked:
-    /// 1. **Read lease**: the leader has successfully contacted a majority
-    ///    within `linearizable_read_lease_millis`, so no other leader could
-    ///    have been elected with a higher term.
-    /// 2. **Contact majority**: a majority of the active configuration's
-    ///    voters have been contacted within `linearizable_read_timeout_millis`.
-    ///
-    /// The quorum check uses `hasJointMajority()`, so during joint
-    /// consensus a read requires contact with majorities of **both** the
-    /// old and new configurations.
+    /// A single voter may read its applied current-term commit locally.
+    /// Distributed reads require a fresh fence through the runtime; receipt-time
+    /// contact freshness cannot authorize a later query.
     pub fn can_serve_linearizable_read(&self) -> bool {
-        if self.state != NodeState::Leader {
-            return false;
-        }
-
-        let now_millis = now_millis();
-        let config = self.active_configuration();
-
-        let mut contacted: HashSet<String> = HashSet::new();
-        contacted.insert(self.me.id.clone());
-
-        for (peer_id, last_contact) in &self.last_follower_contact_millis {
-            let elapsed = if now_millis > *last_contact {
-                now_millis - last_contact
-            } else {
-                0
-            };
-            if elapsed < self.linearizable_read_lease_millis {
-                contacted.insert(peer_id.clone());
-            }
-        }
-
-        config.has_joint_majority(&contacted)
+        self.state == NodeState::Leader
+            && !self.joining
+            && !self.decommissioned
+            && self.commit_index > 0
+            && self.last_applied == self.commit_index
+            && self.log_store.term_at(self.commit_index) == self.current_term
+            && self
+                .active_configuration()
+                .has_joint_majority(&HashSet::from([self.me.id.clone()]))
     }
 
     // -- Internal bookkeeping --

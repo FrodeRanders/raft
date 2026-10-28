@@ -350,7 +350,8 @@ mod tests {
         let log_store = Arc::new(InMemoryLogStore::new());
         let state_store = Arc::new(InMemoryPersistentStateStore::new());
         let me = make_peer("n1", 5001);
-        let config = ClusterConfiguration::stable(vec![make_peer("n1", 5001)]);
+        let config =
+            ClusterConfiguration::stable(vec![make_peer("n1", 5001), make_peer("n2", 5002)]);
 
         let mut node = RaftNode::new(
             me,
@@ -366,7 +367,7 @@ mod tests {
         // Install a snapshot
         node.accept_snapshot_chunk(InstallSnapshotRequest {
             term: 1,
-            leader_id: "n1".to_string(),
+            leader_id: "n2".to_string(),
             last_included_index: 10,
             last_included_term: 1,
             offset: 0,
@@ -440,7 +441,8 @@ mod tests {
         let state_store = Arc::new(InMemoryPersistentStateStore::new());
         let sm = Arc::new(RestoreTrackingStateMachine::new());
         let me = make_peer("n1", 5001);
-        let config = ClusterConfiguration::stable(vec![make_peer("n1", 5001)]);
+        let config =
+            ClusterConfiguration::stable(vec![make_peer("n1", 5001), make_peer("n2", 5002)]);
         let mut node = RaftNode::new(
             me,
             500,

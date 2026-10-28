@@ -42,7 +42,7 @@
                     (assoc op :type :info :value :already-stopped)
                     (if-let [node (random-node test (:nodes test))]
                     (do
-                      (raft-db/stop-node! test node)
+                      (raft-db/crash-node! test node)
                       (observer/capture-safe! test "nemesis-crash-restart" {:node node :op {:f :stop}})
                       (reset! disrupted-node node)
                       (assoc op :type :info :value {node :stopped}))
@@ -215,7 +215,7 @@
                     (if-let [node (follower-node test)]
                     (let [leader (leader-node test)
                           sample (snapshot-telemetry-sample test leader node)]
-                      (raft-db/stop-node! test node)
+                      (raft-db/crash-node! test node)
                       (observer/capture-safe! test "nemesis-snapshot-creation-crash"
                                               {:node node :op {:f :stop}
                                                :extra {:had-compacted (:eligible? sample)
@@ -268,7 +268,7 @@
             :stop (cond
                     (and @target-node (= :cycling @phase))
                     (do
-                      (raft-db/stop-node! test @target-node)
+                      (raft-db/crash-node! test @target-node)
                       (observer/capture-safe! test "nemesis-snapshot-transfer-crash"
                                               {:node @target-node :op {:f :stop}
                                                :extra {:phase :crashed-during-transfer}})
@@ -708,17 +708,24 @@
     out))
 
 (defn- promote-member! [test leader member]
-  (let [{:keys [exit out err]}
-        (shell! (:repo-root test)
-                (java-command (:jar-path test)
-                              "reconfigure"
-                              "promote"
-                              (target-spec test leader)
-                              (str (target-spec test member) "/learner")))]
-    (when-not (zero? exit)
-      (throw (ex-info "Promote request failed"
-                      {:leader leader :member member :exit exit :out out :err err})))
-    out))
+  (let [deadline (+ (System/currentTimeMillis) 30000)]
+    (loop [leader leader]
+      (let [{:keys [exit out err]}
+            (shell! (:repo-root test)
+                    (java-command (:jar-path test)
+                                  "reconfigure" "promote" (target-spec test leader)
+                                  (str (target-spec test member) "/learner")))]
+        (cond
+          (zero? exit) out
+          ;; This exact C++ response is emitted before admission when a
+          ;; follower has no leader endpoint. Rediscover within one deadline;
+          ;; never replay a timeout, forwarding uncertainty, or joint proposal.
+          (and (= "REJECTED" (parse-status out))
+               (str/includes? out "Node is not leader or reconfiguration could not be applied")
+               (< (System/currentTimeMillis) deadline))
+          (recur (or (leader-node test) leader))
+          :else (throw (ex-info "Promote request failed"
+                                {:leader leader :member member :exit exit :out out :err err})))))))
 
 (defn membership-join-promote []
   ;; This is a one-shot membership scenario. The generator emits one :start;

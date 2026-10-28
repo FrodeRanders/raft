@@ -337,12 +337,12 @@ TEST_CASE("Client query RPC requires read barrier in multi-node leader mode", "[
     successful_response.set_success(true);
     successful_response.set_match_index(0);
     REQUIRE(node->handle_append_entries_response("n2", successful_response));
-    REQUIRE(node->can_serve_linearizable_read(750));
+    REQUIRE_FALSE(node->can_serve_linearizable_read(750));
 
     const auto leased_response = handler.on_client_query_request(request);
     REQUIRE(leased_response.has_value());
-    REQUIRE(leased_response->success());
-    REQUIRE(leased_response->status() == "OK");
+    REQUIRE_FALSE(leased_response->success());
+    REQUIRE(leased_response->status() == "RETRY");
 
     std::int64_t logical_time = 1'000;
     auto skewed_node = std::make_shared<graft::RaftNode>(graft::RaftNode::Config{
@@ -358,7 +358,7 @@ TEST_CASE("Client query RPC requires read barrier in multi-node leader mode", "[
     });
     skewed_node->become_leader();
     REQUIRE(skewed_node->handle_append_entries_response("n2", successful_response));
-    REQUIRE(skewed_node->can_serve_linearizable_read(750));
+    REQUIRE_FALSE(skewed_node->can_serve_linearizable_read(750));
     logical_time += 751;
     REQUIRE_FALSE(skewed_node->can_serve_linearizable_read(750));
 
@@ -376,11 +376,12 @@ TEST_CASE("Client query RPC requires read barrier in multi-node leader mode", "[
     graft::InMemoryRpcHandler fallback_handler(fallback_node);
     fallback_handler.set_local_endpoint("127.0.0.1", 10080);
     fallback_handler.set_read_barrier([fallback_node] {
+        const auto fence = fallback_node->append_local_entry({});
         raft::AppendEntriesResponse response;
         response.set_term(1);
         response.set_peer_id("n2");
         response.set_success(true);
-        response.set_match_index(0);
+        response.set_match_index(fence);
         return fallback_node->handle_append_entries_response("n2", response);
     });
 

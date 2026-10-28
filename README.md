@@ -11,7 +11,7 @@ This repo contains three *interoperable* implementations of the Raft consensus p
 - An asynchronous [Raft implementation in C++](./graft-cpp/README.md), built on [Boost.Asio](https://www.boost.org/doc/libs/release/doc/html/boost_asio.html).
 - An asynchronous [Raft implementation in Rust](./graft-rust/README.md), built on [Tokio](https://tokio.rs).
 
-All three implementations support Raft joint-consensus reconfiguration, persisted configuration state, and chunked `InstallSnapshot` transfer.
+All three implementations support Raft joint-consensus reconfiguration, persisted configuration state, and chunked `InstallSnapshot` transfer. See [consensus safety corrections](docs/consensus-hardening.md) for the regression coverage, current read barriers, and durable-record changes.
 
 ## Shared Wire Contract & Architecture
 

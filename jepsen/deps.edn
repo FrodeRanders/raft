@@ -2,4 +2,6 @@
  :deps {org.clojure/clojure {:mvn/version "1.12.4"}
         jepsen/jepsen {:mvn/version "0.3.10"}
         cheshire/cheshire {:mvn/version "5.13.0"}}
- :aliases {:run {:main-opts ["-m" "raft-jepsen.core"]}}}
+ :aliases {:run {:main-opts ["-m" "raft-jepsen.core"]}
+           :test {:extra-paths ["test"]
+                  :main-opts ["-m" "raft-jepsen.db-test"]}}}

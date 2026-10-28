@@ -130,6 +130,7 @@ namespace graft {
     }
 
     bool RaftRuntime::run_election_round() {
+        refresh_configured_peers();
         // The bounded runtime performs one synchronous election round. Long-running
         // server modes schedule this periodically from the CLI layer.
         const auto request = node_->start_election();
@@ -211,27 +212,20 @@ namespace graft {
                node_->has_joint_majority(acknowledgements);
     }
 
-    bool RaftRuntime::await_linearizable_read(std::chrono::milliseconds lease, std::chrono::milliseconds timeout) {
-        if (node_->can_serve_linearizable_read(lease.count())) {
-            return true;
-        }
-        if (node_->role() != RaftNode::Role::leader) {
-            return false;
-        }
-
+    bool RaftRuntime::await_linearizable_read(std::chrono::milliseconds, std::chrono::milliseconds timeout) {
+        if (node_->role() != RaftNode::Role::leader || node_->decommissioned()) return false;
+        const auto term = node_->current_term();
+        const auto index = node_->append_local_entry({});
+        persist();
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         do {
-            // Refreshing the barrier is separate from checking the lease because the
-            // heartbeat responses must first update RaftNode peer progress.
-            if (refresh_read_barrier_once() && node_->can_serve_linearizable_read(lease.count())) {
-                return true;
-            }
-            if (std::chrono::steady_clock::now() >= deadline) {
-                break;
-            }
+            if (node_->role() != RaftNode::Role::leader || node_->current_term() != term) return false;
+            send_heartbeats_once();
+            if (node_->role() == RaftNode::Role::leader && node_->current_term() == term &&
+                node_->commit_index() >= index && node_->last_applied() >= index) return true;
+            if (std::chrono::steady_clock::now() >= deadline) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        } while (std::chrono::steady_clock::now() <= deadline);
-        return refresh_read_barrier_once() && node_->can_serve_linearizable_read(lease.count());
+        } while (true);
     }
 
     std::size_t RaftRuntime::replicate_entry_once(const std::string &data) {
@@ -241,7 +235,9 @@ namespace graft {
         }
 
         const auto initial_commit_index = node_->commit_index();
-        node_->append_local_entry(data);
+        const auto term = node_->current_term();
+        const auto entry_index = node_->append_local_entry(data);
+        if (entry_index <= 0) return 0;
         persist();
 
         // Replicate to every known peer once per call. Commit advancement happens inside
@@ -257,7 +253,8 @@ namespace graft {
             send_heartbeats_once();
         }
 
-        return successes;
+        return node_->committed_command_result(entry_index, term).has_value()
+            ? std::max<std::size_t>(1, successes) : 0;
     }
 
     std::optional<std::string> RaftRuntime::replicate_entry_once_with_result(const std::string &data) {
@@ -267,24 +264,22 @@ namespace graft {
         }
 
         const auto initial_commit_index = node_->commit_index();
+        const auto term = node_->current_term();
         const auto entry_index = node_->append_local_entry(data);
+        if (entry_index <= 0) return std::nullopt;
         persist();
 
         // Client success is tied to the command being committed and applied, not merely appended locally.
         // The returned result is read from the state machine after replication has advanced the commit index.
-        std::size_t successes = 0;
         for (const auto &peer: peers()) {
-            successes += replicate_peer_until_caught_up(peer) ? 1 : 0;
+            replicate_peer_until_caught_up(peer);
         }
 
         if (node_->commit_index() > initial_commit_index) {
             send_heartbeats_once();
         }
 
-        if (successes == 0) {
-            return std::nullopt;
-        }
-        return node_->applied_command_result(entry_index);
+        return node_->committed_command_result(entry_index, term);
     }
 
     std::vector<PeerEndpoint> RaftRuntime::voting_peers() const {

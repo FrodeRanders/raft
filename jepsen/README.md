@@ -75,6 +75,18 @@ The harness uses host-local ports and a shared packet-filter helper, so two loca
 
 `run-suite.sh` is the serial runner for that requirement. It launches each scenario in a separate `clojure` process with its own base-port range and work directory.
 
+Run `clojure -M:test` from this directory for the harness regressions. Faults
+verify their effects: Docker partition/heal commands inspect actual network
+attachment and surface failures; crash scenarios bypass shutdown hooks. Missing
+write/CAS confirmation is recorded as uncertain. Membership promotion retries
+only the explicit C++ rejection issued before admission when a follower has no
+leader endpoint; it does not replay uncertain or admitted mutations.
+The checker requires both a successful mutation and a successful read. Java
+clients targeting Java containers run inside that container so advertised SRV
+names and internal redirect ports resolve on their owning network; native direct
+probes retain host endpoints. The printed seed is run metadata: the harness does
+not seed every random choice and does not support deterministic seed replay.
+
 Supported options:
 
 - `--jar <path>`: explicit path to `raft-dist` jar
@@ -99,8 +111,8 @@ These Jepsen scenarios are meant to approximate concrete runtime conditions rath
 
 - `none`: baseline cluster behavior with concurrent `write`, `read`, and `cas` load.
   This is the "healthy system" reference point.
-- `crash-restart`: stops a node process without deleting its state directory, then starts it again from the same persisted data.
-  This emulates JVM crash, host reboot, or process supervisor restart where the node's local Raft state survives.
+- `crash-restart`: forcibly kills a node without running shutdown hooks or deleting its state directory, then starts it again from the same persisted data. Docker uses `SIGKILL` too.
+  This tests process loss with the host filesystem still running; it does not qualify device power-loss recovery. Normal teardown and `snapshot-boundary-restart` use orderly termination.
 - `process-pause`: pauses one node process and later resumes it without process restart.
   This emulates long JVM GC pauses, scheduler starvation, or an overloaded C++ process that keeps memory and sockets but stops making Raft progress.
 - `clock-skew`: restarts one local node with an offset applied to the Raft logical clock, then later restarts it without that offset.

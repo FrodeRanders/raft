@@ -15,144 +15,95 @@
  * limitations under the License.
  */
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-
 use graft_core::raft_node::PersistentStateStore as PersistentStateStoreTrait;
+use std::{fs, io::ErrorKind, path::PathBuf, sync::Mutex};
 
-// ---------------------------------------------------------------------------
-// FilePersistentStateStore
-// ---------------------------------------------------------------------------
+#[derive(Default)]
+struct State {
+    term: u64,
+    vote: Option<String>,
+}
 
-/// A file-backed persistent state store that survives restarts. Stores
-/// `current_term` and `voted_for` in a simple key-value properties file
-/// (one `key=value` pair per line). The file is written on every mutation
-/// so that a crash between writes never leaves stale state on disk.
-///
-/// The format is intentionally human-readable for smoke-test debugging:
-/// ```text
-/// term=7
-/// voted=n2
-/// ```
+/// Mutations are serialized through durable publication; failure is fail-stop.
 pub struct FilePersistentStateStore {
-    /// Path to the state file.
     path: PathBuf,
-    /// In-memory cache of the current term.
-    term: Mutex<u64>,
-    /// In-memory cache of the voted-for peer id.
-    voted_for: Mutex<Option<String>>,
+    state: Mutex<State>,
 }
 
 impl FilePersistentStateStore {
     pub fn new(path: PathBuf) -> Self {
-        let store = Self {
-            path,
-            term: Mutex::new(0),
-            voted_for: Mutex::new(None),
-        };
-        store.load();
-        store
-    }
-
-    /// Reads the state file and populates the in-memory caches. If the
-    /// file does not exist, the defaults (term=0, no vote) are kept.
-    fn load(&self) {
-        if !self.path.exists() {
-            return;
-        }
-
-        if let Ok(content) = fs::read_to_string(&self.path) {
-            for line in content.lines() {
-                if let Some((key, value)) = line.split_once('=') {
-                    match key.trim() {
-                        "term" => {
-                            if let Ok(t) = value.trim().parse::<u64>() {
-                                *self.term.lock().unwrap() = t;
-                            }
+        let state = match fs::read_to_string(&path) {
+            Err(e) if e.kind() == ErrorKind::NotFound => State::default(),
+            Err(e) => panic!("cannot open Raft state {}: {e}", path.display()),
+            Ok(content) => {
+                let mut term = None;
+                let mut vote = None;
+                for line in content.lines() {
+                    let (key, value) = line.split_once('=').expect("malformed Raft state");
+                    match key {
+                        "term" if term.is_none() => {
+                            term = Some(value.parse().expect("invalid Raft term"))
                         }
-                        "voted" => {
-                            let v = value.trim().to_string();
-                            *self.voted_for.lock().unwrap() =
-                                if v.is_empty() { None } else { Some(v) };
+                        "voted" if vote.is_none() => {
+                            vote = Some(if value.is_empty() {
+                                None
+                            } else {
+                                Some(value.to_owned())
+                            })
                         }
-                        _ => {}
+                        _ => panic!("unknown or duplicate Raft state field"),
                     }
                 }
+                State {
+                    term: term.expect("missing Raft term"),
+                    vote: vote.expect("missing Raft vote"),
+                }
             }
-        }
-    }
-
-    /// Persists the in-memory state to the file. Called after every
-    /// `set_current_term` and `set_voted_for`.
-    fn save(&self) {
-        let term = *self.term.lock().unwrap();
-        let voted = self.voted_for.lock().unwrap().clone().unwrap_or_default();
-        if let Some(parent) = self.path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let tmp_path = temporary_path(&self.path);
-        let content = format!("term={}\nvoted={}\n", term, voted);
-        let mut file = match OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&tmp_path)
-        {
-            Ok(file) => file,
-            Err(_) => return,
         };
-        if file.write_all(content.as_bytes()).is_err() {
-            let _ = fs::remove_file(&tmp_path);
-            return;
-        }
-        file.flush().ok();
-        file.sync_all().ok();
-        drop(file);
-        if fs::rename(&tmp_path, &self.path).is_ok() {
-            sync_parent_dir(&self.path);
-        } else {
-            let _ = fs::remove_file(&tmp_path);
+        Self {
+            path,
+            state: Mutex::new(state),
         }
     }
-}
 
-fn temporary_path(path: &Path) -> PathBuf {
-    let mut tmp = path.to_path_buf();
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| format!("{}.tmp", ext))
-        .unwrap_or_else(|| "tmp".to_string());
-    tmp.set_extension(extension);
-    tmp
-}
-
-fn sync_parent_dir(path: &Path) {
-    if let Some(parent) = path.parent() {
-        if let Ok(dir) = fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
+    fn save(&self, state: &State) {
+        crate::durable::persist(
+            &self.path,
+            format!(
+                "term={}\nvoted={}\n",
+                state.term,
+                state.vote.as_deref().unwrap_or("")
+            )
+            .as_bytes(),
+        );
     }
 }
 
 impl PersistentStateStoreTrait for FilePersistentStateStore {
     fn current_term(&self) -> u64 {
-        *self.term.lock().unwrap()
+        self.state.lock().unwrap().term
     }
-
-    fn set_current_term(&self, term: u64) {
-        *self.term.lock().unwrap() = term;
-        self.save();
-    }
-
     fn voted_for(&self) -> Option<String> {
-        self.voted_for.lock().unwrap().clone()
+        self.state.lock().unwrap().vote.clone()
     }
-
+    fn set_current_term(&self, term: u64) {
+        let mut state = self.state.lock().unwrap();
+        assert!(term >= state.term, "Raft term cannot decrease");
+        if term > state.term {
+            state.vote = None;
+        }
+        state.term = term;
+        self.save(&state);
+    }
     fn set_voted_for(&self, peer_id: Option<String>) {
-        *self.voted_for.lock().unwrap() = peer_id;
-        self.save();
+        assert!(
+            !peer_id
+                .as_ref()
+                .is_some_and(|id| id.contains(['\n', '\r']) || id.is_empty()),
+            "invalid Raft voter id"
+        );
+        let mut state = self.state.lock().unwrap();
+        state.vote = peer_id;
+        self.save(&state);
     }
 }

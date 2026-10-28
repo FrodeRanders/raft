@@ -1021,7 +1021,7 @@ class BasicAdapterCommandTest {
         StateMachineQueryResult result = StateMachineQueryResult.decode(response.getResult()).orElseThrow();
         assertTrue(result.isFound());
         assertEquals("42", result.getValue());
-        assertTrue(nodeA.canServeLinearizableRead());
+        assertFalse(nodeA.canServeLinearizableRead(), "a completed read cannot authorize a later read");
     }
 
     @Test

@@ -18,6 +18,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <mutex>
 #include <string>
 
 #include "graft/core/raft_node.hpp"
@@ -35,6 +36,7 @@ namespace graft {
         bool exists() const;
 
         void save(const RaftNode::PersistentState &state) const;
+        void save(const RaftNode &node) const;
 
         std::optional<RaftNode::PersistentState> load() const;
 
@@ -45,6 +47,8 @@ namespace graft {
 
         static std::string unescape(const std::string &value);
 
+        void save_locked(const RaftNode::PersistentState &state) const;
+        mutable std::mutex mutex_;
         std::filesystem::path path_;
     };
 } // namespace graft

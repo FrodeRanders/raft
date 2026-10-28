@@ -977,7 +977,7 @@ message: Node is not leader; send query to current leader
 
 So once a node has learned another leader, it no longer auto-promotes itself for client reads just because it lacks an explicit peer configuration file, and client redirects can now be actionable when the node was started with known peer endpoints.
 
-For active multi-node leaders, C++ query handling now also refreshes a quorum heartbeat barrier before serving a local state-machine read. If the barrier cannot be refreshed, the handler returns `RETRY` instead of serving a potentially stale read.
+For active multi-node leaders, each query appends a fresh no-op and waits for its current-term quorum commit and application. Failed barriers return `RETRY`. Receipt-time leases no longer authorize later reads. See [consensus hardening](../docs/consensus-hardening.md) for regression traces and durable storage changes.
 
 That catch-up is no longer limited to the one-shot `replicate-once` path. In a local smoke run with a persistent leader started in `serve-active-persistent` and a follower behind the leader's snapshot boundary, the follower recovered during normal scheduled leader rounds and persisted:
 

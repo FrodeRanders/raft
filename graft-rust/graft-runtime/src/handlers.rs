@@ -278,13 +278,23 @@ async fn handle_client_cmd(handler: &RaftHandler, payload: &[u8]) -> Vec<u8> {
         .encode_to_vec();
     }
 
-    match handler.runtime.submit_command(req.command) {
-        Ok(log_index) => {
+    let submitted = {
+        let mut n = handler.node.lock();
+        let term = n.current_term;
+        n.submit_command(req.command).map(|index| (index, term))
+    };
+    match submitted {
+        Ok((log_index, submitted_term)) => {
             let committed = handler
                 .runtime
-                .wait_for_commit(log_index, std::time::Duration::from_secs(5))
+                .wait_for_commit(log_index, submitted_term, std::time::Duration::from_secs(5))
                 .await;
             let n = handler.node.lock();
+            let committed = committed
+                && n.state == NodeState::Leader
+                && n.current_term == submitted_term
+                && n.commit_index >= log_index
+                && n.last_applied >= log_index;
             raft::ClientCommandResponse {
                 term: n.current_term as i64,
                 peer_id: n.me.id.clone(),
@@ -372,6 +382,24 @@ async fn handle_client_query(handler: &RaftHandler, payload: &[u8]) -> Vec<u8> {
         .encode_to_vec();
     }
     let n = handler.node.lock();
+    if n.state != NodeState::Leader
+        || n.current_term != current_term
+        || n.decommissioned
+        || n.joining
+    {
+        return raft::ClientQueryResponse {
+            term: n.current_term as i64,
+            peer_id: n.me.id.clone(),
+            success: false,
+            status: "RETRY".into(),
+            message: "Leadership changed during read".into(),
+            leader_id: n.known_leader_id.clone().unwrap_or_default(),
+            leader_host: String::new(),
+            leader_port: 0,
+            result: vec![],
+        }
+        .encode_to_vec();
+    }
     if let Some(ref sm) = n.state_machine {
         if let Some(qs) = sm.as_queryable() {
             let result = qs.query(&req.query);
@@ -702,6 +730,19 @@ fn handle_reconfig(
         }
         .encode_to_vec();
     }
+    if !req.action.eq_ignore_ascii_case("FINALIZE")
+        && node.lock().active_configuration().is_joint_consensus()
+    {
+        return raft::ReconfigureClusterResponse {
+            term: current_term as i64,
+            peer_id,
+            success: false,
+            status: "REJECTED".into(),
+            message: "reconfiguration already active".into(),
+            leader_id: leader_id.unwrap_or_default(),
+        }
+        .encode_to_vec();
+    }
     let cmd = match req.action.to_uppercase().as_str() {
         "JOINT" => crate::membership::encode_joint_command(&req.members),
         "FINALIZE" => {
@@ -719,11 +760,29 @@ fn handle_reconfig(
             }
             crate::membership::encode_finalize_command()
         }
-        _ => {
+        "PROMOTE" | "DEMOTE" => {
             let n = node.lock();
+            if req.members.len() != 1 || !n.known_peers.contains_key(&req.members[0].id) {
+                return raft::ReconfigureClusterResponse {
+                    term: n.current_term as i64,
+                    peer_id: n.me.id.clone(),
+                    success: false,
+                    status: "INVALID".into(),
+                    message: "role change requires exactly one known member".into(),
+                    leader_id: n.me.id.clone(),
+                }
+                .encode_to_vec();
+            }
+            let mut requested = req.members.clone();
+            requested[0].role = if req.action.eq_ignore_ascii_case("PROMOTE") {
+                "VOTER"
+            } else {
+                "LEARNER"
+            }
+            .into();
             let mut members: Vec<raft::PeerSpec> = Vec::new();
             for p in n.cluster_configuration.current_members().iter() {
-                if let Some(ps) = req.members.iter().find(|m| m.id == p.id) {
+                if let Some(ps) = requested.iter().find(|m| m.id == p.id) {
                     members.push(raft::PeerSpec {
                         id: ps.id.clone(),
                         host: ps.host.clone(),
@@ -739,7 +798,7 @@ fn handle_reconfig(
                     });
                 }
             }
-            for ps in &req.members {
+            for ps in &requested {
                 if !n.cluster_configuration.contains(&ps.id) {
                     members.push(raft::PeerSpec {
                         id: ps.id.clone(),
@@ -750,6 +809,17 @@ fn handle_reconfig(
                 }
             }
             crate::membership::encode_joint_command(&members)
+        }
+        _ => {
+            return raft::ReconfigureClusterResponse {
+                term: current_term as i64,
+                peer_id,
+                success: false,
+                status: "INVALID".into(),
+                message: "unknown reconfiguration action".into(),
+                leader_id: leader_id.unwrap_or_default(),
+            }
+            .encode_to_vec()
         }
     };
     match runtime.submit_command(cmd) {
@@ -974,56 +1044,72 @@ fn repl_status(n: &parking_lot::MutexGuard<RaftNode>) -> Vec<raft::TelemetryRepl
 fn member_vec(n: &parking_lot::MutexGuard<RaftNode>) -> Vec<raft::ClusterMemberSummary> {
     n.known_peers
         .iter()
-        .map(|(id, _)| {
+        .map(|(id, peer)| {
             let is_local = id == &n.me.id;
-            let in_current = n
+            let current = n
                 .cluster_configuration
                 .current_members()
-                .iter()
-                .any(|p| p.id == *id);
-            let in_next = n
-                .cluster_configuration
-                .next_members()
-                .iter()
-                .any(|p| p.id == *id);
+                .into_iter()
+                .find(|p| p.id == *id);
+            let next = if n.cluster_configuration.is_joint_consensus() {
+                n.cluster_configuration
+                    .next_members()
+                    .into_iter()
+                    .find(|p| p.id == *id)
+            } else {
+                current
+            };
+            let role = |p: &graft_core::types::Peer| if p.is_voter() { "VOTER" } else { "LEARNER" };
+            let current_role = current.map(role).unwrap_or("");
+            let next_role = next.map(role).unwrap_or("");
+            let transition = match (current_role, next_role) {
+                ("", "") => "known",
+                ("", _) => "joining",
+                (_, "") => "leaving",
+                ("LEARNER", "VOTER") => "promoting",
+                ("VOTER", "LEARNER") => "demoting",
+                _ => "steady",
+            };
             let is_voter = n.cluster_configuration.is_voter(id);
-            let ni = n.next_index.get(id).copied().unwrap_or(0);
-            let mi = n.match_index.get(id).copied().unwrap_or(0);
+            let mi = if is_local {
+                n.log_store.last_index()
+            } else {
+                n.match_index.get(id).copied().unwrap_or(0)
+            };
+            let ni = if is_local {
+                mi + 1
+            } else {
+                n.next_index.get(id).copied().unwrap_or(0)
+            };
+            let lag = n.log_store.last_index().saturating_sub(mi);
+            let reachable = is_local || n.last_follower_contact_millis.contains_key(id);
             raft::ClusterMemberSummary {
                 peer_id: id.clone(),
                 local: is_local,
-                current_member: in_current,
-                next_member: in_next,
+                current_member: current.is_some(),
+                next_member: next.is_some(),
                 voting: is_voter,
-                role: if is_voter { "VOTER" } else { "LEARNER" }.to_string(),
-                current_role: if in_current && is_voter {
-                    "VOTER"
-                } else if in_current {
-                    "LEARNER"
-                } else {
-                    "NONE"
-                }
-                .to_string(),
-                next_role: if in_next && is_voter {
-                    "VOTER"
-                } else if in_next {
-                    "LEARNER"
-                } else {
-                    "NONE"
-                }
-                .to_string(),
-                role_transition: if in_current != in_next {
-                    "JOINT"
-                } else {
-                    "NONE"
-                }
-                .to_string(),
+                role: next
+                    .or(current)
+                    .map(role)
+                    .unwrap_or_else(|| role(peer))
+                    .into(),
+                current_role: current_role.into(),
+                next_role: next_role.into(),
+                role_transition: transition.into(),
                 transition_age_millis: 0,
                 blocking_quorums: String::new(),
                 blocking_reason: String::new(),
-                reachable: n.last_follower_contact_millis.get(id).is_some() || is_local,
-                freshness: String::new(),
-                health: "OK".to_string(),
+                reachable,
+                freshness: if reachable { "current" } else { "unknown" }.into(),
+                health: if !reachable {
+                    "unreachable"
+                } else if lag > 0 {
+                    "lagging"
+                } else {
+                    "healthy"
+                }
+                .into(),
                 next_index: ni as i64,
                 match_index: mi as i64,
                 consecutive_failures: n
@@ -1031,7 +1117,7 @@ fn member_vec(n: &parking_lot::MutexGuard<RaftNode>) -> Vec<raft::ClusterMemberS
                     .get(id)
                     .copied()
                     .unwrap_or(0) as i32,
-                lag: (n.log_store.last_index().saturating_sub(mi)) as i64,
+                lag: lag as i64,
                 last_failed_contact_millis: n
                     .last_follower_failure_millis
                     .get(id)
@@ -1045,4 +1131,149 @@ fn member_vec(n: &parking_lot::MutexGuard<RaftNode>) -> Vec<raft::ClusterMemberS
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod membership_tests {
+    use super::*;
+    use graft_core::{
+        membership::ClusterConfiguration,
+        types::{Peer, Role},
+    };
+    use graft_storage::log_store::{InMemoryLogStore, InMemoryPersistentStateStore};
+
+    fn fixture() -> (Arc<parking_lot::Mutex<RaftNode>>, Arc<RaftRuntime>) {
+        let members: Vec<_> = ["a", "b", "c", "d"]
+            .into_iter()
+            .map(|id| {
+                Peer::new(
+                    id.into(),
+                    "127.0.0.1:1234".parse().unwrap(),
+                    if id == "d" {
+                        Role::Learner
+                    } else {
+                        Role::Voter
+                    },
+                )
+            })
+            .collect();
+        let mut n = RaftNode::new(
+            members[0].clone(),
+            1500,
+            Arc::new(InMemoryLogStore::new()),
+            Arc::new(InMemoryPersistentStateStore::new()),
+            None,
+            ClusterConfiguration::stable(members),
+            100,
+            1024,
+        );
+        n.current_term = 1;
+        n.state = NodeState::Leader;
+        let node = Arc::new(parking_lot::Mutex::new(n));
+        let runtime = Arc::new(RaftRuntime::new(node.clone(), Arc::new(RaftClient::new())));
+        (node, runtime)
+    }
+
+    #[test]
+    fn role_actions_override_the_callers_existing_role() {
+        for (action, target, supplied_role, desired_role) in [
+            ("PROMOTE", "d", "LEARNER", "VOTER"),
+            ("DEMOTE", "b", "VOTER", "LEARNER"),
+        ] {
+            let (node, runtime) = fixture();
+            let req = raft::ReconfigureClusterRequest {
+                action: action.into(),
+                members: vec![raft::PeerSpec {
+                    id: target.into(),
+                    host: "127.0.0.1".into(),
+                    port: 1234,
+                    role: supplied_role.into(),
+                }],
+                ..Default::default()
+            };
+            let response = raft::ReconfigureClusterResponse::decode(
+                handle_reconfig(&node, &runtime, &req.encode_to_vec()).as_slice(),
+            )
+            .unwrap();
+            assert!(response.success);
+            let n = node.lock();
+            let entry = n.log_store.entry_at(n.log_store.last_index()).unwrap();
+            let command = raft::InternalRaftCommand::decode(entry.data.as_slice()).unwrap();
+            let Some(raft::internal_raft_command::Command::Joint(joint)) = command.command else {
+                panic!("not a joint entry")
+            };
+            assert_eq!(
+                joint.members.iter().find(|m| m.id == target).unwrap().role,
+                desired_role
+            );
+            assert_eq!(joint.members.len(), 4);
+        }
+    }
+
+    #[test]
+    fn invalid_action_does_not_append_a_joint_entry() {
+        let (node, runtime) = fixture();
+        let request = raft::ReconfigureClusterRequest {
+            action: "TYPO".into(),
+            ..Default::default()
+        };
+        let response = raft::ReconfigureClusterResponse::decode(
+            handle_reconfig(&node, &runtime, &request.encode_to_vec()).as_slice(),
+        )
+        .unwrap();
+        assert_eq!(response.status, "INVALID");
+        assert_eq!(node.lock().log_store.last_index(), 0);
+    }
+
+    #[test]
+    fn member_status_preserves_both_roles_during_promotion() {
+        let (node, _) = fixture();
+        let mut n = node.lock();
+        let mut next: Vec<_> = n
+            .cluster_configuration
+            .current_members()
+            .into_iter()
+            .cloned()
+            .collect();
+        next.iter_mut().find(|p| p.id == "d").unwrap().role = Role::Voter;
+        n.cluster_configuration = n.cluster_configuration.transition_to(next);
+        let members = member_vec(&n);
+        let d = members.iter().find(|m| m.peer_id == "d").unwrap();
+        assert_eq!(
+            (&*d.current_role, &*d.next_role, &*d.role_transition),
+            ("LEARNER", "VOTER", "promoting")
+        );
+        assert_eq!(
+            members.iter().find(|m| m.peer_id == "a").unwrap().health,
+            "healthy"
+        );
+    }
+
+    #[test]
+    fn committed_join_is_a_replication_target_before_promotion() {
+        let (node, _) = fixture();
+        let mut n = node.lock();
+        n.state = NodeState::Follower;
+        let command = crate::membership::encode_join_command(&raft::PeerSpec {
+            id: "e".into(),
+            host: "127.0.0.1".into(),
+            port: 1235,
+            role: "LEARNER".into(),
+        });
+        assert!(
+            n.handle_append_entries_request(AppendEntriesRequest {
+                term: 1,
+                leader_id: "b".into(),
+                prev_log_index: 0,
+                prev_log_term: 0,
+                leader_commit: 1,
+                entries: vec![LogEntry::new(1, "b".into(), command)]
+            })
+            .success
+        );
+        assert!(n.pending_join_ids.contains("e"));
+        assert_eq!(n.next_index.get("e"), Some(&1));
+        assert_eq!(n.match_index.get("e"), Some(&0));
+        assert!(!n.cluster_configuration.is_voter("e"));
+    }
 }

@@ -145,9 +145,8 @@ final class ClientRequestHandler {
             return new ClientQueryResponse(stateMachine.getTerm(), context.me().getId(), false, authentication.status(), authentication.message(), leaderId(leader), leaderHost(leader), leaderPort(leader), new byte[0]);
         }
         if (stateMachine.isLeader()) {
-            // Linearizable reads rely on recent leader authority.  If the current
-            // lease is not fresh enough, awaitLinearizableRead sends/awaits a
-            // heartbeat barrier before the state machine is queried.
+            // Distributed reads commit a fresh current-term fence before
+            // querying. Only an applied single-voter commit has a local fast path.
             if (!stateMachine.canServeLinearizableRead() && !stateMachine.awaitLinearizableRead()) {
                 Peer leader = stateMachine.getKnownLeaderPeer();
                 return new ClientQueryResponse(stateMachine.getTerm(), context.me().getId(), false, "RETRY", "Leader cannot currently guarantee a linearizable read", leaderId(leader), leaderHost(leader), leaderPort(leader), new byte[0]);

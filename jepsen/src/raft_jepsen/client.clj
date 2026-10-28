@@ -74,6 +74,18 @@
 (defn- run-command [repo-root command]
   (apply sh/sh (concat command [:dir repo-root])))
 
+(defn- docker-java-client? [test node impl]
+  (and (raft-db/docker-backend? test) (= :java impl) (= :java (raft-db/node-impl test node))))
+
+(defn- run-client-command [test node impl repo-root command]
+  ;; Advertised SRV names and ports belong to the container network. A Java
+  ;; client follows redirects, so run it there rather than resolving those
+  ;; private names from the host. Other client modes retain their direct probes.
+  (run-command repo-root
+    (if (docker-java-client? test node impl)
+      (into ["docker" "exec" (str node) "java" "-jar" "/app/raft.jar"] (drop 3 command))
+      command)))
+
 (defn- classify-write [op exit response key value]
   ;; invoke! must return a completed operation map. :ok operations become part
   ;; of the linearizability history. :fail operations did not take effect from
@@ -85,9 +97,9 @@
       success? (assoc op :type :ok :value value)
       (and (zero? exit) (= "ACCEPTED_NOT_COMMITTED" status) (:success response))
       (assoc op :type :info :error status)
-      (#{"RETRY" "REDIRECT" "NOT_LEADER"} status) (assoc op :type :fail :error status)
-      (#{"UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
-      :else (assoc op :type :fail :error (or status :command-failed)))))
+      (#{"REDIRECT" "NOT_LEADER"} status) (assoc op :type :fail :error status)
+      (#{"RETRY" "UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
+      :else (assoc op :type :info :error (or status :command-failed)))))
 
 (defn- classify-read [op exit response key]
   ;; Reads return :ok with the observed value. A missing key is represented as
@@ -117,9 +129,9 @@
       (and success? (contains? result :matched)) (assoc op :type :fail :error :cas-mismatch)
       (and (zero? exit) (= "ACCEPTED_NOT_COMMITTED" status) (:success response))
       (assoc op :type :info :error status)
-      (#{"RETRY" "REDIRECT" "NOT_LEADER"} status) (assoc op :type :fail :error status)
-      (#{"UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
-      :else (assoc op :type :fail :error (or status :command-failed)))))
+      (#{"REDIRECT" "NOT_LEADER"} status) (assoc op :type :fail :error status)
+      (#{"RETRY" "UNREACHABLE" "TIMEOUT"} status) (assoc op :type :info :error status)
+      :else (assoc op :type :info :error (or status :command-failed)))))
 
 (defn- maybe-capture! [test node op result]
   ;; Jepsen histories contain operation outcomes, but root-causing failures is
@@ -147,17 +159,18 @@
     ;; The op's :f selects the workload action generated in core.clj. The
     ;; client translates that abstract operation into a concrete CLI command,
     ;; parses the response, then classifies it back into Jepsen history terms.
-    (let [target (raft-db/peer-spec test node)
+    (let [impl (client-impl-for-node test node)
+          in-container? (docker-java-client? test node impl)
+          target (if in-container? (str node "@127.0.0.1:7000") (raft-db/peer-spec test node))
           host "127.0.0.1"
-          port (str (raft-db/node-port test node))
-          impl (client-impl-for-node test node)
+          port (if in-container? "7000" (str (raft-db/node-port test node)))
           key (or (:key op) (:key test))
           cli-key (str key)
           value (some-> (:value op) str)]
       (try
         (case (:f op)
            :write (let [{:keys [exit out err]}
-                        (run-command repo-root
+                        (run-client-command test node impl repo-root
                                      (case impl
                                        :java (java-command jar-path "command" "--json" "put" target cli-key value)
                                        :cpp (cpp-command cpp-bin "client-put" host port cli-key value "jepsen-cpp-client")
@@ -172,7 +185,7 @@
                      (maybe-capture! test node op result)
                      result))
            :read (let [{:keys [exit out err]}
-                       (run-command repo-root
+                       (run-client-command test node impl repo-root
                                     (case impl
                                       :java (java-command jar-path "query" "--json" "get" target cli-key)
                                       :cpp (cpp-command cpp-bin "client-get" host port cli-key "jepsen-cpp-client")
@@ -192,7 +205,7 @@
                      expected-value (if (nil? expected) "" (str expected))
                      new-value (str new-value)
                      {:keys [exit out err]}
-                      (run-command repo-root
+                      (run-client-command test node impl repo-root
                                    (case impl
                                      :java (java-command jar-path "command" "--json" "cas" target cli-key expected-arg new-value)
                                      :cpp (cpp-command cpp-bin "client-cas" host port cli-key expected-present expected-value new-value "jepsen-cpp-client")

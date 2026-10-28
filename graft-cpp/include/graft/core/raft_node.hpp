@@ -219,6 +219,8 @@ namespace graft {
 
         std::string applied_command_result(std::int64_t index) const;
 
+        std::optional<std::string> committed_command_result(std::int64_t index, std::int64_t term) const;
+
         std::optional<CommandCommitResult> append_and_commit_local_command(const std::string &data);
 
         std::optional<std::string> leader_id() const;
@@ -263,6 +265,9 @@ namespace graft {
         std::vector<std::string> active_voting_members_locked() const;
 
         void refresh_voting_peers_from_members_locked();
+
+        std::pair<std::vector<raft::PeerSpec>, std::vector<raft::PeerSpec>> configuration_at_locked(std::int64_t index) const;
+        bool accepts_leader_locked(const std::string &peer_id) const;
 
         bool has_joint_majority_locked(const std::unordered_set<std::string> &peer_ids) const;
 
@@ -332,6 +337,8 @@ namespace graft {
         std::int64_t pending_snapshot_index_{0};
         std::int64_t pending_snapshot_term_{0};
         std::string pending_snapshot_data_;
+        std::string pending_snapshot_leader_;
+        std::int64_t pending_snapshot_leader_term_{0};
         // Compatibility fields for bounded smoke/probe modes that start from only
         // previous index/term values rather than a fully materialized log.
         std::int64_t previous_log_index_;
@@ -343,6 +350,7 @@ namespace graft {
         std::vector<std::string> voting_peers_;
         std::vector<raft::PeerSpec> current_members_;
         std::vector<raft::PeerSpec> next_members_;
+        bool membership_authoritative_{false};
         std::unordered_map<std::string, PeerProgress> peer_progress_;
         std::unordered_set<std::string> votes_granted_;
         std::unordered_set<std::string> votes_responded_;

@@ -18,16 +18,11 @@ package org.gautelis.raft.storage;
 
 import org.gautelis.raft.protocol.LogEntry;
 import org.gautelis.raft.serialization.ProtoMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.EOFException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -42,8 +37,7 @@ import java.util.Properties;
  * retained prefix boundary for AppendEntries consistency checks.</p>
  */
 public final class FileLogStore implements LogStore {
-    private static final Logger log = LoggerFactory.getLogger(FileLogStore.class);
-
+    private static final int FORMAT = 0x47524632; // GRF2: one snapshot + suffix record
     private final Path logFile;
     private final Path metaFile;
     private final List<LogEntry> entries = new ArrayList<>();
@@ -52,10 +46,8 @@ public final class FileLogStore implements LogStore {
     private byte[] snapshotData = new byte[0];
 
     public FileLogStore(Path logFile) {
-        // Two-file layout:
-        // - log file for post-snapshot entries
-        // - meta file for snapshot index/term/data
-        // This preserves Raft global index semantics while allowing compaction.
+        // New writes atomically replace one snapshot-plus-suffix record. The
+        // metadata path is read only when opening an older two-file store.
         this.logFile = logFile;
         this.metaFile = logFile.resolveSibling(logFile.getFileName() + ".meta");
         load();
@@ -208,25 +200,48 @@ public final class FileLogStore implements LogStore {
     }
 
     private void load() {
-        // Replay persisted protobuf entries in-order to rebuild in-memory suffix.
-        loadMeta();
         if (!Files.exists(logFile)) {
+            if (Files.exists(metaFile)) {
+                throw new IllegalStateException("Incomplete Raft log store: " + logFile);
+            }
             return;
         }
-
-        try (DataInputStream in = new DataInputStream(Files.newInputStream(logFile))) {
-            while (true) {
-                int length = in.readInt();
-                byte[] bytes = new byte[length];
-                in.readFully(bytes);
-                var proto = org.gautelis.raft.proto.LogEntry.parseFrom(bytes);
-                entries.add(ProtoMapper.fromProto(proto));
+        try {
+            byte[] record = Files.readAllBytes(logFile);
+            try (DataInputStream in = new DataInputStream(new java.io.ByteArrayInputStream(record))) {
+                if (record.length >= Integer.BYTES && in.readInt() == FORMAT) {
+                    snapshotIndex = in.readLong();
+                    snapshotTerm = in.readLong();
+                    if (snapshotIndex < 0 || snapshotTerm < 0) throw new IOException("Negative snapshot boundary");
+                    snapshotData = readFrame(in);
+                    int count = in.readInt();
+                    if (count < 0 || count > in.available() / Integer.BYTES) throw new IOException("Invalid entry count");
+                    for (int i = 0; i < count; i++) readEntry(in);
+                    if (in.available() != 0) throw new IOException("Trailing log bytes");
+                } else {
+                    // Read an existing legacy pair, but publish every subsequent
+                    // mutation as a single durable record. Never modify its meta file.
+                    loadMeta();
+                    try (DataInputStream legacy = new DataInputStream(new java.io.ByteArrayInputStream(record))) {
+                        while (legacy.available() > 0) readEntry(legacy);
+                    }
+                }
             }
-        } catch (EOFException ignored) {
-            // done
         } catch (IOException e) {
             throw new IllegalStateException("Failed loading log from " + logFile, e);
         }
+    }
+
+    private static byte[] readFrame(DataInputStream in) throws IOException {
+        int size = in.readInt();
+        if (size < 0 || size > in.available()) throw new IOException("Truncated Raft record");
+        byte[] bytes = new byte[size];
+        in.readFully(bytes);
+        return bytes;
+    }
+
+    private void readEntry(DataInputStream in) throws IOException {
+        entries.add(ProtoMapper.fromProto(org.gautelis.raft.proto.LogEntry.parseFrom(readFrame(in))));
     }
 
     private void loadMeta() {
@@ -252,45 +267,22 @@ public final class FileLogStore implements LogStore {
         }
     }
 
-    private void persistMeta() throws IOException {
-        Path parent = metaFile.getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
-        }
-        // Metadata persists the compaction boundary alongside the opaque snapshot bytes
-        // so restart can reconstruct global indices before replaying any suffix entries.
-        Properties props = new Properties();
-        props.setProperty("snapshotIndex", Long.toString(snapshotIndex));
-        props.setProperty("snapshotTerm", Long.toString(snapshotTerm));
-        props.setProperty("snapshotData", Base64.getEncoder().encodeToString(snapshotData));
-
-        Path tmp = metaFile.resolveSibling(metaFile.getFileName() + ".tmp");
-        try (var out = Files.newOutputStream(tmp)) {
-            props.store(out, "raft log metadata");
-        }
-        Files.move(tmp, metaFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-    }
-
     private void persist() {
         try {
-            Path parent = logFile.getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
-            persistMeta();
-
-            Path tmp = logFile.resolveSibling(logFile.getFileName() + ".tmp");
-            try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(tmp))) {
+            DurableFiles.replace(logFile, out -> {
+                out.writeInt(FORMAT);
+                out.writeLong(snapshotIndex);
+                out.writeLong(snapshotTerm);
+                out.writeInt(snapshotData.length);
+                out.write(snapshotData);
+                out.writeInt(entries.size());
                 for (LogEntry entry : entries) {
-                    // Length-prefix framing keeps reload simple and robust.
                     byte[] bytes = ProtoMapper.toProto(entry).toByteArray();
                     out.writeInt(bytes.length);
                     out.write(bytes);
                 }
-            }
-            Files.move(tmp, logFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            });
         } catch (IOException e) {
-            log.error("Failed persisting log to {}", logFile, e);
             throw new IllegalStateException("Failed persisting log to " + logFile, e);
         }
     }

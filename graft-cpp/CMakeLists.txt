@@ -104,6 +104,7 @@ if(Catch2_FOUND)
         tests/raft_node_membership_tests.cpp
         tests/snapshot_codec_tests.cpp
         tests/raft_node_state_machine_tests.cpp
+        tests/raft_safety_regression_tests.cpp
         tests/seed_provider_tests.cpp
         tests/test_main.cpp
     )

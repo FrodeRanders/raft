@@ -34,8 +34,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
 class KeyValueStateMachineTest {
+    @Test
+    void snapshotMatchesSharedModifiedUtfFixture() {
+        KeyValueStateMachine sm = new KeyValueStateMachine();
+        sm.apply(1, StateMachineCommand.put("k", "\0😀").encode());
+        byte[] fixture = java.util.HexFormat.of().parseHex("0000000100016b0008c080eda0bdedb880");
+        assertArrayEquals(fixture, sm.snapshot());
+        KeyValueStateMachine restored = new KeyValueStateMachine();
+        restored.restore(fixture);
+        assertEquals("\0😀", restored.get("k"));
+    }
     private static final Logger log = LoggerFactory.getLogger(KeyValueStateMachineTest.class);
     private static void announce(String message) {
         System.out.println("TC: " + message);

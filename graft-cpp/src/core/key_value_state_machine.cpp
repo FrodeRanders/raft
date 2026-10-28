@@ -59,6 +59,8 @@ namespace graft {
         // The incoming bytes are already unwrapped application bytes, not the full Raft snapshot.
         if (auto restored = SnapshotCodec::deserialize_key_value_snapshot(std::string(snapshot)); restored.has_value()) {
             store_ = std::move(*restored);
+        } else {
+            throw std::runtime_error("invalid key-value snapshot");
         }
     }
 

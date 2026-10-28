@@ -459,9 +459,9 @@ namespace graft {
         }
 
         if (!command_result.has_value()) {
-            response.set_success(false);
-            response.set_status("UNSUPPORTED");
-            response.set_message("client command replication failed");
+            response.set_success(true);
+            response.set_status("ACCEPTED_NOT_COMMITTED");
+            response.set_message("command commitment is unconfirmed");
             return response;
         }
 
@@ -522,12 +522,16 @@ namespace graft {
             return response;
         }
 
-        if (node_->quorum_size() > 1 && !node_->can_serve_linearizable_read(linearizable_read_lease_millis_)) {
-            // A queryable state machine is not enough for a linearizable read. The leader
-            // first needs recent quorum evidence; if the lease is stale, ask the runtime
-            // to refresh a heartbeat barrier.
-            const bool barrier_completed = read_barrier_ && read_barrier_();
-            if (!barrier_completed || !node_->can_serve_linearizable_read(linearizable_read_lease_millis_)) {
+        if (!node_->can_serve_linearizable_read(linearizable_read_lease_millis_)) {
+            const auto read_term = node_->current_term();
+            const auto previous_index = node_->last_log_index();
+            const bool single_voter = node_->has_joint_majority({node_->peer_id()});
+            const bool barrier_completed = single_voter
+                ? node_->append_and_commit_local_command({}).has_value()
+                : read_barrier_ && read_barrier_();
+            if (!barrier_completed || node_->role() != RaftNode::Role::leader || node_->decommissioned() ||
+                node_->current_term() != read_term || node_->commit_index() <= previous_index ||
+                node_->last_applied() < node_->commit_index()) {
                 response.set_status("RETRY");
                 response.set_message("Leader cannot currently guarantee a linearizable read");
                 populate_leader_endpoint(response);
@@ -808,25 +812,9 @@ namespace graft {
             }
 
             raft::InternalRaftCommand internal;
-            bool includes_self = false;
             for (const auto &member: members) {
-                if (member.id() == node_->peer_id()) {
-                    includes_self = true;
-                }
                 auto *spec = internal.mutable_joint()->add_members();
                 *spec = member;
-            }
-            if (!includes_self) {
-                // Keep the leader in the joint entry unless the caller explicitly
-                // removes it through finalize. This avoids accidental self-removal when
-                // callers provide only remote members.
-                auto *self = internal.mutable_joint()->add_members();
-                self->set_id(node_->peer_id());
-                if (local_endpoint_.has_value()) {
-                    self->set_host(local_endpoint_->host);
-                    self->set_port(local_endpoint_->port);
-                }
-                self->set_role("VOTER");
             }
             if (!internal_command_replicator_ ||
                 !internal_command_replicator_(RaftNode::encode_internal_command(internal))) {
@@ -1329,7 +1317,7 @@ namespace graft {
         } else {
             // Fresh stores are initialized immediately so later startup failures still
             // leave an inspectable baseline file.
-            store_.save(node_->persistent_state());
+            store_.save(*node_);
         }
     }
 
@@ -1352,7 +1340,9 @@ namespace graft {
 
     std::optional<raft::ClientQueryResponse> PersistentRpcHandler::on_client_query_request(
         const raft::ClientQueryRequest &request) {
-        return delegate_.on_client_query_request(request);
+        auto response = delegate_.on_client_query_request(request);
+        persist();
+        return response;
     }
 
     std::optional<raft::JoinClusterResponse> PersistentRpcHandler::on_join_cluster_request(
@@ -1412,6 +1402,6 @@ namespace graft {
     }
 
     void PersistentRpcHandler::persist() {
-        store_.save(node_->persistent_state());
+        store_.save(*node_);
     }
 } // namespace graft

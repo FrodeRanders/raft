@@ -171,7 +171,7 @@ TEST_CASE("Joint consensus requires current and next majorities for commit and r
     next_majority.set_match_index(1);
     REQUIRE(node->handle_append_entries_response("n4", next_majority));
     REQUIRE(node->commit_index() == 1);
-    REQUIRE(node->can_serve_linearizable_read(750));
+    REQUIRE_FALSE(node->can_serve_linearizable_read(750));
 }
 
 TEST_CASE("Follower forwards membership RPCs to known leader", "[rpc][membership]") {

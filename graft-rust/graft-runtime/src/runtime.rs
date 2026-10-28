@@ -26,7 +26,7 @@ use graft_proto::raft;
 use graft_transport::client::RaftClient;
 use prost::Message;
 use rand::Rng;
-use tokio::time::{interval, timeout, MissedTickBehavior};
+use tokio::time::{interval, interval_at, timeout, Instant, MissedTickBehavior};
 use tracing::{debug, info};
 
 /// The active Raft runtime — owns the timer-driven event loop that sends
@@ -86,8 +86,10 @@ impl RaftRuntime {
         let election_range = Duration::from_millis(1500); // 1500–3000ms total
         let heartbeat_interval = Duration::from_millis(750);
 
-        let mut election_timer =
-            interval(self.random_election_timeout(election_base, election_range));
+        let mut election_timer = {
+            let delay = self.random_election_timeout(election_base, election_range);
+            interval_at(Instant::now() + delay, delay)
+        };
         election_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let mut heartbeat_timer = interval(heartbeat_interval);
@@ -101,7 +103,7 @@ impl RaftRuntime {
                     self.on_election_tick();
                     // Re-randomize the interval for the next round so that
                     // nodes don't synchronize their election timers.
-                    election_timer = interval(self.random_election_timeout(election_base, election_range));
+                    election_timer = { let delay = self.random_election_timeout(election_base, election_range); interval_at(Instant::now() + delay, delay) };
                     election_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
                 }
                 _ = heartbeat_timer.tick() => {
@@ -115,79 +117,43 @@ impl RaftRuntime {
 
     fn on_election_tick(&self) {
         let now = std::time::Instant::now();
-        let state;
-        let term;
-        let peer_id;
-        let last_log_index;
-        let last_log_term;
-        let voting_peers;
-
-        {
-            let n = self.node.lock();
-            state = n.state;
-            term = n.current_term;
-            peer_id = n.me.id.clone();
-            last_log_index = n.log_store.last_index();
-            last_log_term = n.log_store.last_term();
-            voting_peers = n
-                .active_configuration()
-                .current_voting_members()
-                .into_iter()
-                .filter(|p| p.id != n.me.id)
-                .cloned()
-                .collect::<Vec<Peer>>();
-        }
-
-        // Only start an election if we're not already leader and the
-        // timeout has elapsed.
-        if state == NodeState::Leader {
-            return;
-        }
-
-        {
+        let (election_term, peer_id, last_log_index, last_log_term, voting_peers) = {
             let mut n = self.node.lock();
-            if n.joining {
-                if n.state != NodeState::Follower {
-                    n.become_follower(now);
-                }
-                n.voted_for = None;
-                n.persistent_state.set_voted_for(None);
-                n.refresh_timeout(now);
-                return;
-            }
-            if !n.is_voter_in_active_config() {
+            if n.joining || !n.is_voter_in_active_config() {
                 n.update_decommissioned(false);
                 if n.state != NodeState::Follower {
                     n.become_follower(now);
                 }
-                n.voted_for = None;
-                n.persistent_state.set_voted_for(None);
                 n.refresh_timeout(now);
                 return;
             }
-            n.update_decommissioned(true);
-            if !n.has_timed_out(now) {
+            if n.state == NodeState::Leader || !n.has_timed_out(now) {
                 return;
             }
-
-            // Start the election: increment term, vote for self, reset timer.
-            // Figure 2 "Candidates": on conversion to candidate.
             n.state = NodeState::Candidate;
             n.known_leader_id = None;
+            n.pending_snapshot = None;
             n.current_term += 1;
             n.persistent_state.set_current_term(n.current_term);
             n.voted_for = Some(n.me.id.clone());
             n.persistent_state.set_voted_for(Some(n.me.id.clone()));
             n.election_sequence_counter += 1;
             n.refresh_timeout(now);
-
-            info!(
-                "{} starting election for term {}, lastIndex={}, lastTerm={}",
-                peer_id, n.current_term, last_log_index, last_log_term
-            );
-        }
-
-        let election_term = term + 1; // term was incremented above
+            let peers = n
+                .active_configuration()
+                .all_voting_members()
+                .into_iter()
+                .filter(|p| p.id != n.me.id)
+                .cloned()
+                .collect::<Vec<Peer>>();
+            (
+                n.current_term,
+                n.me.id.clone(),
+                n.log_store.last_index(),
+                n.log_store.last_term(),
+                peers,
+            )
+        };
         let self_id = peer_id.clone();
 
         let rt = tokio::runtime::Handle::current();
@@ -196,7 +162,7 @@ impl RaftRuntime {
         let rpc_timeout = self.rpc_timeout;
         let peer_addrs = self.peer_addrs.clone();
 
-        // Send VoteRequests to all remote voting peers concurrently.
+        // Collect replies from the union of current and proposed voters.
         rt.spawn(async move {
             let mut votes_granted: HashSet<String> = HashSet::new();
             votes_granted.insert(self_id.clone());
@@ -204,10 +170,10 @@ impl RaftRuntime {
             let addresses = peer_addrs.lock().clone();
 
             for peer in &voting_peers {
-                let addr = match addresses.get(&peer.id) {
-                    Some(a) => *a,
-                    None => continue,
-                };
+                let addr = addresses.get(&peer.id).copied().unwrap_or(peer.address);
+                if addr.port() == 0 {
+                    continue;
+                }
 
                 let req = raft::VoteRequest {
                     term: election_term as i64,
@@ -231,10 +197,17 @@ impl RaftRuntime {
                             if max_term > n.current_term {
                                 n.current_term = max_term;
                                 n.persistent_state.set_current_term(max_term);
+                                n.voted_for = None;
+                                n.persistent_state.set_voted_for(None);
                                 n.become_follower(std::time::Instant::now());
                                 return;
                             }
-                            if resp.vote_granted && n.current_term == election_term {
+                            if resp.vote_granted
+                                && resp.peer_id == peer.id
+                                && resp.current_term as u64 == election_term
+                                && n.current_term == election_term
+                                && n.state == NodeState::Candidate
+                            {
                                 votes_granted.insert(resp.peer_id.clone());
                             }
                         }
@@ -269,6 +242,15 @@ impl RaftRuntime {
     // -- Heartbeat tick --
 
     async fn on_heartbeat_tick(&self) {
+        {
+            let n = self.node.lock();
+            let mut addresses = self.peer_addrs.lock();
+            for peer in n.known_peers.values() {
+                if peer.id != n.me.id && peer.address.port() != 0 {
+                    addresses.insert(peer.id.clone(), peer.address);
+                }
+            }
+        }
         let (
             _state,
             term,
@@ -333,7 +315,7 @@ impl RaftRuntime {
                 continue;
             }
 
-            if *next_idx <= snapshot_index && !snapshot_data.is_empty() {
+            if *next_idx <= snapshot_index && snapshot_index > 0 {
                 // Follower is behind — start snapshot streaming. Send the first
                 // chunk (offset=0) and record the offset so we continue on the
                 // next heartbeat tick.
@@ -372,7 +354,6 @@ impl RaftRuntime {
                         data: e.data.clone(),
                     })
                     .collect();
-                let entry_count = proto_entries.len() as u64;
 
                 let req = raft::AppendEntriesRequest {
                     term: term as i64,
@@ -394,30 +375,33 @@ impl RaftRuntime {
                     Ok(Ok(resp_bytes)) => {
                         if let Ok(resp) = raft::AppendEntriesResponse::decode(&resp_bytes[..]) {
                             let mut n = node.lock();
-                            let now = std::time::Instant::now();
-
-                            // Figure 2: higher term → step down.
-                            if resp.term as u64 > n.current_term {
-                                n.current_term = resp.term as u64;
-                                n.persistent_state.set_current_term(resp.term as u64);
-                                n.become_follower(now);
-                                return;
-                            }
-
-                            if resp.success {
-                                let advanced = prev_log_idx + entry_count;
-                                n.next_index.insert(peer_id.clone(), advanced + 1);
-                                n.match_index.insert(peer_id.clone(), advanced);
-                                n.record_follower_replication_success(peer_id);
-                                n.advance_commit_index_from_majority();
-                                n.maybe_auto_finalize_joint_configuration();
-                            } else {
-                                n.record_follower_replication_failure(peer_id);
-                                // Standard conflict resolution: decrement nextIndex.
-                                let floor = n.log_store.snapshot_index() + 1;
-                                let new_next = std::cmp::max(floor, next_idx.saturating_sub(1));
-                                n.next_index.insert(peer_id.clone(), new_next);
-                            }
+                            n.handle_append_entries_response(
+                                graft_core::raft_node::AppendEntriesResponse {
+                                    term: resp.term as u64,
+                                    peer_id: resp.peer_id,
+                                    success: resp.success,
+                                    match_index: resp.match_index,
+                                },
+                                graft_core::raft_node::AppendEntriesRequest {
+                                    term,
+                                    leader_id: leader_id.clone(),
+                                    prev_log_index: prev_log_idx,
+                                    prev_log_term,
+                                    leader_commit: commit_index,
+                                    entries: req
+                                        .entries
+                                        .iter()
+                                        .map(|e| {
+                                            graft_core::types::LogEntry::new(
+                                                e.term as u64,
+                                                e.peer_id.clone(),
+                                                e.data.clone(),
+                                            )
+                                        })
+                                        .collect(),
+                                },
+                                peer_id,
+                            );
                         }
                     }
                     Ok(Err(e)) => {
@@ -486,23 +470,24 @@ impl RaftRuntime {
             Ok(Ok(resp_bytes)) => {
                 if let Ok(resp) = raft::InstallSnapshotResponse::decode(&resp_bytes[..]) {
                     let mut n = self.node.lock();
-                    let now = std::time::Instant::now();
-                    if resp.term as u64 > n.current_term {
-                        n.current_term = resp.term as u64;
-                        n.persistent_state.set_current_term(resp.term as u64);
-                        n.become_follower(now);
-                        return;
-                    }
-                    if resp.success {
-                        if done {
-                            n.snapshot_offsets.remove(peer_id);
-                            n.next_index.insert(peer_id.to_string(), snapshot_index + 1);
-                            n.match_index.insert(peer_id.to_string(), snapshot_index);
-                            n.advance_commit_index_from_majority();
-                        } else {
-                            n.snapshot_offsets.insert(peer_id.to_string(), end as u64);
-                        }
-                    }
+                    n.handle_install_snapshot_response(
+                        graft_core::raft_node::InstallSnapshotResponse {
+                            term: resp.term as u64,
+                            peer_id: resp.peer_id,
+                            success: resp.success,
+                            last_included_index: resp.last_included_index as u64,
+                        },
+                        graft_core::raft_node::InstallSnapshotRequest {
+                            term,
+                            leader_id: leader_id.to_owned(),
+                            last_included_index: snapshot_index,
+                            last_included_term: snapshot_term,
+                            offset: req.offset as u64,
+                            data: req.snapshot_data.clone(),
+                            done: req.done,
+                        },
+                        peer_id,
+                    );
                 }
             }
             Ok(Err(e)) => {
@@ -538,8 +523,6 @@ impl RaftRuntime {
         if start >= total_len {
             let mut n = self.node.lock();
             n.snapshot_offsets.remove(peer_id);
-            n.next_index.insert(peer_id.to_string(), snapshot_index + 1);
-            n.match_index.insert(peer_id.to_string(), snapshot_index);
             return;
         }
 
@@ -569,23 +552,24 @@ impl RaftRuntime {
             Ok(Ok(resp_bytes)) => {
                 if let Ok(resp) = raft::InstallSnapshotResponse::decode(&resp_bytes[..]) {
                     let mut n = self.node.lock();
-                    let now = std::time::Instant::now();
-                    if resp.term as u64 > n.current_term {
-                        n.current_term = resp.term as u64;
-                        n.persistent_state.set_current_term(resp.term as u64);
-                        n.become_follower(now);
-                        return;
-                    }
-                    if resp.success {
-                        if done {
-                            n.snapshot_offsets.remove(peer_id);
-                            n.next_index.insert(peer_id.to_string(), snapshot_index + 1);
-                            n.match_index.insert(peer_id.to_string(), snapshot_index);
-                            n.advance_commit_index_from_majority();
-                        } else {
-                            n.snapshot_offsets.insert(peer_id.to_string(), end as u64);
-                        }
-                    }
+                    n.handle_install_snapshot_response(
+                        graft_core::raft_node::InstallSnapshotResponse {
+                            term: resp.term as u64,
+                            peer_id: resp.peer_id,
+                            success: resp.success,
+                            last_included_index: resp.last_included_index as u64,
+                        },
+                        graft_core::raft_node::InstallSnapshotRequest {
+                            term,
+                            leader_id: leader_id.to_owned(),
+                            last_included_index: snapshot_index,
+                            last_included_term: snapshot_term,
+                            offset: req.offset as u64,
+                            data: req.snapshot_data.clone(),
+                            done: req.done,
+                        },
+                        peer_id,
+                    );
                 }
             }
             Ok(Err(e)) => {
@@ -622,131 +606,29 @@ impl RaftRuntime {
     /// successfully. Called by the RPC handler before serving a
     /// linearizable read query.
     pub async fn refresh_read_barrier(&self) -> bool {
-        // Snapshot the peer list under lock quickly.
-        let (
-            peer_list,
-            term,
-            leader_id,
-            commit_index,
-            snapshot_index,
-            snapshot_term,
-            snapshot_data,
-        ) = {
-            let n = self.node.lock();
-            if n.state != NodeState::Leader {
+        let (term, index, configuration) = {
+            let mut n = self.node.lock();
+            if n.state != NodeState::Leader || n.joining || n.decommissioned {
                 return false;
             }
-            let peers: Vec<(String, u64)> = n
-                .next_index
-                .iter()
-                .map(|(id, ni)| (id.clone(), *ni))
-                .collect();
-            (
-                peers,
-                n.current_term,
-                n.me.id.clone(),
-                n.commit_index,
-                n.log_store.snapshot_index(),
-                n.log_store.snapshot_term(),
-                n.log_store.snapshot_data(),
-            )
+            let term = n.current_term;
+            let config = n.active_configuration();
+            let index = match n.submit_command(Vec::new()) {
+                Ok(index) => index,
+                Err(_) => return false,
+            };
+            (term, index, config)
         };
-
-        let addresses = self.peer_addrs.lock().clone();
-        let node = self.node.clone();
-        let client = self.client.clone();
-        let rpc_timeout = self.rpc_timeout;
-
-        let mut contacted = HashSet::new();
-        {
-            let n = node.lock();
-            contacted.insert(n.me.id.clone());
-        }
-
-        for (peer_id, next_idx) in &peer_list {
-            let addr = match addresses.get(peer_id) {
-                Some(a) => *a,
-                None => continue,
-            };
-
-            let (rpc_type, req) = if *next_idx <= snapshot_index && !snapshot_data.is_empty() {
-                let req = raft::InstallSnapshotRequest {
-                    term: term as i64,
-                    leader_id: leader_id.clone(),
-                    last_included_index: snapshot_index as i64,
-                    last_included_term: snapshot_term as i64,
-                    offset: 0,
-                    snapshot_data: snapshot_data.clone(),
-                    done: true,
-                };
-                ("InstallSnapshotRequest", req.encode_to_vec())
-            } else {
-                let prev_log_idx = if *next_idx > 0 { *next_idx - 1 } else { 0 };
-                let (plt, entries) = {
-                    let n = node.lock();
-                    let t = if prev_log_idx == 0 {
-                        0
-                    } else {
-                        n.log_store.term_at(prev_log_idx)
-                    };
-                    let e = n.log_store.entries_from(*next_idx);
-                    (t, e)
-                };
-                let proto_entries: Vec<raft::LogEntry> = entries
-                    .iter()
-                    .map(|e| raft::LogEntry {
-                        term: e.term as i64,
-                        peer_id: e.peer_id.clone(),
-                        data: e.data.clone(),
-                    })
-                    .collect();
-                let req = raft::AppendEntriesRequest {
-                    term: term as i64,
-                    leader_id: leader_id.clone(),
-                    prev_log_index: prev_log_idx as i64,
-                    prev_log_term: plt as i64,
-                    leader_commit: commit_index as i64,
-                    entries: proto_entries,
-                };
-                ("AppendEntriesRequest", req.encode_to_vec())
-            };
-
-            let result = timeout(rpc_timeout, client.send_rpc(addr, rpc_type, req)).await;
-            if let Ok(Ok(resp_bytes)) = result {
-                let mut n = node.lock();
-                let success = if rpc_type == "InstallSnapshotRequest" {
-                    match raft::InstallSnapshotResponse::decode(&resp_bytes[..]) {
-                        Ok(resp) if resp.term as u64 > n.current_term => {
-                            n.current_term = resp.term as u64;
-                            n.persistent_state.set_current_term(resp.term as u64);
-                            n.become_follower(std::time::Instant::now());
-                            false
-                        }
-                        Ok(resp) => resp.success,
-                        Err(_) => false,
-                    }
-                } else {
-                    match raft::AppendEntriesResponse::decode(&resp_bytes[..]) {
-                        Ok(resp) if resp.term as u64 > n.current_term => {
-                            n.current_term = resp.term as u64;
-                            n.persistent_state.set_current_term(resp.term as u64);
-                            n.become_follower(std::time::Instant::now());
-                            false
-                        }
-                        Ok(resp) => resp.success,
-                        Err(_) => false,
-                    }
-                };
-                if success {
-                    contacted.insert(peer_id.clone());
-                    n.record_follower_replication_success(peer_id);
-                }
-            }
-        }
-
-        // Check if we contacted a joint-consensus quorum.
-        let n = node.lock();
-        n.active_configuration().has_joint_majority(&contacted)
+        self.on_heartbeat_tick().await;
+        let n = self.node.lock();
+        n.state == NodeState::Leader
+            && !n.decommissioned
+            && !n.joining
+            && n.current_term == term
+            && n.active_configuration() == configuration
+            && n.commit_index >= index
+            && n.last_applied >= index
+            && n.log_store.term_at(index) == term
     }
 
     /// Returns the current leader id, if known. Used by the RPC handler
@@ -769,17 +651,88 @@ impl RaftRuntime {
     /// Called by the RPC handler after a client command has been appended
     /// to the log, so the handler can return the committed result (or
     /// `ACCEPTED_NOT_COMMITTED` on timeout).
-    pub async fn wait_for_commit(&self, target_index: u64, deadline: std::time::Duration) -> bool {
+    pub async fn wait_for_commit(
+        &self,
+        target_index: u64,
+        target_term: u64,
+        deadline: std::time::Duration,
+    ) -> bool {
         let start = tokio::time::Instant::now();
         loop {
-            let ci = self.node.lock().commit_index;
-            if ci >= target_index {
-                return true;
+            {
+                let n = self.node.lock();
+                if n.state != NodeState::Leader || n.current_term != target_term {
+                    return false;
+                }
+                if n.commit_index >= target_index && n.last_applied >= target_index {
+                    return true;
+                }
             }
             if start.elapsed() >= deadline {
                 return false;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod safety_tests {
+    use super::*;
+    use graft_core::{membership::ClusterConfiguration, types::Role};
+    use graft_storage::log_store::{InMemoryLogStore, InMemoryPersistentStateStore};
+
+    fn runtime(role: Role) -> RaftRuntime {
+        let me = Peer::new("a".into(), "127.0.0.1:0".parse().unwrap(), role);
+        let mut node = RaftNode::new(
+            me.clone(),
+            500,
+            Arc::new(InMemoryLogStore::new()),
+            Arc::new(InMemoryPersistentStateStore::new()),
+            None,
+            ClusterConfiguration::stable(vec![me]),
+            100,
+            1024,
+        );
+        node.current_term = 1;
+        node.state = NodeState::Leader;
+        node.voted_for = Some("a".into());
+        RaftRuntime::new(
+            Arc::new(parking_lot::Mutex::new(node)),
+            Arc::new(RaftClient::new()),
+        )
+    }
+
+    #[tokio::test]
+    async fn every_runtime_read_appends_its_own_committed_fence() {
+        let runtime = runtime(Role::Voter);
+        assert!(runtime.refresh_read_barrier().await);
+        let first = runtime.node.lock().commit_index;
+        assert!(first > 0);
+        assert!(runtime.refresh_read_barrier().await);
+        assert!(runtime.node.lock().commit_index > first);
+        runtime.node.lock().state = NodeState::Follower;
+        assert!(!runtime.refresh_read_barrier().await);
+    }
+
+    #[tokio::test]
+    async fn timer_relinquishes_learner_leadership_without_releasing_vote() {
+        let runtime = runtime(Role::Learner);
+        runtime.on_election_tick();
+        let node = runtime.node.lock();
+        assert_eq!(node.state, NodeState::Follower);
+        assert_eq!(node.voted_for.as_deref(), Some("a"));
+        assert!(!node.decommissioned);
+    }
+
+    #[tokio::test]
+    async fn client_commit_wait_requires_unchanged_submission_term_and_leadership() {
+        let runtime = runtime(Role::Voter);
+        let index = runtime.submit_command(vec![1]).unwrap();
+        assert!(runtime.wait_for_commit(index, 1, Duration::ZERO).await);
+        runtime.node.lock().current_term = 2;
+        assert!(!runtime.wait_for_commit(index, 1, Duration::ZERO).await);
+        runtime.node.lock().state = NodeState::Follower;
+        assert!(!runtime.wait_for_commit(index, 2, Duration::ZERO).await);
     }
 }

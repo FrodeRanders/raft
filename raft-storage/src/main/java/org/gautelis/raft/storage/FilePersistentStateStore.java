@@ -21,10 +21,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.Optional;
 import java.util.Properties;
 
@@ -83,8 +81,12 @@ public final class FilePersistentStateStore implements PersistentStateStore {
         Properties props = new Properties();
         try (InputStream in = Files.newInputStream(stateFile)) {
             props.load(in);
-            String termRaw = props.getProperty(TERM, "0");
+            if (!props.containsKey(TERM) || !props.containsKey(VOTED_FOR)) {
+                throw new IOException("Incomplete Raft term/vote record");
+            }
+            String termRaw = props.getProperty(TERM);
             currentTerm = Long.parseLong(termRaw);
+            if (currentTerm < 0) throw new IOException("Negative Raft term");
             votedFor = props.getProperty(VOTED_FOR);
             if (votedFor != null && votedFor.isBlank()) {
                 votedFor = null;
@@ -106,13 +108,7 @@ public final class FilePersistentStateStore implements PersistentStateStore {
             props.setProperty(TERM, Long.toString(currentTerm));
             props.setProperty(VOTED_FOR, votedFor == null ? "" : votedFor);
 
-            Path tmp = stateFile.resolveSibling(stateFile.getFileName() + ".tmp");
-            try (OutputStream out = Files.newOutputStream(tmp)) {
-                props.store(out, "raft persistent state");
-            }
-            // Replace atomically when the platform supports it so readers never
-            // observe a half-written term/vote file.
-            Files.move(tmp, stateFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            DurableFiles.replace(stateFile, out -> props.store(out, "raft persistent state"));
 
         } catch (IOException e) {
             log.error("Failed persisting state to {}", stateFile, e);

@@ -137,13 +137,10 @@ impl ClusterConfiguration {
 
     /// Whether the peer is a voter in either membership set.
     pub fn is_voter(&self, peer_id: &str) -> bool {
-        if let Some(p) = self.current_members.get(peer_id) {
-            return p.is_voter();
-        }
-        if let Some(p) = self.next_members.get(peer_id) {
-            return p.is_voter();
-        }
-        false
+        self.current_members
+            .get(peer_id)
+            .is_some_and(Peer::is_voter)
+            || self.next_members.get(peer_id).is_some_and(Peer::is_voter)
     }
 
     /// Whether the peer exists but is not a voter in either membership set.
@@ -175,6 +172,9 @@ impl ClusterConfiguration {
     /// current set and clears the next set. Returns `self` unchanged if
     /// already stable.
     pub fn finalize_transition(&self) -> Self {
+        if self.next_members.is_empty() {
+            return self.clone();
+        }
         Self {
             current_members: self.next_members.clone(),
             next_members: IndexMap::new(),

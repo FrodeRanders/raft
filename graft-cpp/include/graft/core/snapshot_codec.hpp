@@ -22,6 +22,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+#include "raft.pb.h"
 
 namespace graft {
     // SnapshotCodec separates application bytes from Raft metadata. The wrapped
@@ -35,6 +36,10 @@ namespace graft {
                                         const std::vector<std::string> &next_members,
                                         const std::string &state_machine_snapshot);
 
+        static std::string wrap_member_specs(const std::vector<raft::PeerSpec> &current,
+                                             const std::vector<raft::PeerSpec> &next,
+                                             const std::string &application);
+
         // Return only the domain payload for ApplicationStateMachine::restore().
         static std::string unwrap_payload(const std::string &payload);
 
@@ -44,6 +49,8 @@ namespace graft {
             std::string state_machine_snapshot;
             std::vector<std::string> current_members;
             std::vector<std::string> next_members;
+            std::vector<raft::PeerSpec> current_member_specs;
+            std::vector<raft::PeerSpec> next_member_specs;
         };
         static std::optional<DecodedSnapshot> decode_payload(const std::string &payload);
 

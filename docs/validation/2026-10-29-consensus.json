@@ -1,0 +1,2207 @@
+{
+  "schema": "graft.consensus-validation.v1",
+  "date": "2026-10-29",
+  "revision": "1a818d416a40330bea2055e03f61580679baa9f6",
+  "dirty": true,
+  "runs": [
+    {
+      "case": "java-baseline",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--node-count",
+        "5",
+        "--base-port",
+        "25180",
+        "--time-limit",
+        "20",
+        "--concurrency",
+        "5",
+        "--operation-limit",
+        "150",
+        "--unique-values",
+        "true",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--workdir",
+        "<new-workdir>"
+      ],
+      "console_sha256": "2793e5f4240c5867a40f533cf414ad14c3b3615dd73c1086867cf4268553cdd8",
+      "seed": -1854086662,
+      "store_id": "raft-kv-local-5n/20261028T235530.208+0100",
+      "history_sha256": "a0233bc2c02f0c8df9955e6d3f11f098a921b9c4f25843b2684cb190d7dcbf35",
+      "results_sha256": "e24865100adee7dc5ac4e4f6fc9e5d358a7d78bd2e4eb8ebbe707a6c68a28924",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 7,
+        "invoke:cas": 9,
+        "invoke:read": 9,
+        "invoke:write": 4,
+        "ok:cas": 2,
+        "ok:read": 9,
+        "ok:write": 4
+      },
+      "confirmed_progress": {
+        "reads": 9,
+        "mutations": 6
+      },
+      "progress_qualified": true,
+      "nemesis_completions": []
+    },
+    {
+      "case": "mixed-snapshot-final",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25560",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "45",
+        "--nemesis",
+        "snapshot-transfer-crash",
+        "--snapshot-min-entries",
+        "3",
+        "--snapshot-chunk-bytes",
+        "256"
+      ],
+      "console_sha256": "9011075edb199b85fd573d7a87481b15f990e03decec6fe8689ad82156673efd",
+      "seed": 387652423,
+      "store_id": "raft-kv-local-3n/20261029T003607.760+0100",
+      "history_sha256": "b73b22a69c13d6ed62772edc2fb88c4a0af0544b07186afc0fd35ee3370a6b61",
+      "results_sha256": "22381d608cd914dcbb120d5710d471c4a67bdf80a45c23c84fedd773336d41f5",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 20,
+        "fail:read": 8,
+        "fail:write": 5,
+        "info:cas": 3,
+        "info:read": 3,
+        "info:write": 4,
+        "invoke:cas": 25,
+        "invoke:read": 33,
+        "invoke:write": 31,
+        "ok:cas": 2,
+        "ok:read": 22,
+        "ok:write": 22
+      },
+      "confirmed_progress": {
+        "reads": 22,
+        "mutations": 24
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 33, :time 9212897375, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :data-wiped}}",
+        "{:index 67, :time 16847685000, :type :info, :process :nemesis, :f :start, :value {\"n1\" :transfer-started}}",
+        "{:index 79, :time 23138715625, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :crashed-during-transfer}}",
+        "{:index 117, :time 33458410917, :type :info, :process :nemesis, :f :start, :value {nil :restarted}}",
+        "{:index 165, :time 43454459375, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :data-wiped}}"
+      ]
+    },
+    {
+      "case": "mixed-snapshot-transfer-crash",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25400",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "45",
+        "--nemesis",
+        "snapshot-transfer-crash",
+        "--snapshot-min-entries",
+        "3",
+        "--snapshot-chunk-bytes",
+        "256"
+      ],
+      "console_sha256": "bc4e6ae7c85ab0aeaaa7860ba7eaa76ca12992ec5ee3062d54841be5521db885",
+      "seed": 1326643951,
+      "store_id": "raft-kv-local-3n/20261029T000930.910+0100",
+      "history_sha256": "b2201f8255c60249e30c2caa57f6d70f1cf5f880b2a0f67e37fc6203197f13c3",
+      "results_sha256": "3b97e370b063c4d4524be3b8c161b18663aa889f04c6dcef6b9c8421c6314c62",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 22,
+        "fail:read": 9,
+        "fail:write": 5,
+        "info:cas": 3,
+        "info:read": 3,
+        "info:write": 1,
+        "invoke:cas": 25,
+        "invoke:read": 27,
+        "invoke:write": 21,
+        "ok:read": 15,
+        "ok:write": 15
+      },
+      "confirmed_progress": {
+        "reads": 15,
+        "mutations": 15
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 17, :time 9715388916, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :data-wiped}}",
+        "{:index 61, :time 20171522250, :type :info, :process :nemesis, :f :start, :value {\"n1\" :transfer-started}}",
+        "{:index 81, :time 26481398291, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :crashed-during-transfer}}",
+        "{:index 115, :time 36929516708, :type :info, :process :nemesis, :f :start, :value {nil :restarted}}",
+        "{:index 138, :time 47091711000, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :data-wiped}}"
+      ]
+    },
+    {
+      "case": "mixed-join-promote",
+      "exit_code": 1,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25420",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "45",
+        "--nemesis",
+        "membership-join-promote",
+        "--joining-impl",
+        "cpp"
+      ],
+      "console_sha256": "7a6c99b04b269e827b1707055f15cc5bf3e1743b2e1e1196a41e50f2bd136b71",
+      "seed": 52171369,
+      "store_id": "raft-kv-local-3n/20261029T001051.239+0100",
+      "history_sha256": "2ca7227bcbb9b05f05f950b5ef641f088e4d17224ed328770b05c7bff431385c",
+      "results_sha256": "f58d3242432d9356cb65bf68699fad3f7b275154bfb40c7f4d2e42c03a246ef3",
+      "linearizable": "true",
+      "nemesis-errors": "false",
+      "valid": "false",
+      "client_counts": {
+        "fail:cas": 25,
+        "fail:read": 7,
+        "fail:write": 3,
+        "invoke:cas": 26,
+        "invoke:read": 22,
+        "invoke:write": 16,
+        "ok:cas": 1,
+        "ok:read": 15,
+        "ok:write": 13
+      },
+      "confirmed_progress": {
+        "reads": 15,
+        "mutations": 14
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 77, :time 28820568375, :type :info, :process :nemesis, :f :start, :value nil, :exception {:via [{:type clojure.lang.ExceptionInfo, :message \"Promote request failed\", :data {:leader \"n2\", :member \"n4\", :exit 2, :out \"Reconfigure action=PROMOTE status=REJECTED success=false peer=n2 message=\\\"Node is not leader or reconfiguration could not be applied\\\"\\n\", :err \"WARNING: A terminally deprecated method in sun.misc.Unsafe has been called\\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil (file:/Users/froran/Projects/gautelis/raft/raft-dist/target/raft-1.0-SNAPSHOT.jar)\\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil\\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release\\nReconfigure action failed status=REJECTED\\n\"}, :at [raft_jepsen.nemesis$promote_member_BANG_ invokeStatic \"nemesis.clj\" 719]}], :trace [[raft_jepsen.nemesis$promote_member_BANG_ invokeStatic \"nemesis.clj\" 719] [raft_jepsen.nemesis$promote_member_BANG_ invoke \"nemesis.clj\" 710] [raft_jepsen.nemesis$membership_join_promote$reify__1475 invoke_BANG_ \"nemesis.clj\" 770] [jepsen.nemesis.Validate invoke_BANG_ \"nemesis.clj\" 66] [jepsen.generator.interpreter.NemesisWorker invoke_BANG_ \"interpreter.clj\" 77] [jepsen.generator.interpreter$spawn_worker$fn__14102$fn__14103 invoke \"interpreter.clj\" 140] [jepsen.generator.interpreter$spawn_worker$fn__14102 invoke \"interpreter.clj\" 123] [clojure.core$binding_conveyor_fn$fn__5844 invoke \"core.clj\" 2047] [clojure.lang.AFn call \"AFn.java\" 18] [java.util.concurrent.FutureTask run \"FutureTask.java\" 328] [java.util.concurrent.ThreadPoolExecutor runWorker \"ThreadPoolExecutor.java\" 1090] [java.util.concurrent.ThreadPoolExecutor$Worker run \"ThreadPoolExecutor.java\" 614] [java.lang.Thread run \"Thread.java\" 1474]], :cause \"Promote request failed\", :data {:leader \"n2\", :member \"n4\", :exit 2, :out \"Reconfigure action=PROMOTE status=REJECTED success=false peer=n2 message=\\\"Node is not leader or reconfiguration could not be applied\\\"\\n\", :err \"WARNING: A terminally deprecated method in sun.misc.Unsafe has been called\\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil (file:/Users/froran/Projects/gautelis/raft/raft-dist/target/raft-1.0-SNAPSHOT.jar)\\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil\\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release\\nReconfigure action failed status=REJECTED\\n\"}}, :error \"indeterminate: Promote request failed\"}"
+      ],
+      "diagnostic_excerpts": [
+        " \"Reconfigure action=PROMOTE status=REJECTED success=false peer=n2 message=\\\"Node is not leader or reconfiguration could not be applied\\\"\\n\",",
+        "clojure.lang.ExceptionInfo: Promote request failed",
+        "                                                                 :message \"Promote request failed\",",
+        "                                                                        :out \"Reconfigure action=PROMOTE status=REJECTED success=false peer=n2 message=\\\"Node is not leader or reconfiguration could not be applied\\\"\\n\",",
+        "                                                          :cause \"Promote request failed\",",
+        "                                                                 :out \"Reconfigure action=PROMOTE status=REJECTED success=false peer=n2 message=\\\"Node is not leader or reconfiguration could not be applied\\\"\\n\",",
+        "                                              :error \"indeterminate: Promote request failed\"}]},"
+      ]
+    },
+    {
+      "case": "mixed-remove-leader",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25440",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "35",
+        "--nemesis",
+        "membership-remove-leader"
+      ],
+      "console_sha256": "012ba17900d63bfe07ab481e5407a211e800808358ebffcda2648b9e3a81937f",
+      "seed": 707045487,
+      "store_id": "raft-kv-local-3n/20261029T002445.170+0100",
+      "history_sha256": "8112a16b9376a3e1fc6e850d05b195e012abd9be3e4d892e35c571570f3c1334",
+      "results_sha256": "4d7e20d65baf2ee83d465984fbc4022aa73f5b4f609e9c8fa9ba5cdbdc68813a",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 18,
+        "fail:read": 4,
+        "fail:write": 4,
+        "info:cas": 2,
+        "info:write": 5,
+        "invoke:cas": 20,
+        "invoke:read": 19,
+        "invoke:write": 17,
+        "ok:read": 15,
+        "ok:write": 8
+      },
+      "confirmed_progress": {
+        "reads": 15,
+        "mutations": 8
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 101, :time 42800153375, :type :info, :process :nemesis, :f :start, :value {:member \"n2\", :leader \"n3\", :status :stable-removed}}"
+      ]
+    },
+    {
+      "case": "docker-java-partition",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25460",
+        "--workdir",
+        "<new-workdir>",
+        "--backend",
+        "docker-srv",
+        "--srv-mode",
+        "java",
+        "--time-limit",
+        "25",
+        "--nemesis",
+        "partition-one",
+        "--compose-project",
+        "raft-validation-8-1793229954"
+      ],
+      "console_sha256": "79e75314c1204d8a22f6beb0e65f2b7b85ffdad11926aa8dc6fefb7901a7d0c8",
+      "seed": -1813664337,
+      "store_id": "raft-kv-docker-srv-3n/20261029T002555.666+0100",
+      "history_sha256": "1510a58b3b4c896e963831ddfa91f18dbf6e566fe2a19169f987aa45066958b1",
+      "results_sha256": "d83ed5231909b4efc8e1f47579d9eb83dfbf9ed32139780f8d5d0ef82ce3fbfe",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:read": 2,
+        "info:cas": 5,
+        "info:read": 9,
+        "info:write": 4,
+        "invoke:cas": 5,
+        "invoke:read": 17,
+        "invoke:write": 4,
+        "ok:read": 6
+      },
+      "confirmed_progress": {
+        "reads": 6,
+        "mutations": 0
+      },
+      "progress_qualified": false,
+      "nemesis_completions": [
+        "{:index 2, :time 16323000, :type :info, :process :nemesis, :f :stop, :value nil}",
+        "{:index 13, :time 8674104916, :type :info, :process :nemesis, :f :start, :value {:nodes [\"raft-3\"], :network \"raft-validation-8-1793229954_raft-net\"}}",
+        "{:index 31, :time 19200494791, :type :info, :process :nemesis, :f :stop, :value nil}",
+        "{:index 43, :time 27941380083, :type :info, :process :nemesis, :f :start, :value {:nodes [\"raft-3\"], :network \"raft-validation-8-1793229954_raft-net\"}}",
+        "{:index 49, :time 41149902791, :type :info, :process :nemesis, :f :start, :value {:nodes [\"raft-3\"], :network \"raft-validation-8-1793229954_raft-net\"}}"
+      ]
+    },
+    {
+      "case": "docker-mixed-partition-leader",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25480",
+        "--workdir",
+        "<new-workdir>",
+        "--backend",
+        "docker-srv",
+        "--srv-mode",
+        "mixed",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "30",
+        "--nemesis",
+        "partition-leader",
+        "--compose-project",
+        "raft-validation-9-1793230067"
+      ],
+      "console_sha256": "65b524c1666fddf30a517b53ce80c91525204139085e1b200208a25246edf354",
+      "seed": -381298158,
+      "store_id": "raft-kv-docker-srv-3n/20261029T002748.768+0100",
+      "history_sha256": "b03148a28d076fa2224bf3527bea32b63f8ab6bc98e5e15952dc94bcdf6b006a",
+      "results_sha256": "cb7683dd2e464e2fec6cc0a42497f09439ac2d89b72967ff7d7fabcf6239058f",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 10,
+        "fail:read": 9,
+        "fail:write": 4,
+        "info:cas": 2,
+        "info:read": 1,
+        "info:write": 3,
+        "invoke:cas": 12,
+        "invoke:read": 16,
+        "invoke:write": 12,
+        "ok:read": 6,
+        "ok:write": 5
+      },
+      "confirmed_progress": {
+        "reads": 6,
+        "mutations": 5
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 2, :time 13355209, :type :info, :process :nemesis, :f :stop, :value nil}",
+        "{:index 49, :time 17665609125, :type :info, :process :nemesis, :f :start, :value {:nodes [\"raft-2\"], :network \"raft-validation-9-1793230067_raft-net\"}}",
+        "{:index 61, :time 28147460084, :type :info, :process :nemesis, :f :stop, :value nil}",
+        "{:index 75, :time 57736110334, :type :info, :process :nemesis, :f :start, :value {:nodes [\"raft-2\"], :network \"raft-validation-9-1793230067_raft-net\"}}"
+      ]
+    },
+    {
+      "case": "docker-mixed-process-pause",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25500",
+        "--workdir",
+        "<new-workdir>",
+        "--backend",
+        "docker-srv",
+        "--srv-mode",
+        "mixed",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "25",
+        "--nemesis",
+        "process-pause",
+        "--compose-project",
+        "raft-validation-10-1793230190"
+      ],
+      "console_sha256": "01f58f5b58d04ffa77d390a5d477c8c08afe3cf18835770ad72a3a74f9bf942f",
+      "seed": -1172771200,
+      "store_id": "raft-kv-docker-srv-3n/20261029T002952.536+0100",
+      "history_sha256": "38d520003544b5578e7544abc8fc1a97f73835b46368c7fd9eba9cdf8f0c4bce",
+      "results_sha256": "179a0385830ecb948e9e1a518804bc113cae5320709223106c1028d5cfb9fcee",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 10,
+        "fail:read": 4,
+        "fail:write": 2,
+        "info:cas": 2,
+        "info:read": 4,
+        "info:write": 2,
+        "invoke:cas": 13,
+        "invoke:read": 22,
+        "invoke:write": 12,
+        "ok:cas": 1,
+        "ok:read": 14,
+        "ok:write": 8
+      },
+      "confirmed_progress": {
+        "reads": 14,
+        "mutations": 9
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 13, :time 7347902250, :type :info, :process :nemesis, :f :stop, :value {\"raft-3\" :paused}}",
+        "{:index 49, :time 18809911042, :type :info, :process :nemesis, :f :start, :value {\"raft-3\" :resumed}}",
+        "{:index 86, :time 34247373584, :type :info, :process :nemesis, :f :stop, :value {\"raft-1\" :paused}}",
+        "{:index 89, :time 49803295542, :type :info, :process :nemesis, :f :start, :value {\"raft-1\" :resumed}}"
+      ]
+    },
+    {
+      "case": "java-abrupt-restart",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25520",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "5",
+        "--time-limit",
+        "30",
+        "--nemesis",
+        "crash-restart"
+      ],
+      "console_sha256": "9dcd025a016db58cb8807c2033e2d421764d3138f264e05f0116fb1494efccad",
+      "seed": -195303100,
+      "store_id": "raft-kv-local-5n/20261029T003140.887+0100",
+      "history_sha256": "2ea6a60d05626832984ef550c11adb4bc0819c282497e4b30627e9d153e8e8fd",
+      "results_sha256": "ffa2033a70973e4dea09493a365e55d418245d2e06e2c4f8679fe482e7342df5",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 3,
+        "fail:read": 3,
+        "info:cas": 14,
+        "info:read": 4,
+        "info:write": 7,
+        "invoke:cas": 17,
+        "invoke:read": 23,
+        "invoke:write": 19,
+        "ok:read": 16,
+        "ok:write": 12
+      },
+      "confirmed_progress": {
+        "reads": 16,
+        "mutations": 12
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 7, :time 1569106708, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :stopped}}",
+        "{:index 39, :time 11184915958, :type :info, :process :nemesis, :f :start, :value {\"n1\" :restarted}}",
+        "{:index 63, :time 16647596208, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :stopped}}",
+        "{:index 89, :time 25581426083, :type :info, :process :nemesis, :f :start, :value {\"n1\" :restarted}}",
+        "{:index 109, :time 30967882125, :type :info, :process :nemesis, :f :stop, :value {\"n3\" :stopped}}",
+        "{:index 117, :time 37175079416, :type :info, :process :nemesis, :f :start, :value {\"n3\" :restarted}}"
+      ]
+    },
+    {
+      "case": "mixed-abrupt-restart",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25540",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "30",
+        "--nemesis",
+        "crash-restart"
+      ],
+      "console_sha256": "1e9884c43cd269e708d9c14e07337c4806e83690b2ae221c6805d235e567c455",
+      "seed": -73843328,
+      "store_id": "raft-kv-local-3n/20261029T003241.140+0100",
+      "history_sha256": "720093c1cbf34d1df95b41cb135d9679c11dc17ff9c1d3d01387e9c74b61c664",
+      "results_sha256": "604c4f6f532fdfe3a1e97c2418f11ee07d36d009c7568f6d4e020f721b3f3a73",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 16,
+        "fail:read": 9,
+        "fail:write": 2,
+        "info:cas": 4,
+        "info:write": 6,
+        "invoke:cas": 21,
+        "invoke:read": 21,
+        "invoke:write": 14,
+        "ok:cas": 1,
+        "ok:read": 12,
+        "ok:write": 6
+      },
+      "confirmed_progress": {
+        "reads": 12,
+        "mutations": 7
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 7, :time 1547809291, :type :info, :process :nemesis, :f :stop, :value {\"n3\" :stopped}}",
+        "{:index 47, :time 12582281833, :type :info, :process :nemesis, :f :start, :value {\"n3\" :restarted}}",
+        "{:index 53, :time 17839968500, :type :info, :process :nemesis, :f :stop, :value {\"n3\" :stopped}}",
+        "{:index 99, :time 28899026750, :type :info, :process :nemesis, :f :start, :value {\"n3\" :restarted}}",
+        "{:index 109, :time 38724189666, :type :info, :process :nemesis, :f :start, :value :not-started}"
+      ]
+    },
+    {
+      "case": "mixed-snapshot-seed-replay",
+      "exit_code": 1,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25560",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "45",
+        "--nemesis",
+        "snapshot-transfer-crash",
+        "--snapshot-min-entries",
+        "3",
+        "--snapshot-chunk-bytes",
+        "256",
+        "--seed",
+        "7951385"
+      ],
+      "console_sha256": "b8929158b3efbd43c7fae1afa7154cf4bb46125c608c82763cbb3239efe82527",
+      "seed": null,
+      "capture_missing": true,
+      "classification": "harness invocation error; no workload",
+      "diagnostic_excerpts": [
+        "Unknown option"
+      ]
+    },
+    {
+      "case": "java-crash-restart",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25300",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "5",
+        "--time-limit",
+        "30",
+        "--nemesis",
+        "crash-restart"
+      ],
+      "console_sha256": "afea137b5dc6b75377fff11f17f52d40e160f3685cc9d3aef563164befc4e696",
+      "seed": -833684260,
+      "store_id": "raft-kv-local-5n/20261028T235953.222+0100",
+      "history_sha256": "6cb06fcd2cbf9b2dd17b3d5795ad1273764e471e0ba3a0af5ed3a2d3508b865c",
+      "results_sha256": "b2f368ab1189e72df4ee1dcb456357741c72ad503e15e116136cb911edd190fd",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 9,
+        "info:cas": 3,
+        "info:read": 3,
+        "info:write": 5,
+        "invoke:cas": 13,
+        "invoke:read": 14,
+        "invoke:write": 18,
+        "ok:cas": 1,
+        "ok:read": 11,
+        "ok:write": 13
+      },
+      "confirmed_progress": {
+        "reads": 11,
+        "mutations": 14
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 7, :time 1791877667, :type :info, :process :nemesis, :f :stop, :value {\"n4\" :stopped}}",
+        "{:index 25, :time 10404649917, :type :info, :process :nemesis, :f :start, :value {\"n4\" :restarted}}",
+        "{:index 43, :time 16135659333, :type :info, :process :nemesis, :f :stop, :value {\"n3\" :stopped}}",
+        "{:index 71, :time 27534773750, :type :info, :process :nemesis, :f :start, :value {\"n3\" :restarted}}",
+        "{:index 87, :time 38075099500, :type :info, :process :nemesis, :f :start, :value :not-started}"
+      ]
+    },
+    {
+      "case": "java-process-pause",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25320",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "5",
+        "--time-limit",
+        "30",
+        "--nemesis",
+        "process-pause"
+      ],
+      "console_sha256": "dd87ef1b250908d4f2ca2797202e1ead547252148afb53183a454c76ef4a94b5",
+      "seed": 375635555,
+      "store_id": "raft-kv-local-5n/20261029T000054.560+0100",
+      "history_sha256": "cd55fce9b0a4e8f09fcc04d0e599776af13966ebf977ce703b683c5a6906147d",
+      "results_sha256": "63869ef0f6aea5242c54a676384046cf53466b15af0148a996d99e6c92c5d050",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 10,
+        "fail:read": 5,
+        "fail:write": 6,
+        "invoke:cas": 10,
+        "invoke:read": 20,
+        "invoke:write": 14,
+        "ok:read": 15,
+        "ok:write": 8
+      },
+      "confirmed_progress": {
+        "reads": 15,
+        "mutations": 8
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 7, :time 1997040333, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :paused}}",
+        "{:index 37, :time 12953494041, :type :info, :process :nemesis, :f :start, :value {\"n1\" :resumed}}",
+        "{:index 59, :time 24399965541, :type :info, :process :nemesis, :f :stop, :value {\"n4\" :paused}}",
+        "{:index 77, :time 30286279791, :type :info, :process :nemesis, :f :start, :value {\"n4\" :resumed}}",
+        "{:index 85, :time 35062481500, :type :info, :process :nemesis, :f :start, :value :not-paused}"
+      ]
+    },
+    {
+      "case": "java-snapshot-restart",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25340",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "5",
+        "--time-limit",
+        "45",
+        "--nemesis",
+        "snapshot-boundary-restart",
+        "--snapshot-min-entries",
+        "3",
+        "--snapshot-chunk-bytes",
+        "1024"
+      ],
+      "console_sha256": "f3df9b2f75df1cb0649151876ab4c98809d83ff27e13a1c3375e5b4a718ff946",
+      "seed": -651103298,
+      "store_id": "raft-kv-local-5n/20261029T000153.666+0100",
+      "history_sha256": "fe33b926d1017ab8ef68e59ef1751972576eda715bda643e59391e20a58bf52d",
+      "results_sha256": "f477be9d9e57e41f60320214921d2fb62f987e921d16903c67d4114155a1efa3",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 14,
+        "invoke:cas": 15,
+        "invoke:read": 21,
+        "invoke:write": 29,
+        "ok:cas": 1,
+        "ok:read": 21,
+        "ok:write": 29
+      },
+      "confirmed_progress": {
+        "reads": 21,
+        "mutations": 30
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 95, :time 72505458625, :type :info, :process :nemesis, :f :start, :value {\"n3\" {:restarted-after-snapshot-index 24, :snapshot-term 1}}}"
+      ]
+    },
+    {
+      "case": "mixed-baseline",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25360",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "20"
+      ],
+      "console_sha256": "ec18e86140b50e2e0885c1498c59c87928807d42ebe4d7ef19864a1c316ace50",
+      "seed": 1461027173,
+      "store_id": "raft-kv-local-3n/20261029T000347.446+0100",
+      "history_sha256": "a3f65b3515ba3afff6569e4880eed3f5aeae2dd125e350659d10b4ce0638b010",
+      "results_sha256": "182ab47cb62bc0cee84ca5ad6664f70acb7cc23e4f634908924acfa0f831f661",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 10,
+        "fail:read": 4,
+        "fail:write": 2,
+        "invoke:cas": 10,
+        "invoke:read": 20,
+        "invoke:write": 6,
+        "ok:read": 16,
+        "ok:write": 4
+      },
+      "confirmed_progress": {
+        "reads": 16,
+        "mutations": 4
+      },
+      "progress_qualified": true,
+      "nemesis_completions": []
+    },
+    {
+      "case": "mixed-crash-restart",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25380",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "30",
+        "--nemesis",
+        "crash-restart"
+      ],
+      "console_sha256": "01363ad35e9a20badc3b70c2bedcff8cccdec01732f39386c1f036fe0fd0b21a",
+      "seed": -1975951096,
+      "store_id": "raft-kv-local-3n/20261029T000444.139+0100",
+      "history_sha256": "f13544cc4c57700145488be6f64b5b88a962eaa613ae51f2ccd0b1b8291e1d1b",
+      "results_sha256": "3942a0807ebad5900cbb8b77898a6aee25a5fdbdbc9925590c264af79b59d7d7",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 19,
+        "fail:read": 5,
+        "fail:write": 5,
+        "info:read": 1,
+        "info:write": 1,
+        "invoke:cas": 19,
+        "invoke:read": 27,
+        "invoke:write": 20,
+        "ok:read": 21,
+        "ok:write": 14
+      },
+      "confirmed_progress": {
+        "reads": 21,
+        "mutations": 14
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 9, :time 2737707125, :type :info, :process :nemesis, :f :stop, :value {\"n3\" :stopped}}",
+        "{:index 51, :time 14131738625, :type :info, :process :nemesis, :f :start, :value {\"n3\" :restarted}}",
+        "{:index 81, :time 19447487709, :type :info, :process :nemesis, :f :stop, :value {\"n3\" :stopped}}",
+        "{:index 123, :time 30500852667, :type :info, :process :nemesis, :f :start, :value {\"n3\" :restarted}}",
+        "{:index 129, :time 34689570500, :type :info, :process :nemesis, :f :start, :value :not-started}"
+      ]
+    },
+    {
+      "case": "mixed-snapshot-transfer-crash",
+      "exit_code": 1,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25400",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "45",
+        "--nemesis",
+        "snapshot-transfer-crash",
+        "--snapshot-min-entries",
+        "3",
+        "--snapshot-chunk-bytes",
+        "256"
+      ],
+      "console_sha256": "692a4c6569485ec5bef856d3f6454611d0adefd12e86a75dd15bbb5c68ad2089",
+      "seed": 7951385,
+      "store_id": "raft-kv-local-3n/20261029T000546.264+0100",
+      "history_sha256": "09ea009acb02be9f30487697269450493564df8e445a07d0bca021e863e6989d",
+      "results_sha256": "34f2c1974e4a7791046e4823846f27b43d2d68d7c61c1de29c0ca0949873159d",
+      "linearizable": "false",
+      "nemesis-errors": "true",
+      "valid": "false",
+      "client_counts": {
+        "fail:cas": 21,
+        "fail:read": 7,
+        "fail:write": 5,
+        "info:cas": 2,
+        "info:read": 4,
+        "info:write": 2,
+        "invoke:cas": 24,
+        "invoke:read": 26,
+        "invoke:write": 22,
+        "ok:cas": 1,
+        "ok:read": 15,
+        "ok:write": 15
+      },
+      "confirmed_progress": {
+        "reads": 15,
+        "mutations": 16
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 27, :time 9772181958, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :data-wiped}}",
+        "{:index 63, :time 21157832708, :type :info, :process :nemesis, :f :start, :value {\"n1\" :transfer-started}}",
+        "{:index 85, :time 28476236333, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :crashed-during-transfer}}",
+        "{:index 121, :time 39453719833, :type :info, :process :nemesis, :f :start, :value {nil :restarted}}",
+        "{:index 140, :time 49575127375, :type :info, :process :nemesis, :f :stop, :value {\"n1\" :data-wiped}}"
+      ],
+      "failure_witness": [
+        {
+          "invoke_ns": 37979074375,
+          "completion_ns": 38687422417,
+          "record": "{:key \"k\", :index 115, :value \"w2-v0006\", :time 38687422417, :process 2, :type :ok, :f :write, :raw-response {:peerId nil, :status \"ACCEPTED\", :success true, :leaderId nil, :leaderHost nil, :leaderPort nil, :message nil}, :stderr \"\"}"
+        },
+        {
+          "invoke_ns": 38687477625,
+          "completion_ns": 39155645667,
+          "record": "{:key \"k\", :index 117, :value \"w2-v0007\", :time 39155645667, :process 2, :type :ok, :f :write, :raw-response {:peerId nil, :status \"ACCEPTED\", :success true, :leaderId nil, :leaderHost nil, :leaderPort nil, :message nil}, :stderr \"\"}"
+        },
+        {
+          "invoke_ns": 36440757500,
+          "completion_ns": 40252660000,
+          "record": "{:key \"k\", :index 124, :value \"w21-v0001\", :time 40252660000, :process 21, :type :ok, :f :write, :raw-response {:peerId \"n3\", :leaderPort 0, :leaderId \"\", :success true, :status \"ACCEPTED\", :result nil, :leaderHost \"\", :action \"put\", :message \"\"}, :stderr \"WARNING: A terminally deprecated method in sun.misc.Unsafe has been called\\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil (file:/Users/froran/Projects/gautelis/raft/raft-dist/target/raft-1.0-SNAPSHOT.jar)\\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil\\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release\\n\"}"
+        },
+        {
+          "invoke_ns": 39814742750,
+          "completion_ns": 43341823000,
+          "record": "{:key \"k\", :index 130, :value \"w2-v0006\", :time 43341823000, :process 18, :type :ok, :f :read, :raw-response {:peerId \"n3\", :leaderPort 0, :leaderId \"\", :success true, :status \"OK\", :result {:type \"GET\", :key \"k\", :found true, :value \"w2-v0006\"}, :leaderHost \"\", :message \"\"}, :stderr \"WARNING: A terminally deprecated method in sun.misc.Unsafe has been called\\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil (file:/Users/froran/Projects/gautelis/raft/raft-dist/target/raft-1.0-SNAPSHOT.jar)\\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil\\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release\\n\"}"
+        }
+      ],
+      "diagnostic_excerpts": [
+        "                                :model #knossos.model.Inconsistent{:msg \"can't CAS w15-v0005 from w2-v0001 to w9-v0001\"}}]",
+        "                                :model #knossos.model.Inconsistent{:msg \"can't read w2-v0006 from register w3-v0001\"}}]",
+        "                                :model #knossos.model.Inconsistent{:msg \"can't CAS w15-v0005 from w2-v0001 to w9-v0001\"}}]",
+        "                                :model #knossos.model.Inconsistent{:msg \"can't CAS w15-v0005 from w2-v0001 to w9-v0001\"}}]",
+        "                                :model #knossos.model.Inconsistent{:msg \"can't read w2-v0006 from register w15-v0005\"}}]",
+        "                                :model #knossos.model.Inconsistent{:msg \"can't CAS w15-v0005 from w2-v0001 to w9-v0001\"}}]",
+        "                                :model #knossos.model.Inconsistent{:msg \"can't CAS w3-v0001 from w0-v0004 to w0-v0005\"}}]",
+        "                                :model #knossos.model.Inconsistent{:msg \"can't read w2-v0006 from register w3-v0001\"}}]",
+        "                                :model #knossos.model.Inconsistent{:msg \"can't CAS w15-v0005 from w0-v0004 to w0-v0005\"}}]",
+        "                                :model #knossos.model.Inconsistent{:msg \"can't CAS w15-v0005 from w2-v0001 to w9-v0001\"}}]),"
+      ]
+    },
+    {
+      "case": "docker-java-partition",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25460",
+        "--workdir",
+        "<new-workdir>",
+        "--backend",
+        "docker-srv",
+        "--srv-mode",
+        "java",
+        "--time-limit",
+        "35",
+        "--nemesis",
+        "partition-one",
+        "--compose-project",
+        "raft-validation-8-1793230743"
+      ],
+      "console_sha256": "081a04ce822ccc7fb708ead0b438ee51abd9bfefaeb95d485f8a23967452ce29",
+      "seed": 1338665370,
+      "store_id": "raft-kv-docker-srv-3n/20261029T003904.807+0100",
+      "history_sha256": "875c4318c0198b5b815146db9726c57bbc045fa17434a1f0af871667a8d938e3",
+      "results_sha256": "e8fbefda6833c6e5f92fdf63a5f85783127de2eda8458c8db590dd42cd5472d8",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 9,
+        "fail:read": 8,
+        "info:cas": 5,
+        "info:write": 3,
+        "invoke:cas": 14,
+        "invoke:read": 13,
+        "invoke:write": 10,
+        "ok:read": 5,
+        "ok:write": 7
+      },
+      "confirmed_progress": {
+        "reads": 5,
+        "mutations": 7
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 2, :time 18230250, :type :info, :process :nemesis, :f :stop, :value nil}",
+        "{:index 21, :time 8691183667, :type :info, :process :nemesis, :f :start, :value {:nodes [\"raft-2\"], :network \"raft-validation-8-1793230743_raft-net\"}}",
+        "{:index 45, :time 24155145709, :type :info, :process :nemesis, :f :stop, :value nil}",
+        "{:index 61, :time 32690067959, :type :info, :process :nemesis, :f :start, :value {:nodes [\"raft-2\"], :network \"raft-validation-8-1793230743_raft-net\"}}",
+        "{:index 71, :time 49570846334, :type :info, :process :nemesis, :f :start, :value {:nodes [\"raft-3\"], :network \"raft-validation-8-1793230743_raft-net\"}}"
+      ]
+    },
+    {
+      "case": "docker-mixed-partition-leader",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25480",
+        "--workdir",
+        "<new-workdir>",
+        "--backend",
+        "docker-srv",
+        "--srv-mode",
+        "mixed",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "30",
+        "--nemesis",
+        "partition-leader",
+        "--compose-project",
+        "raft-validation-9-1793230839"
+      ],
+      "console_sha256": "f448aca0a30c88cb4a4de919d699c9e0cb87cce16291ce271196e743dcdfeb42",
+      "seed": -872303355,
+      "store_id": "raft-kv-docker-srv-3n/20261029T004041.358+0100",
+      "history_sha256": "a2e42d84411f29bf3d013b8a490ae5753e3e14530a7174821279924fad5cd2e3",
+      "results_sha256": "bcffc55e1cacc4242d97465d726599258fea510def81bd873765acad3b41a8fb",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 9,
+        "fail:read": 9,
+        "fail:write": 4,
+        "info:cas": 1,
+        "info:read": 1,
+        "invoke:cas": 10,
+        "invoke:read": 15,
+        "invoke:write": 9,
+        "ok:read": 5,
+        "ok:write": 5
+      },
+      "confirmed_progress": {
+        "reads": 5,
+        "mutations": 5
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 2, :time 18499958, :type :info, :process :nemesis, :f :stop, :value nil}",
+        "{:index 37, :time 17854617791, :type :info, :process :nemesis, :f :start, :value {:nodes [\"raft-2\"], :network \"raft-validation-9-1793230839_raft-net\"}}",
+        "{:index 47, :time 28485896958, :type :info, :process :nemesis, :f :stop, :value nil}",
+        "{:index 63, :time 50072091458, :type :info, :process :nemesis, :f :start, :value {:nodes [\"raft-2\"], :network \"raft-validation-9-1793230839_raft-net\"}}"
+      ]
+    },
+    {
+      "case": "docker-mixed-process-pause",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25500",
+        "--workdir",
+        "<new-workdir>",
+        "--backend",
+        "docker-srv",
+        "--srv-mode",
+        "mixed",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "25",
+        "--nemesis",
+        "process-pause",
+        "--compose-project",
+        "raft-validation-10-1793230981"
+      ],
+      "console_sha256": "14341a7ce5ab51f2980f895a206d491425b69f2730fa79e9a09b46ae186bd323",
+      "seed": -894217914,
+      "store_id": "raft-kv-docker-srv-3n/20261029T004303.052+0100",
+      "history_sha256": "6a4cb9194e62bce17a49907d92c1df72999af129b6d17e5663e110d71bc33003",
+      "results_sha256": "a61d400024dc11ac6e9aa1f12b90c5faa023c45c632b2242c16437e46cf7c3eb",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 11,
+        "fail:read": 4,
+        "fail:write": 4,
+        "info:cas": 2,
+        "info:write": 2,
+        "invoke:cas": 14,
+        "invoke:read": 14,
+        "invoke:write": 15,
+        "ok:cas": 1,
+        "ok:read": 10,
+        "ok:write": 9
+      },
+      "confirmed_progress": {
+        "reads": 10,
+        "mutations": 10
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 27, :time 7309107042, :type :info, :process :nemesis, :f :stop, :value {\"raft-2\" :paused}}",
+        "{:index 42, :time 13032543834, :type :info, :process :nemesis, :f :start, :value {\"raft-2\" :resumed}}",
+        "{:index 77, :time 28478886042, :type :info, :process :nemesis, :f :stop, :value {\"raft-1\" :paused}}",
+        "{:index 81, :time 42667157417, :type :info, :process :nemesis, :f :start, :value {\"raft-1\" :resumed}}"
+      ]
+    },
+    {
+      "case": "mixed-join-promote",
+      "exit_code": 1,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25420",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "45",
+        "--nemesis",
+        "membership-join-promote",
+        "--joining-impl",
+        "cpp"
+      ],
+      "console_sha256": "4432ce222975b2f1127494799a07dd74117d6513ffd429738a46625b49313b70",
+      "seed": 446941631,
+      "store_id": "raft-kv-local-3n/20261029T001243.303+0100",
+      "history_sha256": "ffa341de542fcbaef3b5fc137146b2c9d55e7d7c02e1cdead9ad0578cbba07d3",
+      "results_sha256": "7b2687a102c0a1834d616726f1eb518501c08cb40a65ca4cfe9123d0fec8f36d",
+      "linearizable": "true",
+      "nemesis-errors": "false",
+      "valid": "false",
+      "client_counts": {
+        "fail:cas": 23,
+        "fail:read": 5,
+        "fail:write": 3,
+        "invoke:cas": 23,
+        "invoke:read": 27,
+        "invoke:write": 24,
+        "ok:read": 22,
+        "ok:write": 21
+      },
+      "confirmed_progress": {
+        "reads": 22,
+        "mutations": 21
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 137, :time 71626113459, :type :info, :process :nemesis, :f :start, :value nil, :exception {:via [{:type clojure.lang.ExceptionInfo, :message \"Timed out waiting for promoted voter to stabilize\", :data {:member \"n4\"}, :at [raft_jepsen.nemesis$membership_join_promote$reify__1478 invoke_BANG_ \"nemesis.clj\" 797]}], :trace [[raft_jepsen.nemesis$membership_join_promote$reify__1478 invoke_BANG_ \"nemesis.clj\" 797] [jepsen.nemesis.Validate invoke_BANG_ \"nemesis.clj\" 66] [jepsen.generator.interpreter.NemesisWorker invoke_BANG_ \"interpreter.clj\" 77] [jepsen.generator.interpreter$spawn_worker$fn__14102$fn__14103 invoke \"interpreter.clj\" 140] [jepsen.generator.interpreter$spawn_worker$fn__14102 invoke \"interpreter.clj\" 123] [clojure.core$binding_conveyor_fn$fn__5844 invoke \"core.clj\" 2047] [clojure.lang.AFn call \"AFn.java\" 18] [java.util.concurrent.FutureTask run \"FutureTask.java\" 328] [java.util.concurrent.ThreadPoolExecutor runWorker \"ThreadPoolExecutor.java\" 1090] [java.util.concurrent.ThreadPoolExecutor$Worker run \"ThreadPoolExecutor.java\" 614] [java.lang.Thread run \"Thread.java\" 1474]], :cause \"Timed out waiting for promoted voter to stabilize\", :data {:member \"n4\"}}, :error \"indeterminate: Timed out waiting for promoted voter to stabilize\"}"
+      ],
+      "diagnostic_excerpts": [
+        "clojure.lang.ExceptionInfo: Timed out waiting for promoted voter to stabilize",
+        "                                                                 :message \"Timed out waiting for promoted voter to stabilize\",",
+        "                                                          :cause \"Timed out waiting for promoted voter to stabilize\",",
+        "                                              :error \"indeterminate: Timed out waiting for promoted voter to stabilize\"}]},"
+      ]
+    },
+    {
+      "case": "mixed-join-promote",
+      "exit_code": 0,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25420",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "45",
+        "--nemesis",
+        "membership-join-promote",
+        "--joining-impl",
+        "cpp"
+      ],
+      "console_sha256": "4165ee4606ef0482ffe0c000e0cd86065e6b441e6e01d9b0bd7924a02127074f",
+      "seed": -201632082,
+      "store_id": "raft-kv-local-3n/20261029T001817.709+0100",
+      "history_sha256": "3f7d3e6442cd386844526b5b7528605d28427f087dd71a0cb5a860b1e2beb1ff",
+      "results_sha256": "be75cdd1d99ada5133301da218a3334a700a77c50d97f12bc482977616afc616",
+      "linearizable": "true",
+      "nemesis-errors": "true",
+      "valid": "true",
+      "client_counts": {
+        "fail:cas": 23,
+        "fail:read": 4,
+        "fail:write": 5,
+        "invoke:cas": 23,
+        "invoke:read": 30,
+        "invoke:write": 25,
+        "ok:read": 26,
+        "ok:write": 20
+      },
+      "confirmed_progress": {
+        "reads": 26,
+        "mutations": 20
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 145, :time 56767533375, :type :info, :process :nemesis, :f :start, :value {:member \"n4\", :leader \"n2\", :status :stable-voter}}"
+      ]
+    },
+    {
+      "case": "mixed-remove-leader",
+      "exit_code": 1,
+      "command": [
+        "clojure",
+        "-M:run",
+        "--jar",
+        "raft-dist/target/raft-1.0-SNAPSHOT.jar",
+        "--cpp-bin",
+        "<cpp-build>/graft_smoke",
+        "--rust-bin",
+        "graft-rust/target/debug/graft-kv",
+        "--concurrency",
+        "6",
+        "--operation-limit",
+        "300",
+        "--unique-values",
+        "true",
+        "--nemesis-interval",
+        "4",
+        "--base-port",
+        "25440",
+        "--workdir",
+        "<new-workdir>",
+        "--node-count",
+        "3",
+        "--node-impls",
+        "java,cpp,rust",
+        "--client-impl",
+        "mixed",
+        "--time-limit",
+        "35",
+        "--nemesis",
+        "membership-remove-leader"
+      ],
+      "console_sha256": "1e31ff72f08e82df6a67798347231a19467ecf5a65b6ebe1a4e847b55e55743e",
+      "seed": 961630540,
+      "store_id": "raft-kv-local-3n/20261029T001944.773+0100",
+      "history_sha256": "91c70d889110dab02e0c20c3cde1b0f909b86a557098b8f257dc6c540203bbc1",
+      "results_sha256": "6274eca1cb3ad09282951a6cee797ed5b28657a5b7beaef4ade02d46bb85f802",
+      "linearizable": "true",
+      "nemesis-errors": "false",
+      "valid": "false",
+      "client_counts": {
+        "fail:cas": 16,
+        "fail:read": 4,
+        "fail:write": 5,
+        "invoke:cas": 17,
+        "invoke:read": 24,
+        "invoke:write": 29,
+        "ok:cas": 1,
+        "ok:read": 20,
+        "ok:write": 24
+      },
+      "confirmed_progress": {
+        "reads": 20,
+        "mutations": 25
+      },
+      "progress_qualified": true,
+      "nemesis_completions": [
+        "{:index 129, :time 50118496125, :type :info, :process :nemesis, :f :start, :value nil, :exception {:via [{:type clojure.lang.ExceptionInfo, :message \"Timed out waiting for leader removal joint configuration\", :data {:member \"n2\", :remaining-members [\"n1\" \"n3\"]}, :at [raft_jepsen.nemesis$membership_remove_leader$reify__1532 invoke_BANG_ \"nemesis.clj\" 1018]}], :trace [[raft_jepsen.nemesis$membership_remove_leader$reify__1532 invoke_BANG_ \"nemesis.clj\" 1018] [jepsen.nemesis.Validate invoke_BANG_ \"nemesis.clj\" 66] [jepsen.generator.interpreter.NemesisWorker invoke_BANG_ \"interpreter.clj\" 77] [jepsen.generator.interpreter$spawn_worker$fn__14102$fn__14103 invoke \"interpreter.clj\" 140] [jepsen.generator.interpreter$spawn_worker$fn__14102 invoke \"interpreter.clj\" 123] [clojure.core$binding_conveyor_fn$fn__5844 invoke \"core.clj\" 2047] [clojure.lang.AFn call \"AFn.java\" 18] [java.util.concurrent.FutureTask run \"FutureTask.java\" 328] [java.util.concurrent.ThreadPoolExecutor runWorker \"ThreadPoolExecutor.java\" 1090] [java.util.concurrent.ThreadPoolExecutor$Worker run \"ThreadPoolExecutor.java\" 614] [java.lang.Thread run \"Thread.java\" 1474]], :cause \"Timed out waiting for leader removal joint configuration\", :data {:member \"n2\", :remaining-members [\"n1\" \"n3\"]}}, :error \"indeterminate: Timed out waiting for leader removal joint configuration\"}"
+      ],
+      "diagnostic_excerpts": [
+        "clojure.lang.ExceptionInfo: Timed out waiting for leader removal joint configuration",
+        "                                                                 :message \"Timed out waiting for leader removal joint configuration\",",
+        "                                                          :cause \"Timed out waiting for leader removal joint configuration\",",
+        "                                              :error \"indeterminate: Timed out waiting for leader removal joint configuration\"}]},"
+      ]
+    }
+  ],
+  "source_sha256": {
+    "docker/raft-java.Dockerfile": "6f8c6b77539dac2cc92dc9ea5c4be7f3a8c650e3298a8c634c38195ecde4c24c",
+    "graft-cpp/CMakeLists.txt": "7055f5673de2eb95eb7db2cdb16d210212e0407574386c0c34ae2ccb80055377",
+    "graft-cpp/include/graft/core/raft_node.hpp": "aed19da1483be83eb36937d98c445e18337333363672d654db2bd6a696ddc2da",
+    "graft-cpp/include/graft/core/snapshot_codec.hpp": "1a4cf745b4544560177cf0e26edf0c2ad1748f2e04223ec3c564be5f0cdff63d",
+    "graft-cpp/include/graft/storage/persistent_state_store.hpp": "8f5c9a1b7c7f39f5752c4f5ddd8c3d2b96bc4fb90da80ea9b87a7c908803e4b4",
+    "graft-cpp/src/app/cli.cpp": "e71775fff1e3daeb9721dddf4d232ed7218de76b1366afe31bbd501ea2e867b9",
+    "graft-cpp/src/core/key_value_state_machine.cpp": "f04ac7edb55d893ed76dbd8a9e363cfa00c2932097b525ad23cd2bb19ba2ded3",
+    "graft-cpp/src/core/raft_node.cpp": "23d33366292f06beede4949688cef6c2cc004093e443f42237c24376a08ceb81",
+    "graft-cpp/src/core/snapshot_codec.cpp": "7b23995cd41d0834a93d7e1ca61afcb28516cf203e58adec46a4b7cde5212340",
+    "graft-cpp/src/runtime/raft_runtime.cpp": "b88a0ff23222f47ff9b029db96f93fc548aad7b8e9fec15d65ad6ac347a9c2b8",
+    "graft-cpp/src/runtime/rpc_handler.cpp": "51171ca19fbfb4ec8721a5fda3243a368406c28c3a88a6ccd8fbaa05389fa2e3",
+    "graft-cpp/src/storage/persistent_state_store.cpp": "2b50c9b4e17111e8f62148e1417ce94c01a1fad1d5ee831332ac8fd5e2d2cd68",
+    "graft-cpp/tests/raft_node_membership_tests.cpp": "ccc056eed49c6fa0fb81a01ded447ce1dbf05b8629e8df7fdbb3b83f3b0901f6",
+    "graft-cpp/tests/raft_node_state_machine_tests.cpp": "0f9e4676039555500c32882cc66e1972bbd22dfed960f7ed283fb2cdb9d38685",
+    "graft-cpp/tests/snapshot_codec_tests.cpp": "4d4b82143fb1ed617748b576137a38380f9c4d0835c332c8b06c04997727635a",
+    "graft-rust/graft-app-kv/src/lib.rs": "8808c93807a8021ee450a7c697c0d2d77466acc3842bd33517ad529dddff4440",
+    "graft-rust/graft-app-kv/src/main.rs": "73a9e531ffe0f85bc4867ade2ec7479f5f599b0d5a57761d7862b5fdda89171c",
+    "graft-rust/graft-core/src/membership.rs": "77bb61b6864c1822bfea208cc8d9362cb0131c348584ce94898be660cc7b455e",
+    "graft-rust/graft-core/src/raft_node.rs": "6b70782943866d1f96684409eaaa258676a2229e32298b746b70d736a2740df7",
+    "graft-rust/graft-core/src/snapshot_codec.rs": "5d483cb20f50c7a044f1a7622c2760d747883b9d321db814bc3c0c679339f864",
+    "graft-rust/graft-core/src/state_machine.rs": "8842f0172d7f1091e02955926eaee3c2361ea5a337489cf5ac0b5a7f2b3e0f24",
+    "graft-rust/graft-proto/build.rs": "e3d38706ceb2983e65d2f9a4798e597a5a6ce0d4586e4a9856b2ff6c0de5d6d0",
+    "graft-rust/graft-runtime/src/handlers.rs": "b91a4fd2e4031bb9a850bd2f1f33bace56446edae022618531ec7251ca52b161",
+    "graft-rust/graft-runtime/src/runtime.rs": "20a38d22a9ae8ab7e51086be58928152680c44b4ca7d481ee32be3c036a8119f",
+    "graft-rust/graft-storage/src/lib.rs": "68e4ce222d9fb1a9d4ee0f143f2029bb725feb4cce5e8884a64e7e5443a55bec",
+    "graft-rust/graft-storage/src/log_store.rs": "b235c8a95f656fd3d18abede44152ea01916694a6b128a780649777aed2a45a5",
+    "graft-rust/graft-storage/src/state_store.rs": "15ae05f48b245c69467c7ff08e630138138c3ae7e4047a152fe19bc43deb6497",
+    "graft-rust/graft-tests/tests/integration_test.rs": "9b0a2aa7dc66699cc43095aed394a9fa57ab074eadc0165b602a87c278778aaa",
+    "jepsen/deps.edn": "cafa30d1aa14a66cd012d69aaaf1d2a6496e08033f32d0d3a5a16c36caecddd2",
+    "jepsen/src/raft_jepsen/client.clj": "c8f73b770bcf03cd5c3ba3b0cc16dbcb4c27c299d23f041c91b53b4dda90fe6c",
+    "jepsen/src/raft_jepsen/core.clj": "7fb5e4d4e027fc417549d9cf372a8458d2871bf2fbb670cae6e300b48fba0794",
+    "jepsen/src/raft_jepsen/db.clj": "4025aab8c2c02830efdde88bae4a71a22a8a073f3685e26e1053d7fd3c319d93",
+    "jepsen/src/raft_jepsen/nemesis.clj": "e86199fc83b462ffa1ec6146b5b6a5833127a8d09f7a8d656813468d85b2e6a4",
+    "raft-core/src/main/java/org/gautelis/raft/RaftNode.java": "e5073062764d05754d5b0c03a64ceec60ae0374a28161a564f4d4cf37d1a9028",
+    "raft-runtime/src/main/java/org/gautelis/raft/bootstrap/ClientRequestHandler.java": "b6a36269119d1909ab3f4c4b6a45f72a469f189770b534d8085a2628dd0498db",
+    "raft-storage/src/main/java/org/gautelis/raft/storage/FileLogStore.java": "137a91a39dfb69f48b159c8dff2c74a9a7623470116b8062609837a57d05a2e5",
+    "raft-storage/src/main/java/org/gautelis/raft/storage/FilePersistentStateStore.java": "5ebb484b2576720ce208dab0a871d994864b33f232a219f843d2a8779f67bc22",
+    "raft-tests/src/test/java/org/gautelis/raft/BasicAdapterCommandTest.java": "f5fa4c38fbf1c994e48064410ac23e806888790b79ff35c11dce8944ea83c7fa",
+    "raft-tests/src/test/java/org/gautelis/raft/KeyValueStateMachineTest.java": "d532cd992ed86b300905d9aaf58d3b505e2d57780e8e1bde99c029729982268d",
+    "graft-cpp/tests/raft_safety_regression_tests.cpp": "4ad75385500a4f2a76713bb692656f0235d2dbbda146bda74e5387751dc5544c",
+    "graft-rust/graft-storage/src/durable.rs": "9334eaaaf65f0c411cc650ca10ea8eac8c2bf0d3842fb4b452bd1ef1758d7eb6",
+    "graft-rust/graft-tests/tests/safety_regression.rs": "afe5d370204152ebbcf60ccec908cb0761cf8ee2ae2164b0a90639c9c7418d78",
+    "jepsen/test/raft_jepsen/db_test.clj": "51c678fd32a372868542be7f30830003bcb94c5ca47c78548f63b2a717bd40bf",
+    "raft-core/src/main/java/org/gautelis/raft/FailStopLogStore.java": "160a8bd4931fe537e52170218eb482f0614ee1e5856bcce018ba1d0a29b2fdbd",
+    "raft-storage/src/main/java/org/gautelis/raft/storage/DurableFiles.java": "8cb3cedf60737ef4f71ac18cfd85e7cb1b6434a634c4044e2b3cdf25c3828046",
+    "raft-tests/src/test/java/org/gautelis/raft/RaftSafetyRegressionTest.java": "f9b3a2aff0de26fa65318a4cdd88a885031363fc4a77b52014841702906f86f6",
+    "scripts/run-consensus-regression-smoke.py": "c101b448e41ca61ab1b10e2d3d61de6d758da03def1de4b454418c0d603023bf"
+  },
+  "binaries_sha256_at_collection": {
+    "raft-1.0-SNAPSHOT.jar": "85fcfe4694fec0092277fe5fc88ac3cefe1dbcee5b904173f90c8d70b083da7b",
+    "graft-kv": "a4bd885c4b22471c753c007b093d911b746c7ce65de1b7f53b3db04c849bb7eb",
+    "graft_smoke": "dc5a5ae048d900a22be2d553ade0450f071e69a3d76280bd4bda6775cb9ad301"
+  },
+  "limitations": [
+    "Short local Jepsen campaigns, not an exhaustive safety proof or soak.",
+    "The original crash cases used orderly termination; explicit abrupt-restart cases use the corrected forced-kill harness.",
+    "Snapshot fault campaigns do not observe the exact interruption point inside an in-flight snapshot RPC.",
+    "The printed seed is metadata; the harness does not seed all random choices and cannot replay the generated workload or execution schedule.",
+    "Host-backed filesystem/process tests do not qualify physical power loss."
+  ],
+  "native_charlotte": {
+    "schema": "charlotte.raft-native-validation.v1",
+    "date": "2026-10-29",
+    "source_revision": "9f3d5203e4604c3113afb07e25b28ef6cd0db48c",
+    "source_dirty": true,
+    "source_sha256": {
+      "crates/catten-graft/src/node.rs": "83f689d84c05413c475814b7823fb843e95d0f112283882f66832e0b51422f71",
+      "crates/catten-services/src/bin/raft.rs": "ff76f59a361a7b7133df82e0cca141f654c5b6d9e9f98c30029d22b0274d46df"
+    },
+    "fixtures": [
+      {
+        "name": "baseline",
+        "serial_sha256": "0095c41299e62cf243a4f325f7a069a45c3929093b441ec5cf4c7a5f1ce29d0b",
+        "excerpts": [
+          "[+     9.286366] [raft-storage] testing NVMe-backed Raft recovery...",
+          "[+     9.341158] [raft-storage] first process waiting: stage=0, state=0, term=0, durable=0",
+          "[+     9.824978] [raft-storage] first process reached term 1.",
+          "[+     9.859818] [raft-storage] restarted process waiting: stage=0, state=0, term=0, durable=0",
+          "[+    10.231154] [raft-storage] restarted process reached term 2.",
+          "[+    10.242255] [raft-storage] SUCCESS: term/vote state survived Raft process restart on NVMe.",
+          "[+    11.945116] SELFTEST COMPLETE: passed=17 failed=0 pending=0 passed_bitmap=0x1ffff failed_bitmap=0x0 pending_bitmap=0x0"
+        ],
+        "kernel_sha256": "88f58b7a98ba44d5be188524f1f29da571400ae55b90dae16a8bab2891d15476",
+        "tracked_diff_sha256": "b018d7ae53828e59b1c6ee3a66db8a264b47150f62450fcc9279d4ba667820d2",
+        "bundle_sha256": {
+          "dns.elf": "35ad3469c79e53737a1e18c0aaa7243b71d122f2291c4d1034880f6bc05fdd44",
+          "nvme.elf": "bf2f52a73c23a1d78f207d8354bbe4aafb9e2c77b6b85fb23d849a489eb6a299",
+          "objstore.elf": "96b9595f3d11b40ad2b44b673d4ba7e872892b42c14f0dc021d2f1fd1d5571a9",
+          "raft.elf": "b019df6d7154bb00eae619a746b2bbd1e5253b1d655c176470e9005b72d44e90"
+        },
+        "request": {
+          "reason": "complete",
+          "snapshot": false
+        }
+      },
+      {
+        "name": "interrupted",
+        "serial_sha256": "76652732befbe7342c0b670209cc60ec625f2a88ab7d8013dcf8dd611ae78828",
+        "excerpts": [
+          "[+     9.224084] [raft-storage] testing NVMe-backed Raft recovery...",
+          "[+     9.261292] [raft-storage] first process waiting: stage=0, state=0, term=0, durable=0",
+          "[+     9.778492] [raft-storage] first process reached term 1."
+        ],
+        "kernel_sha256": "88f58b7a98ba44d5be188524f1f29da571400ae55b90dae16a8bab2891d15476",
+        "tracked_diff_sha256": "b018d7ae53828e59b1c6ee3a66db8a264b47150f62450fcc9279d4ba667820d2",
+        "bundle_sha256": {
+          "dns.elf": "35ad3469c79e53737a1e18c0aaa7243b71d122f2291c4d1034880f6bc05fdd44",
+          "nvme.elf": "bf2f52a73c23a1d78f207d8354bbe4aafb9e2c77b6b85fb23d849a489eb6a299",
+          "objstore.elf": "96b9595f3d11b40ad2b44b673d4ba7e872892b42c14f0dc021d2f1fd1d5571a9",
+          "raft.elf": "b019df6d7154bb00eae619a746b2bbd1e5253b1d655c176470e9005b72d44e90"
+        },
+        "request": {
+          "reason": "runner-exit",
+          "snapshot": false
+        }
+      },
+      {
+        "name": "recovered",
+        "serial_sha256": "99d9020217cd4f69684c519d4a82bacf1beccd47456d0dbd0f58290c42100eb2",
+        "excerpts": [
+          "[+     9.744772] [raft-storage] testing NVMe-backed Raft recovery...",
+          "[+     9.792344] [raft-storage] first process waiting: stage=1, state=0, term=0, durable=0",
+          "[+    10.254264] [raft-storage] first process reached term 2.",
+          "[+    10.301474] [raft-storage] restarted process waiting: stage=0, state=0, term=0, durable=0",
+          "[+    10.729672] [raft-storage] restarted process reached term 3.",
+          "[+    10.740738] [raft-storage] SUCCESS: term/vote state survived Raft process restart on NVMe.",
+          "[+    12.467964] SELFTEST COMPLETE: passed=17 failed=0 pending=0 passed_bitmap=0x1ffff failed_bitmap=0x0 pending_bitmap=0x0"
+        ],
+        "kernel_sha256": "88f58b7a98ba44d5be188524f1f29da571400ae55b90dae16a8bab2891d15476",
+        "tracked_diff_sha256": "b018d7ae53828e59b1c6ee3a66db8a264b47150f62450fcc9279d4ba667820d2",
+        "bundle_sha256": {
+          "dns.elf": "35ad3469c79e53737a1e18c0aaa7243b71d122f2291c4d1034880f6bc05fdd44",
+          "nvme.elf": "bf2f52a73c23a1d78f207d8354bbe4aafb9e2c77b6b85fb23d849a489eb6a299",
+          "objstore.elf": "96b9595f3d11b40ad2b44b673d4ba7e872892b42c14f0dc021d2f1fd1d5571a9",
+          "raft.elf": "b019df6d7154bb00eae619a746b2bbd1e5253b1d655c176470e9005b72d44e90"
+        },
+        "request": {
+          "reason": "complete",
+          "snapshot": false
+        }
+      },
+      {
+        "name": "network-listener",
+        "serial_sha256": "2ae02afe2c20a3501dd6adb677bf85470c3db9c6fc61136df9e9014a1335946d",
+        "excerpts": [
+          "[+    17.785102] [raft-storage] testing NVMe-backed Raft recovery...",
+          "[+    17.835362] [raft-storage] first process waiting: stage=0, state=0, term=0, durable=0",
+          "[+    18.498554] [raft-storage] first process reached term 1.",
+          "[+    18.547952] [raft-storage] restarted process waiting: stage=0, state=0, term=0, durable=0",
+          "[+    18.962320] [raft-storage] restarted process reached term 2.",
+          "[+    18.974022] [raft-storage] SUCCESS: term/vote state survived Raft process restart on NVMe.",
+          "[+   122.840272] [dns] SUCCESS: Raft-elected name service replicated the catalog, served a remote invocation, and automatically fenced endpoint-death unregister by generation.",
+          "[+   122.841366] SELFTEST COMPLETE: passed=20 failed=0 pending=0 passed_bitmap=0xfffff failed_bitmap=0x0 pending_bitmap=0x0"
+        ],
+        "kernel_sha256": "ff8d3400a7687d64a0cf8aa76c68a4aa538501c884305c728c605cf9d72293a6",
+        "tracked_diff_sha256": "b018d7ae53828e59b1c6ee3a66db8a264b47150f62450fcc9279d4ba667820d2",
+        "bundle_sha256": {
+          "dns.elf": "35ad3469c79e53737a1e18c0aaa7243b71d122f2291c4d1034880f6bc05fdd44",
+          "nvme.elf": "bf2f52a73c23a1d78f207d8354bbe4aafb9e2c77b6b85fb23d849a489eb6a299",
+          "objstore.elf": "96b9595f3d11b40ad2b44b673d4ba7e872892b42c14f0dc021d2f1fd1d5571a9",
+          "raft.elf": "b019df6d7154bb00eae619a746b2bbd1e5253b1d655c176470e9005b72d44e90"
+        },
+        "request": {
+          "reason": "complete",
+          "snapshot": false
+        }
+      },
+      {
+        "name": "network-connector",
+        "serial_sha256": "293d9463111a270baf2a6fc1f8418f4a934747f611c27a77976428145ba46b50",
+        "excerpts": [
+          "[+    10.350008] [raft-storage] testing NVMe-backed Raft recovery...",
+          "[+    10.402430] [raft-storage] first process waiting: stage=0, state=0, term=0, durable=0",
+          "[+    11.011912] [raft-storage] first process reached term 1.",
+          "[+    11.066572] [raft-storage] restarted process waiting: stage=0, state=0, term=0, durable=0",
+          "[+    11.483652] [raft-storage] restarted process reached term 2.",
+          "[+    11.494904] [raft-storage] SUCCESS: term/vote state survived Raft process restart on NVMe.",
+          "[+    27.899642] [dns] SUCCESS: Raft-elected name service replicated the catalog, served a remote invocation, and automatically fenced endpoint-death unregister by generation.",
+          "[+    27.900256] SELFTEST COMPLETE: passed=20 failed=0 pending=0 passed_bitmap=0xfffff failed_bitmap=0x0 pending_bitmap=0x0"
+        ],
+        "kernel_sha256": "ff8d3400a7687d64a0cf8aa76c68a4aa538501c884305c728c605cf9d72293a6",
+        "tracked_diff_sha256": "b018d7ae53828e59b1c6ee3a66db8a264b47150f62450fcc9279d4ba667820d2",
+        "bundle_sha256": {
+          "dns.elf": "35ad3469c79e53737a1e18c0aaa7243b71d122f2291c4d1034880f6bc05fdd44",
+          "nvme.elf": "bf2f52a73c23a1d78f207d8354bbe4aafb9e2c77b6b85fb23d849a489eb6a299",
+          "objstore.elf": "96b9595f3d11b40ad2b44b673d4ba7e872892b42c14f0dc021d2f1fd1d5571a9",
+          "raft.elf": "b019df6d7154bb00eae619a746b2bbd1e5253b1d655c176470e9005b72d44e90"
+        },
+        "request": {
+          "reason": "complete",
+          "snapshot": false
+        }
+      }
+    ],
+    "limitations": [
+      "Development QEMU AArch64 fixtures, four vCPUs, new host-backed virtual NVMe disks.",
+      "Abrupt termination observes acknowledged term recovery and the ordinary durable-term advancement fixture; it does not independently check same-term vote retention across a VM crash, interrupted log/snapshot publication, or physical power loss.",
+      "Two guests exercise the native Raft-backed catalog, remote invocation and generation-fenced unregister; they do not join a Java/C++/Rust TCP cluster.",
+      "No simultaneous multi-voter restart, storage fault injection, new TLA+ execution, throughput or management TLS availability qualification."
+    ],
+    "abrupt_recovery": {
+      "kind": "abrupt-qemu-termination-and-disk-reuse",
+      "instance": "raft-validation-powercut-20261028-a",
+      "acknowledged_term": 1,
+      "recovered_and_advanced_term": 2,
+      "interrupted_runner_exit": 1,
+      "recovery_runner_exit": 0,
+      "serial_before_sha256": "76652732befbe7342c0b670209cc60ec625f2a88ab7d8013dcf8dd611ae78828",
+      "serial_after_sha256": "99d9020217cd4f69684c519d4a82bacf1beccd47456d0dbd0f58290c42100eb2",
+      "limitation": "QEMU process loss with a host-backed virtual NVMe disk; not physical power-loss qualification"
+    },
+    "network": [
+      {
+        "instance": "raft-validation-dns-20261029-1",
+        "command": [
+          "./scripts/run-aarch64.sh",
+          "--dns-test",
+          "--instance",
+          "raft-validation-dns-20261029-1",
+          "--mac",
+          "52:54:00:12:34:01",
+          "--timeout",
+          "180",
+          "--smp",
+          "4",
+          "--net-listen",
+          "12911"
+        ],
+        "exit_code": 0,
+        "serial_sha256": "2ae02afe2c20a3501dd6adb677bf85470c3db9c6fc61136df9e9014a1335946d",
+        "selftest": {
+          "passed": 20,
+          "failed": 0,
+          "pending": 0
+        },
+        "dns_success": true
+      },
+      {
+        "instance": "raft-validation-dns-20261029-2",
+        "command": [
+          "./scripts/run-aarch64.sh",
+          "--dns-test",
+          "--instance",
+          "raft-validation-dns-20261029-2",
+          "--mac",
+          "52:54:00:12:34:02",
+          "--timeout",
+          "180",
+          "--smp",
+          "4",
+          "--net-connect",
+          "127.0.0.1:12911"
+        ],
+        "exit_code": 0,
+        "serial_sha256": "293d9463111a270baf2a6fc1f8418f4a934747f611c27a77976428145ba46b50",
+        "selftest": {
+          "passed": 20,
+          "failed": 0,
+          "pending": 0
+        },
+        "dns_success": true
+      }
+    ],
+    "interrupt_guard": "The kernel fixture emits the matched first-term line only after stage >= 6, leader state, term > 0, and durable == 1."
+  },
+  "docker_network_events": [
+    {
+      "action": "disconnect",
+      "time": 1793230795,
+      "time_nano": 1793230795109878174,
+      "attributes": {
+        "container": "6f09d06734a704caa8986a04c580997a50fc334a9218501709eb27479bcfe3d5",
+        "name": "raft-validation-8-1793230743_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793230812,
+      "time_nano": 1793230812053439167,
+      "attributes": {
+        "container": "8e5778d8872991f2c9e01c3e243ebf20aaaac8aa03eadeda095f055d81671260",
+        "name": "raft-validation-8-1793230743_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "connect",
+      "time": 1793230832,
+      "time_nano": 1793230832391647052,
+      "attributes": {
+        "container": "8e5778d8872991f2c9e01c3e243ebf20aaaac8aa03eadeda095f055d81671260",
+        "name": "raft-validation-8-1793230743_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793230832,
+      "time_nano": 1793230832949351677,
+      "attributes": {
+        "container": "d338991557684ab2ba2b79d64e425051686f7a30325f06e0e35f03af0328ba43",
+        "name": "raft-validation-8-1793230743_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793230832,
+      "time_nano": 1793230832959285594,
+      "attributes": {
+        "container": "8e5778d8872991f2c9e01c3e243ebf20aaaac8aa03eadeda095f055d81671260",
+        "name": "raft-validation-8-1793230743_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793230834,
+      "time_nano": 1793230834632203387,
+      "attributes": {
+        "container": "fb806a5dd9e3ef5ba06add66a692847f128d6d2369b23bb818eccad2b5cd484d",
+        "name": "raft-validation-8-1793230743_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "destroy",
+      "time": 1793230834,
+      "time_nano": 1793230834730094262,
+      "attributes": {
+        "name": "raft-validation-8-1793230743_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "create",
+      "time": 1793230876,
+      "time_nano": 1793230876081638961,
+      "attributes": {
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "connect",
+      "time": 1793230876,
+      "time_nano": 1793230876197198253,
+      "attributes": {
+        "container": "c0f11c361520514e36802f67c012dcd433f0bfaa60f8beca06b53dc5ec587652",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "connect",
+      "time": 1793230876,
+      "time_nano": 1793230876252092919,
+      "attributes": {
+        "container": "c1d2b3f7169dc8f752a9d2e8d758500a4ef179bbac8c7cdca310678c8b1d57f0",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "connect",
+      "time": 1793230876,
+      "time_nano": 1793230876311196211,
+      "attributes": {
+        "container": "ebd4ae983c8b1d0a780471ce4912e17d2a9585d9511a78b75c3eb42353deae9f",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "connect",
+      "time": 1793230876,
+      "time_nano": 1793230876382824920,
+      "attributes": {
+        "container": "d0bebf7440e19c96fbba4959fb14fd42da38c905cb0640542af8ac54943c6cb9",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793230910,
+      "time_nano": 1793230910268357046,
+      "attributes": {
+        "container": "d0bebf7440e19c96fbba4959fb14fd42da38c905cb0640542af8ac54943c6cb9",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "connect",
+      "time": 1793230918,
+      "time_nano": 1793230918652400967,
+      "attributes": {
+        "container": "d0bebf7440e19c96fbba4959fb14fd42da38c905cb0640542af8ac54943c6cb9",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793230942,
+      "time_nano": 1793230942464451714,
+      "attributes": {
+        "container": "d0bebf7440e19c96fbba4959fb14fd42da38c905cb0640542af8ac54943c6cb9",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "connect",
+      "time": 1793230971,
+      "time_nano": 1793230971371100339,
+      "attributes": {
+        "container": "d0bebf7440e19c96fbba4959fb14fd42da38c905cb0640542af8ac54943c6cb9",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793230971,
+      "time_nano": 1793230971925680839,
+      "attributes": {
+        "container": "c1d2b3f7169dc8f752a9d2e8d758500a4ef179bbac8c7cdca310678c8b1d57f0",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793230974,
+      "time_nano": 1793230974623579423,
+      "attributes": {
+        "container": "d0bebf7440e19c96fbba4959fb14fd42da38c905cb0640542af8ac54943c6cb9",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793230974,
+      "time_nano": 1793230974653164173,
+      "attributes": {
+        "container": "ebd4ae983c8b1d0a780471ce4912e17d2a9585d9511a78b75c3eb42353deae9f",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793230976,
+      "time_nano": 1793230976309635424,
+      "attributes": {
+        "container": "c0f11c361520514e36802f67c012dcd433f0bfaa60f8beca06b53dc5ec587652",
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "destroy",
+      "time": 1793230976,
+      "time_nano": 1793230976408932633,
+      "attributes": {
+        "name": "raft-validation-9-1793230839_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "create",
+      "time": 1793230986,
+      "time_nano": 1793230986503008179,
+      "attributes": {
+        "name": "raft-validation-10-1793230981_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "connect",
+      "time": 1793230986,
+      "time_nano": 1793230986638133929,
+      "attributes": {
+        "container": "8a19dc2601945d3842a0400fea49be96ae52e056e8e3bbd0e3c866e2380a5055",
+        "name": "raft-validation-10-1793230981_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "connect",
+      "time": 1793230986,
+      "time_nano": 1793230986702139804,
+      "attributes": {
+        "container": "c2182601c51bf139fd051b3e16b053fefac94572ee7cf1e97ceee8f3c7a1cf76",
+        "name": "raft-validation-10-1793230981_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "connect",
+      "time": 1793230986,
+      "time_nano": 1793230986768026971,
+      "attributes": {
+        "container": "c61c149f4e8c4353e5071eb108f9708c64abc37f11ce4883d75921ee3aa03c21",
+        "name": "raft-validation-10-1793230981_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "connect",
+      "time": 1793230986,
+      "time_nano": 1793230986844598388,
+      "attributes": {
+        "container": "3411efc71f9f73e5b13661dca57055869fef5a8d63f5e9690107d391eb809e27",
+        "name": "raft-validation-10-1793230981_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793231068,
+      "time_nano": 1793231068145475967,
+      "attributes": {
+        "container": "c2182601c51bf139fd051b3e16b053fefac94572ee7cf1e97ceee8f3c7a1cf76",
+        "name": "raft-validation-10-1793230981_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793231070,
+      "time_nano": 1793231070858865010,
+      "attributes": {
+        "container": "3411efc71f9f73e5b13661dca57055869fef5a8d63f5e9690107d391eb809e27",
+        "name": "raft-validation-10-1793230981_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793231070,
+      "time_nano": 1793231070873168301,
+      "attributes": {
+        "container": "c61c149f4e8c4353e5071eb108f9708c64abc37f11ce4883d75921ee3aa03c21",
+        "name": "raft-validation-10-1793230981_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "disconnect",
+      "time": 1793231072,
+      "time_nano": 1793231072551326011,
+      "attributes": {
+        "container": "8a19dc2601945d3842a0400fea49be96ae52e056e8e3bbd0e3c866e2380a5055",
+        "name": "raft-validation-10-1793230981_raft-net",
+        "type": "bridge"
+      }
+    },
+    {
+      "action": "destroy",
+      "time": 1793231072,
+      "time_nano": 1793231072667826927,
+      "attributes": {
+        "name": "raft-validation-10-1793230981_raft-net",
+        "type": "bridge"
+      }
+    }
+  ],
+  "unit_validation": [
+    {
+      "implementation": "Java",
+      "tests": 166,
+      "passed": 163,
+      "skipped": 3,
+      "log_sha256": "11e51110452b18ace0599284e4bdee800a8be3a42ed2886ccf9c0be8a96d1f00"
+    },
+    {
+      "implementation": "Rust",
+      "passed": 43,
+      "ignored_doctests": 1,
+      "log_sha256": "37e399e63d8a7314ce4d525701e75dac67b75e44eb8d81c872fc6401be6be57c"
+    },
+    {
+      "implementation": "C++",
+      "cases": 43,
+      "assertions": 348,
+      "log_sha256": "f56acf84fe272bd6eb55afbfc03d265713414bf8390766dc8afd9d047db17fda"
+    },
+    {
+      "implementation": "Jepsen harness",
+      "tests": 10,
+      "assertions": 30,
+      "log_sha256": "ef5e9619ed39aceaef93f98992c5b6485bc884337c9340b5e41dc7fbbbf9f8cd"
+    }
+  ],
+  "three_leader_smoke": {
+    "passed": [
+      "rust",
+      "cpp",
+      "java"
+    ],
+    "operations_per_leader": "one write and two fenced reads",
+    "log_sha256": "2ab0d5502bf724deee53d335b0cdf67f9ff5e5fe2bbda17dd5911adea234c36a"
+  },
+  "docker_event_capture_note": "Docker retains a bounded event history. The final event arrays omit some earlier startup/fault events; earlier complete counts observed during the campaign are retained separately. Partition and heal operations also verified actual attachment in the harness.",
+  "earlier_observed_network_counts": {
+    "raft-validation-8-1793229954_raft-net": {
+      "create": 1,
+      "connect": 6,
+      "disconnect": 6,
+      "destroy": 1
+    },
+    "raft-validation-9-1793230067_raft-net": {
+      "create": 1,
+      "connect": 6,
+      "disconnect": 6,
+      "destroy": 1
+    },
+    "raft-validation-10-1793230190_raft-net": {
+      "create": 1,
+      "connect": 4,
+      "disconnect": 4,
+      "destroy": 1
+    }
+  },
+  "selected_passing_runs": {
+    "java-baseline": "raft-kv-local-5n/20261028T235530.208+0100",
+    "java-crash-restart": "raft-kv-local-5n/20261028T235953.222+0100",
+    "java-process-pause": "raft-kv-local-5n/20261029T000054.560+0100",
+    "java-snapshot-restart": "raft-kv-local-5n/20261029T000153.666+0100",
+    "mixed-baseline": "raft-kv-local-3n/20261029T000347.446+0100",
+    "mixed-crash-restart": "raft-kv-local-3n/20261029T000444.139+0100",
+    "mixed-snapshot-transfer-crash": "raft-kv-local-3n/20261029T000930.910+0100",
+    "mixed-join-promote": "raft-kv-local-3n/20261029T001817.709+0100",
+    "mixed-remove-leader": "raft-kv-local-3n/20261029T002445.170+0100",
+    "docker-java-partition": "raft-kv-docker-srv-3n/20261029T003904.807+0100",
+    "docker-mixed-partition-leader": "raft-kv-docker-srv-3n/20261029T004041.358+0100",
+    "docker-mixed-process-pause": "raft-kv-docker-srv-3n/20261029T004303.052+0100",
+    "java-abrupt-restart": "raft-kv-local-5n/20261029T003140.887+0100",
+    "mixed-abrupt-restart": "raft-kv-local-3n/20261029T003241.140+0100",
+    "mixed-snapshot-final": "raft-kv-local-3n/20261029T003607.760+0100"
+  }
+}

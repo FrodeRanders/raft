@@ -20,6 +20,14 @@
 #include <fstream>
 #include <stdexcept>
 #include <utility>
+#include <sstream>
+#include <unordered_set>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cerrno>
+#include <system_error>
+#include <cstdio>
+#include <cstdlib>
 
 namespace graft {
     PersistentStateStore::PersistentStateStore(std::filesystem::path path)
@@ -35,14 +43,27 @@ namespace graft {
     }
 
     void PersistentStateStore::save(const RaftNode::PersistentState &state) const {
-        std::filesystem::create_directories(path_.parent_path());
-        std::ofstream out(path_, std::ios::trunc);
-        if (!out) {
-            throw std::runtime_error("failed to open state file for write: " + path_.string());
+        std::scoped_lock lock(mutex_);
+        try { save_locked(state); }
+        catch (const std::exception &error) {
+            std::fprintf(stderr, "Raft persistence failed: %s\n", error.what());
+            std::abort();
         }
+    }
 
-        // This intentionally remains a simple line-oriented format for the current C++ implementation. It is not a
-        // durable storage engine; it captures enough state for restart and mixed Java/C++ smoke validation.
+    void PersistentStateStore::save(const RaftNode &node) const {
+        std::scoped_lock lock(mutex_);
+        // Capture while holding the publication lock: an older concurrent
+        // snapshot cannot overwrite a newer term or acknowledged log prefix.
+        try { save_locked(node.persistent_state()); }
+        catch (const std::exception &error) {
+            std::fprintf(stderr, "Raft persistence failed: %s\n", error.what());
+            std::abort();
+        }
+    }
+
+    void PersistentStateStore::save_locked(const RaftNode::PersistentState &state) const {
+        std::ostringstream out;
         out << "peer_id=" << escape(state.peer_id) << '\n';
         out << "current_term=" << state.current_term << '\n';
         out << "voted_for=" << escape(state.voted_for.value_or("")) << '\n';
@@ -85,9 +106,30 @@ namespace graft {
                     ',' << (progress.reachable ? 1 : 0) << ',' << progress.consecutive_failures <<
                     '\n';
         }
+            const auto record = out.str();
+        const auto parent = path_.has_parent_path() ? path_.parent_path() : std::filesystem::path(".");
+        std::filesystem::create_directories(parent);
+        const auto temporary = path_.string() + ".tmp";
+        int fd = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (fd < 0) throw std::system_error(errno, std::generic_category(), "open Raft temporary record");
+        std::size_t offset = 0;
+        while (offset < record.size()) {
+            const auto written = ::write(fd, record.data() + offset, record.size() - offset);
+            if (written < 0 && errno == EINTR) continue;
+            if (written <= 0) { const auto error = errno; ::close(fd); throw std::system_error(error, std::generic_category(), "write Raft record"); }
+            offset += static_cast<std::size_t>(written);
+        }
+        if (::fsync(fd) != 0) { const auto error = errno; ::close(fd); throw std::system_error(error, std::generic_category(), "sync Raft record"); }
+        if (::close(fd) != 0) throw std::system_error(errno, std::generic_category(), "close Raft record");
+        std::filesystem::rename(temporary, path_);
+        const int directory = ::open(parent.c_str(), O_RDONLY);
+        if (directory < 0) throw std::system_error(errno, std::generic_category(), "open Raft directory");
+        const auto synced = ::fsync(directory); const auto error = errno; ::close(directory);
+        if (synced != 0) throw std::system_error(error, std::generic_category(), "sync Raft directory");
     }
 
     std::optional<RaftNode::PersistentState> PersistentStateStore::load() const {
+        std::scoped_lock lock(mutex_);
         if (!exists()) {
             return std::nullopt;
         }
@@ -99,6 +141,7 @@ namespace graft {
 
         RaftNode::PersistentState state;
         std::string line;
+        std::unordered_set<std::string> fields;
         while (std::getline(in, line)) {
             // Unknown keys are ignored so newer state files can be read by older code
             // for fields that are not safety-critical.
@@ -108,6 +151,7 @@ namespace graft {
             }
             const auto key = line.substr(0, pos);
             const auto value = unescape(line.substr(pos + 1));
+            fields.insert(key);
             if (key == "peer_id") {
                 state.peer_id = value;
             } else if (key == "current_term") {
@@ -222,6 +266,10 @@ namespace graft {
             }
         }
 
+        for (const auto *required: {"peer_id", "current_term", "voted_for", "last_log_index", "last_log_term", "commit_index", "snapshot_index", "snapshot_term", "last_applied"}) {
+            if (!fields.contains(required)) throw std::runtime_error("incomplete Raft state file: " + path_.string());
+        }
+        if (in.bad()) throw std::runtime_error("failed reading Raft state file: " + path_.string());
         if (state.peer_id.empty()) {
             throw std::runtime_error("state file missing peer_id: " + path_.string());
         }

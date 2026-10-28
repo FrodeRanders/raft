@@ -543,12 +543,12 @@ fn run_server(
     let sm = Arc::new(KeyValueStateMachine::new());
     let raft_node = Arc::new(parking_lot::Mutex::new(RaftNode::new(
         me,
-        500,
+        1500, // Must exceed the shared runtime's 750ms heartbeat interval.
         log_store,
         state_store,
         Some(sm),
         config,
-        100,
+        workload.map(|(_, threshold)| threshold).unwrap_or(100),
         1024,
     )));
 
@@ -574,7 +574,7 @@ fn run_server(
         });
 
         // ── Synthetic workload (optional) ──
-        if let Some((interval_ms, threshold)) = workload {
+        if let Some((interval_ms, _)) = workload {
             let wl_runtime = runtime.clone();
             rt_handle.spawn(async move {
                 let mut counter: u64 = 0;
@@ -593,29 +593,9 @@ fn run_server(
                             },
                         )),
                     };
-                    if let Ok(_idx) = wl_runtime.submit_command(cmd.encode_to_vec()) {
-                        // Auto-compaction: check if uncompacted entries exceed threshold
-                        let node = wl_runtime.node.lock();
-                        if node.commit_index > 0
-                            && node
-                                .commit_index
-                                .saturating_sub(node.log_store.snapshot_index())
-                                >= threshold
-                        {
-                            drop(node);
-                            // Force compaction check (normally done in apply_committed_entries)
-                            let mut n = wl_runtime.node.lock();
-                            if let Some(ref sm) = n.state_machine {
-                                let snap = sm.snapshot();
-                                if !snap.is_empty() {
-                                    let term = n.log_store.term_at(n.commit_index);
-                                    n.log_store.compact_up_to(n.commit_index);
-                                    n.log_store.install_snapshot(n.commit_index, term, snap);
-                                    n.snapshot_configuration = n.cluster_configuration.clone();
-                                }
-                            }
-                        }
-                    }
+                    // The core compacts after application, publishing its
+                    // membership envelope and retained suffix atomically.
+                    let _ = wl_runtime.submit_command(cmd.encode_to_vec());
                 }
             });
         }

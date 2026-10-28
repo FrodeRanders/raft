@@ -201,6 +201,17 @@
     (docker-compose! test "stop" (str node))
     (local-stop-node! test node)))
 
+(defn crash-node! [test node]
+  ;; Fault injection must bypass shutdown hooks. Keep orderly stop for normal
+  ;; lifecycle/teardown, but do not call it a crash.
+  (if (docker-backend? test)
+    (docker-compose! test "kill" "--signal" "SIGKILL" (str node))
+    (when-let [^Process process (get @processes node)]
+      (.destroyForcibly process)
+      (when-not (.waitFor process 5 java.util.concurrent.TimeUnit/SECONDS)
+        (throw (ex-info "Crashed node did not exit" {:node node :pid (.pid process)})))
+      (swap! processes dissoc node))))
+
 (defn- signal-local-node! [node signal]
   (if-let [^Process process (get @processes node)]
     (let [pid (.pid process)
@@ -486,27 +497,32 @@
     (log-files [_ test node]
       [(.getAbsolutePath (node-log-file test node))])))
 
+(defn- docker-connected? [test node]
+  (contains? (json/parse-string
+               (docker! test "inspect" "--format" "{{json .NetworkSettings.Networks}}" (str node)))
+             (docker-network test)))
+
 (defn docker-isolate-nodes! [test nodes]
   ;; A Docker/SRV partition is modeled by disconnecting containers from the
   ;; Compose network. This blocks peer traffic and host client probes for those
   ;; nodes while leaving their process and volume intact.
   (let [nodes (vec nodes)]
     (doseq [node nodes]
-      (try
-        (docker! test "network" "disconnect" (docker-network test) (str node))
-        (catch Throwable _
-          nil)))
-    (swap! docker-state update :isolated-nodes into nodes)
+      (when (docker-connected? test node)
+        (docker! test "network" "disconnect" (docker-network test) (str node)))
+      (when (docker-connected? test node)
+        (throw (ex-info "Docker node remains connected after isolation" {:node node})))
+      (swap! docker-state update :isolated-nodes conj node))
     {:nodes nodes
      :network (docker-network test)}))
 
 (defn docker-heal-isolation! [test isolation]
   (doseq [node (:nodes isolation)]
-    (try
-      (docker! test "network" "connect" "--ip" (docker-node-ip test node) (docker-network test) (str node))
-      (catch Throwable _
-        nil)))
-  (swap! docker-state update :isolated-nodes #(apply disj % (:nodes isolation))))
+    (when-not (docker-connected? test node)
+      (docker! test "network" "connect" "--ip" (docker-node-ip test node) (docker-network test) (str node)))
+    (when-not (docker-connected? test node)
+      (throw (ex-info "Docker node remains disconnected after healing" {:node node})))
+    (swap! docker-state update :isolated-nodes disj node)))
 
 (defn docker-db []
   (reify db/DB

@@ -15,282 +15,158 @@
  * limitations under the License.
  */
 
-use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-
-use graft_core::raft_node::{
-    LogStore as LogStoreTrait, PersistentStateStore as PersistentStateStoreTrait,
-};
+use graft_core::raft_node::LogStore as LogStoreTrait;
+use graft_core::raft_node::PersistentStateStore as PersistentStateStoreTrait;
 use graft_core::types::LogEntry;
+use std::{fs, io::ErrorKind, path::PathBuf, sync::Mutex};
 
-/// A file-backed Raft log store that persists log entries and snapshot
-/// metadata to disk. Uses a simple line-oriented key=value format for
-/// debuggability, mirroring the C++ `PersistentStateStore`.
-///
-/// ## File format
-///
-/// ```text
-/// snapshot_index=10
-/// snapshot_term=3
-/// snapshot_data=<base64>
-/// log_entry=<index>,<term>,<base64-data>
-/// ...
-/// ```
-///
-/// The file is rewritten on every mutation. This is intentionally simple,
-/// not a production-grade append-only log. It captures enough state for
-/// restart recovery and mixed-language smoke validation.
+/// Snapshot metadata, bytes and retained entries share one atomic durable record.
 pub struct FileLogStore {
     path: PathBuf,
-    /// In-memory copy of the log entries. The file is the source of truth;
-    /// this is the working copy.
-    entries: Mutex<Vec<LogEntry>>,
-    snapshot_index: Mutex<u64>,
-    snapshot_term: Mutex<u64>,
-    snapshot_data: Mutex<Vec<u8>>,
+    inner: InMemoryLogStore,
+    mutation: Mutex<()>,
 }
 
 impl FileLogStore {
-    /// Opens or creates a log store at the given file path. If the file
-    /// already exists, the stored state is loaded.
     pub fn new(path: PathBuf) -> Self {
         let store = Self {
             path,
-            entries: Mutex::new(Vec::new()),
-            snapshot_index: Mutex::new(0),
-            snapshot_term: Mutex::new(0),
-            snapshot_data: Mutex::new(Vec::new()),
+            inner: InMemoryLogStore::new(),
+            mutation: Mutex::new(()),
         };
-        store.load();
+        match fs::read_to_string(&store.path) {
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => panic!("cannot open Raft log {}: {e}", store.path.display()),
+            Ok(content) => {
+                let mut index = None;
+                let mut term = None;
+                let mut data = None;
+                let mut entries = Vec::new();
+                for line in content.lines() {
+                    let (key, value) = line.split_once('=').expect("malformed Raft log");
+                    match key {
+                        "snapshot_index" if index.is_none() => {
+                            index = Some(value.parse::<u64>().expect("invalid snapshot index"))
+                        }
+                        "snapshot_term" if term.is_none() => {
+                            term = Some(value.parse::<u64>().expect("invalid snapshot term"))
+                        }
+                        "snapshot_data" if data.is_none() => data = Some(decode_checked(value)),
+                        "log_entry" => {
+                            let fields: Vec<_> = value.split(',').collect();
+                            assert!(
+                                fields.len() == 3 || fields.len() == 4,
+                                "invalid Raft log entry"
+                            );
+                            let expected = index
+                                .expect("snapshot metadata must precede log entries")
+                                + entries.len() as u64
+                                + 1;
+                            assert_eq!(
+                                fields[0].parse::<u64>().expect("invalid entry index"),
+                                expected,
+                                "noncontiguous Raft log"
+                            );
+                            let peer = if fields.len() == 4 {
+                                String::from_utf8(decode_checked(fields[3]))
+                                    .expect("invalid peer id")
+                            } else {
+                                String::new()
+                            };
+                            entries.push(LogEntry::new(
+                                fields[1].parse().expect("invalid entry term"),
+                                peer,
+                                decode_checked(fields[2]),
+                            ));
+                        }
+                        _ => panic!("unknown or duplicate Raft log field"),
+                    }
+                }
+                store.inner.install_snapshot(
+                    index.expect("missing snapshot index"),
+                    term.expect("missing snapshot term"),
+                    data.expect("missing snapshot bytes"),
+                );
+                store.inner.append(entries);
+            }
+        }
         store
     }
 
-    fn load(&self) {
-        if !self.path.exists() {
-            return;
-        }
-        let file = match fs::File::open(&self.path) {
-            Ok(f) => f,
-            Err(_) => return,
-        };
-        let reader = BufReader::new(file);
-
-        let mut snapshot_index = 0u64;
-        let mut snapshot_term = 0u64;
-        let mut snapshot_data = Vec::new();
-        let mut entries = Vec::new();
-
-        for line in reader.lines() {
-            let line = match line {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
-            if let Some((key, value)) = line.split_once('=') {
-                match key.trim() {
-                    "snapshot_index" => {
-                        snapshot_index = value.trim().parse().unwrap_or(0);
-                    }
-                    "snapshot_term" => {
-                        snapshot_term = value.trim().parse().unwrap_or(0);
-                    }
-                    "snapshot_data" => {
-                        snapshot_data = base64_decode(value.trim());
-                    }
-                    "log_entry" => {
-                        // Format: index,term,base64-data
-                        let parts: Vec<&str> = value.splitn(3, ',').collect();
-                        if parts.len() >= 2 {
-                            let term = parts[1].trim().parse().unwrap_or(0);
-                            let data = if parts.len() > 2 {
-                                base64_decode(parts[2].trim())
-                            } else {
-                                Vec::new()
-                            };
-                            // Peer id is lost across restarts in this simple
-                            // format. Use empty string.
-                            entries.push(LogEntry::new(term, String::new(), data));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        *self.snapshot_index.lock().unwrap() = snapshot_index;
-        *self.snapshot_term.lock().unwrap() = snapshot_term;
-        *self.snapshot_data.lock().unwrap() = snapshot_data;
-        *self.entries.lock().unwrap() = entries;
-    }
-
     fn save(&self) {
-        if let Some(parent) = self.path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let tmp_path = temporary_path(&self.path);
-        let mut f = match OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&tmp_path)
-        {
-            Ok(f) => f,
-            Err(_) => return,
-        };
-
-        let si = *self.snapshot_index.lock().unwrap();
-        let st = *self.snapshot_term.lock().unwrap();
-        let sd = self.snapshot_data.lock().unwrap().clone();
-        let entries = self.entries.lock().unwrap();
-
-        writeln!(f, "snapshot_index={}", si).ok();
-        writeln!(f, "snapshot_term={}", st).ok();
-        writeln!(f, "snapshot_data={}", base64_encode(&sd)).ok();
-        for (i, entry) in entries.iter().enumerate() {
-            let logical_idx = si + i as u64 + 1;
-            writeln!(
-                f,
-                "log_entry={},{},{}",
-                logical_idx,
+        let index = self.inner.snapshot_index();
+        let mut record = format!(
+            "snapshot_index={}\nsnapshot_term={}\nsnapshot_data={}\n",
+            index,
+            self.inner.snapshot_term(),
+            base64_encode(&self.inner.snapshot_data())
+        );
+        for (offset, entry) in self.inner.entries_from(index + 1).iter().enumerate() {
+            record.push_str(&format!(
+                "log_entry={},{},{},{}\n",
+                index + offset as u64 + 1,
                 entry.term,
-                base64_encode(&entry.data)
-            )
-            .ok();
+                base64_encode(&entry.data),
+                base64_encode(entry.peer_id.as_bytes())
+            ));
         }
-        f.flush().ok();
-        f.sync_all().ok();
-        drop(f);
-        if fs::rename(&tmp_path, &self.path).is_ok() {
-            sync_parent_dir(&self.path);
-        } else {
-            let _ = fs::remove_file(&tmp_path);
-        }
+        crate::durable::persist(&self.path, record.as_bytes());
     }
 }
 
-fn temporary_path(path: &Path) -> PathBuf {
-    let mut tmp = path.to_path_buf();
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| format!("{}.tmp", ext))
-        .unwrap_or_else(|| "tmp".to_string());
-    tmp.set_extension(extension);
-    tmp
-}
-
-fn sync_parent_dir(path: &Path) {
-    if let Some(parent) = path.parent() {
-        if let Ok(dir) = fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
-    }
+fn decode_checked(value: &str) -> Vec<u8> {
+    let data = base64_decode(value);
+    assert_eq!(
+        base64_encode(&data).trim_end_matches('='),
+        value.trim_end_matches('='),
+        "invalid Raft base64"
+    );
+    data
 }
 
 impl LogStoreTrait for FileLogStore {
     fn snapshot_index(&self) -> u64 {
-        *self.snapshot_index.lock().unwrap()
+        self.inner.snapshot_index()
     }
     fn snapshot_term(&self) -> u64 {
-        *self.snapshot_term.lock().unwrap()
+        self.inner.snapshot_term()
     }
     fn last_index(&self) -> u64 {
-        let entries = self.entries.lock().unwrap();
-        let si = *self.snapshot_index.lock().unwrap();
-        if entries.is_empty() {
-            si
-        } else {
-            si + entries.len() as u64
-        }
+        self.inner.last_index()
     }
     fn last_term(&self) -> u64 {
-        let entries = self.entries.lock().unwrap();
-        entries
-            .last()
-            .map(|e| e.term)
-            .unwrap_or_else(|| *self.snapshot_term.lock().unwrap())
+        self.inner.last_term()
     }
     fn term_at(&self, index: u64) -> u64 {
-        if index == 0 {
-            return 0;
-        }
-        let si = *self.snapshot_index.lock().unwrap();
-        if index == si {
-            return *self.snapshot_term.lock().unwrap();
-        }
-        if index < si {
-            return 0;
-        }
-        let entries = self.entries.lock().unwrap();
-        let local = (index - si - 1) as usize;
-        entries.get(local).map(|e| e.term).unwrap_or(0)
+        self.inner.term_at(index)
     }
     fn entry_at(&self, index: u64) -> Option<LogEntry> {
-        let si = *self.snapshot_index.lock().unwrap();
-        if index <= si {
-            return None;
-        }
-        let entries = self.entries.lock().unwrap();
-        let local = (index - si - 1) as usize;
-        entries.get(local).cloned()
+        self.inner.entry_at(index)
     }
-    fn append(&self, new_entries: Vec<LogEntry>) {
-        self.entries.lock().unwrap().extend(new_entries);
+    fn entries_from(&self, index: u64) -> Vec<LogEntry> {
+        self.inner.entries_from(index)
+    }
+    fn snapshot_data(&self) -> Vec<u8> {
+        self.inner.snapshot_data()
+    }
+    fn append(&self, entries: Vec<LogEntry>) {
+        let _guard = self.mutation.lock().unwrap();
+        self.inner.append(entries);
         self.save();
     }
     fn truncate_from(&self, index: u64) {
-        let si = *self.snapshot_index.lock().unwrap();
-        if index <= si {
-            return;
-        }
-        let mut entries = self.entries.lock().unwrap();
-        let local = (index - si - 1) as usize;
-        if local < entries.len() {
-            entries.truncate(local);
-        }
+        let _guard = self.mutation.lock().unwrap();
+        self.inner.truncate_from(index);
         self.save();
-    }
-    fn entries_from(&self, index: u64) -> Vec<LogEntry> {
-        let si = *self.snapshot_index.lock().unwrap();
-        if index <= si {
-            return vec![];
-        }
-        let entries = self.entries.lock().unwrap();
-        let local = (index - si - 1) as usize;
-        if local >= entries.len() {
-            return vec![];
-        }
-        entries[local..].to_vec()
     }
     fn compact_up_to(&self, index: u64) {
-        let si = *self.snapshot_index.lock().unwrap();
-        if index <= si {
-            return;
-        }
-        let remove_count = (index - si) as usize;
-        let mut entries = self.entries.lock().unwrap();
-        if remove_count <= entries.len() {
-            entries.drain(0..remove_count);
-        } else {
-            entries.clear();
-        }
-        *self.snapshot_index.lock().unwrap() = index;
+        let _guard = self.mutation.lock().unwrap();
+        self.inner.compact_up_to(index);
         self.save();
     }
-    fn snapshot_data(&self) -> Vec<u8> {
-        self.snapshot_data.lock().unwrap().clone()
-    }
-    fn install_snapshot(
-        &self,
-        last_included_index: u64,
-        last_included_term: u64,
-        snapshot_data: Vec<u8>,
-    ) {
-        *self.snapshot_index.lock().unwrap() = last_included_index;
-        *self.snapshot_term.lock().unwrap() = last_included_term;
-        *self.snapshot_data.lock().unwrap() = snapshot_data;
-        self.entries.lock().unwrap().clear();
+    fn install_snapshot(&self, index: u64, term: u64, data: Vec<u8>) {
+        let _guard = self.mutation.lock().unwrap();
+        self.inner.install_snapshot(index, term, data);
         self.save();
     }
 }
@@ -447,27 +323,30 @@ impl LogStoreTrait for InMemoryLogStore {
         entries[local..].to_vec()
     }
     fn compact_up_to(&self, index: u64) {
-        let si = *self.snapshot_index.lock().unwrap();
-        if index <= si {
+        if index <= self.snapshot_index() {
             return;
         }
-        let remove_count = (index - si) as usize;
-        let mut entries = self.entries.lock().unwrap();
-        if remove_count <= entries.len() {
-            entries.drain(0..remove_count);
-        } else {
-            entries.clear();
-        }
-        *self.snapshot_index.lock().unwrap() = index;
+        assert!(index <= self.last_index(), "snapshot exceeds log");
+        self.install_snapshot(index, self.term_at(index), self.snapshot_data());
     }
     fn snapshot_data(&self) -> Vec<u8> {
         self.snapshot_data.lock().unwrap().clone()
     }
-    fn install_snapshot(&self, li: u64, lt: u64, sd: Vec<u8>) {
-        *self.snapshot_index.lock().unwrap() = li;
-        *self.snapshot_term.lock().unwrap() = lt;
-        *self.snapshot_data.lock().unwrap() = sd;
-        self.entries.lock().unwrap().clear();
+    fn install_snapshot(&self, index: u64, term: u64, data: Vec<u8>) {
+        let base = self.snapshot_index();
+        if index < base {
+            return;
+        }
+        let matching = self.term_at(index) == term;
+        let mut entries = self.entries.lock().unwrap();
+        if matching && index <= base + entries.len() as u64 {
+            entries.drain(..(index - base) as usize);
+        } else {
+            entries.clear();
+        }
+        *self.snapshot_index.lock().unwrap() = index;
+        *self.snapshot_term.lock().unwrap() = term;
+        *self.snapshot_data.lock().unwrap() = data;
     }
 }
 

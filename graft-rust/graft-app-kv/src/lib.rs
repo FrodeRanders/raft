@@ -19,7 +19,8 @@
 //!
 //! Uses protobuf `StateMachineCommand` / `StateMachineQuery` for
 //! wire-compatibility with the Java and C++ implementations.
-//! Internal snapshot serialization uses JSON (deterministic key order).
+//! Snapshots use the shared Java/C++ binary format. Earlier local JSON
+//! snapshots remain readable during recovery.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -135,21 +136,20 @@ impl StateMachine for KeyValueStateMachine {
 
     fn snapshot(&self) -> Vec<u8> {
         let store = self.store.lock().unwrap();
-        // Use sorted keys for deterministic output
-        let mut keys: Vec<&String> = store.keys().collect();
-        keys.sort();
-        let ordered: Vec<(&String, &Vec<u8>)> = keys.iter().map(|k| (*k, &store[*k])).collect();
-        serde_json::to_vec(&ordered).unwrap_or_default()
+        graft_core::snapshot_codec::serialize_key_value_snapshot(&store)
     }
 
     fn restore(&self, snapshot_data: &[u8]) {
-        if let Ok(pairs) = serde_json::from_slice::<Vec<(String, Vec<u8>)>>(snapshot_data) {
-            let mut store = self.store.lock().unwrap();
-            store.clear();
-            for (key, value) in pairs {
-                store.insert(key, value);
-            }
-        }
+        let restored = if snapshot_data.first() == Some(&b'[') {
+            serde_json::from_slice::<Vec<(String, Vec<u8>)>>(snapshot_data)
+                .expect("invalid legacy key-value snapshot")
+                .into_iter()
+                .collect()
+        } else {
+            graft_core::snapshot_codec::deserialize_key_value_snapshot(snapshot_data)
+                .expect("invalid shared key-value snapshot")
+        };
+        *self.store.lock().unwrap() = restored;
     }
 
     fn as_queryable(&self) -> Option<&dyn QueryableStateMachine> {
@@ -298,6 +298,8 @@ mod tests {
         sm.apply(1, &put.encode_to_vec());
 
         let snap = sm.snapshot();
+        // DataOutputStream: one entry, writeUTF("k"), writeUTF("v1").
+        assert_eq!(snap, b"\0\0\0\x01\0\x01k\0\x02v1");
         let sm2 = KeyValueStateMachine::new();
         sm2.restore(&snap);
 
@@ -314,5 +316,22 @@ mod tests {
         } else {
             panic!("expected Get result");
         }
+    }
+
+    #[test]
+    fn restores_shared_and_legacy_snapshots() {
+        let sm = KeyValueStateMachine::new();
+        sm.restore(b"\0\0\0\x01\0\x01k\0\x02v1");
+        assert_eq!(sm.store.lock().unwrap().get("k").unwrap(), b"v1");
+        sm.restore(br#"[["old",[118,50]]]"#);
+        let store = sm.store.lock().unwrap();
+        assert_eq!(store.len(), 1);
+        assert_eq!(store.get("old").unwrap(), b"v2");
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid shared key-value snapshot")]
+    fn rejects_invalid_snapshot_instead_of_acknowledging_old_state() {
+        KeyValueStateMachine::new().restore(b"\0\0\0\x01");
     }
 }

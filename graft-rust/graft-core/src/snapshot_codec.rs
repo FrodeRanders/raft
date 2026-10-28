@@ -17,7 +17,89 @@
 
 use std::collections::HashMap;
 
-/// Encodes arbitrary bytes as a Base64 string (standard alphabet, no padding).
+use crate::{
+    membership::ClusterConfiguration,
+    types::{Peer, Role},
+};
+
+/// Preserve voter/learner roles and transport addresses in the shared envelope.
+pub fn wrap_membership_payload(current: &[Peer], next: &[Peer], application: &[u8]) -> Vec<u8> {
+    let member = |p: &Peer| {
+        serde_json::json!({
+            "id": p.id,
+            "role": if p.is_voter() { "VOTER" } else { "LEARNER" },
+            "address": { "host": p.address.ip().to_string(), "port": p.address.port() }
+        })
+    };
+    serde_json::to_vec(&serde_json::json!({
+        "version": 1,
+        "currentMembers": current.iter().map(member).collect::<Vec<_>>(),
+        "nextMembers": next.iter().map(member).collect::<Vec<_>>(),
+        "stateMachineSnapshot": base64_encode(application)
+    }))
+    .expect("encode Raft snapshot")
+}
+
+/// Raw application snapshots have no envelope. A malformed Raft envelope is
+/// rejected rather than silently restoring it as application state.
+pub fn decode_membership_payload(payload: &[u8]) -> Option<(ClusterConfiguration, Vec<u8>)> {
+    let value: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    if value.get("stateMachineSnapshot").is_none() {
+        return None;
+    }
+    assert_eq!(
+        value["version"].as_u64(),
+        Some(1),
+        "unsupported Raft snapshot"
+    );
+    let peers = |key: &str| {
+        value[key]
+            .as_array()
+            .expect("missing snapshot members")
+            .iter()
+            .map(|p| {
+                let id = p["id"].as_str().expect("missing snapshot peer id");
+                assert!(!id.is_empty(), "empty snapshot peer id");
+                let role = match p["role"].as_str() {
+                    Some("LEARNER") => Role::Learner,
+                    Some("VOTER") => Role::Voter,
+                    _ => panic!("invalid snapshot peer role"),
+                };
+                let address = if p["address"].is_null() {
+                    "0.0.0.0:0".parse().unwrap()
+                } else {
+                    let ip = p["address"]["host"]
+                        .as_str()
+                        .expect("missing snapshot host")
+                        .parse()
+                        .expect("invalid snapshot host");
+                    let port = u16::try_from(
+                        p["address"]["port"]
+                            .as_u64()
+                            .expect("missing snapshot port"),
+                    )
+                    .expect("invalid snapshot port");
+                    std::net::SocketAddr::new(ip, port)
+                };
+                Peer::new(id.to_owned(), address, role)
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut configuration = ClusterConfiguration::stable(peers("currentMembers"));
+    let next = peers("nextMembers");
+    if !next.is_empty() {
+        configuration = configuration.transition_to(next);
+    }
+    let application = base64_decode(
+        value["stateMachineSnapshot"]
+            .as_str()
+            .expect("invalid application snapshot"),
+    )
+    .expect("invalid snapshot base64");
+    Some((configuration, application))
+}
+
+/// Encodes arbitrary bytes using the shared standard, padded Base64 grammar.
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
@@ -30,9 +112,13 @@ fn base64_encode(data: &[u8]) -> String {
         out.push(ALPHABET[((triple >> 12) & 0x3F) as usize] as char);
         if chunk.len() > 1 {
             out.push(ALPHABET[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
         }
         if chunk.len() > 2 {
             out.push(ALPHABET[(triple & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
         }
     }
     out
@@ -40,6 +126,13 @@ fn base64_encode(data: &[u8]) -> String {
 
 /// Decodes a Base64 string into bytes.
 fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let unpadded = s.trim_end_matches('=');
+    if unpadded.len() % 4 == 1
+        || s.len() - unpadded.len() > 2
+        || (s.len() != unpadded.len() && s.len() % 4 != 0)
+    {
+        return None;
+    }
     const DECODE: [i8; 128] = {
         let mut table = [-1i8; 128];
         let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -81,6 +174,9 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
             out.push(((v2 as u32) << 6 | v3 as u32) as u8);
         }
         i += 4;
+    }
+    if base64_encode(&out).trim_end_matches('=') != unpadded {
+        return None;
     }
     Some(out)
 }
@@ -203,6 +299,65 @@ fn read_u16_be(data: &[u8], offset: &mut usize) -> Option<u16> {
 
 /// Serializes a key-value map into a deterministic binary format
 /// compatible with Java's `SnapshotCodec.serializeKeyValueSnapshot`.
+fn modified_utf8(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for unit in text.encode_utf16() {
+        match unit {
+            1..=0x7f => bytes.push(unit as u8),
+            0..=0x7ff => {
+                bytes.push(0xc0 | (unit >> 6) as u8);
+                bytes.push(0x80 | (unit & 0x3f) as u8);
+            }
+            _ => {
+                bytes.push(0xe0 | (unit >> 12) as u8);
+                bytes.push(0x80 | ((unit >> 6) & 0x3f) as u8);
+                bytes.push(0x80 | (unit & 0x3f) as u8);
+            }
+        }
+    }
+    bytes
+}
+
+fn decode_modified_utf8(bytes: &[u8]) -> Option<String> {
+    // Earlier native binary helpers used ordinary UTF-8. A four-byte lead
+    // cannot occur in Java writeUTF, so it unambiguously selects that legacy form.
+    if bytes.iter().any(|b| b & 0xf8 == 0xf0) {
+        return String::from_utf8(bytes.to_vec()).ok();
+    }
+    let mut units = Vec::new();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let first = bytes[offset];
+        offset += 1;
+        let unit = if first < 0x80 {
+            first as u16
+        } else {
+            let width = if first & 0xe0 == 0xc0 {
+                2
+            } else if first & 0xf0 == 0xe0 {
+                3
+            } else {
+                return None;
+            };
+            let mut unit = (first & if width == 2 { 0x1f } else { 0x0f }) as u16;
+            for _ in 1..width {
+                let next = *bytes.get(offset)?;
+                offset += 1;
+                if next & 0xc0 != 0x80 {
+                    return None;
+                }
+                unit = (unit << 6) | (next & 0x3f) as u16;
+            }
+            if (width == 2 && unit != 0 && unit < 0x80) || (width == 3 && unit < 0x800) {
+                return None;
+            }
+            unit
+        };
+        units.push(unit);
+    }
+    String::from_utf16(&units).ok()
+}
+
 pub fn serialize_key_value_snapshot(kv: &HashMap<String, Vec<u8>>) -> Vec<u8> {
     let mut out = Vec::new();
     let mut ordered: Vec<(&String, &Vec<u8>)> = kv.iter().collect();
@@ -210,10 +365,17 @@ pub fn serialize_key_value_snapshot(kv: &HashMap<String, Vec<u8>>) -> Vec<u8> {
 
     append_u32_be(&mut out, ordered.len() as u32);
     for (key, value) in &ordered {
-        append_u16_be(&mut out, key.len() as u16);
-        out.extend_from_slice(key.as_bytes());
-        append_u16_be(&mut out, value.len() as u16);
-        out.extend_from_slice(value);
+        for text in [
+            key.as_str(),
+            std::str::from_utf8(value).expect("key-value strings must be UTF-8"),
+        ] {
+            let bytes = modified_utf8(text);
+            append_u16_be(
+                &mut out,
+                u16::try_from(bytes.len()).expect("snapshot string exceeds Java UTF length limit"),
+            );
+            out.extend_from_slice(&bytes);
+        }
     }
     out
 }
@@ -223,30 +385,51 @@ pub fn serialize_key_value_snapshot(kv: &HashMap<String, Vec<u8>>) -> Vec<u8> {
 pub fn deserialize_key_value_snapshot(data: &[u8]) -> Option<HashMap<String, Vec<u8>>> {
     let mut offset = 0;
     let count = read_u32_be(data, &mut offset)? as usize;
+    if count > (data.len() - offset) / 4 {
+        return None;
+    }
     let mut kv = HashMap::with_capacity(count);
     for _ in 0..count {
         let key_len = read_u16_be(data, &mut offset)? as usize;
         if offset + key_len > data.len() {
             return None;
         }
-        let key = String::from_utf8(data[offset..offset + key_len].to_vec()).ok()?;
+        let key = decode_modified_utf8(&data[offset..offset + key_len])?;
         offset += key_len;
 
         let val_len = read_u16_be(data, &mut offset)? as usize;
         if offset + val_len > data.len() {
             return None;
         }
-        let value = data[offset..offset + val_len].to_vec();
+        let value = decode_modified_utf8(&data[offset..offset + val_len])?.into_bytes();
         offset += val_len;
 
-        kv.insert(key, value);
+        if kv.insert(key, value).is_some() {
+            return None;
+        }
     }
-    Some(kv)
+    (offset == data.len()).then_some(kv)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn java_modified_utf_snapshot_fixture() {
+        let kv = HashMap::from([("k".into(), "\0😀".as_bytes().to_vec())]);
+        let fixture = b"\0\0\0\x01\0\x01k\0\x08\xc0\x80\xed\xa0\xbd\xed\xb8\x80";
+        assert_eq!(serialize_key_value_snapshot(&kv), fixture);
+        assert_eq!(deserialize_key_value_snapshot(fixture), Some(kv));
+        assert!(deserialize_key_value_snapshot(&[fixture.as_slice(), b"x"].concat()).is_none());
+        assert!(deserialize_key_value_snapshot(b"\xff\xff\xff\xff").is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "snapshot string exceeds Java UTF length limit")]
+    fn oversized_snapshot_string_cannot_wrap_its_length() {
+        serialize_key_value_snapshot(&HashMap::from([("k".into(), vec![b'x'; 65536])]));
+    }
 
     #[test]
     fn roundtrip_kv_snapshot() {
@@ -287,6 +470,9 @@ mod tests {
 
     #[test]
     fn base64_roundtrip() {
+        assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
+        assert!(base64_decode("YWJj!!").is_none());
+        assert!(base64_decode("====").is_none());
         let data = b"hello world";
         let enc = base64_encode(data);
         let dec = base64_decode(&enc).unwrap();

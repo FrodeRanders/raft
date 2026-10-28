@@ -50,8 +50,9 @@ pub trait StateMachine: Send + Sync {
     }
 
     /// Restores domain state from previously-produced snapshot bytes. Raft
-    /// has already restored its own metadata (term, vote, log, membership)
-    /// from the wrapper before calling this method.
+    /// unwraps its metadata separately. Restore must complete successfully
+    /// before snapshot progress is published; malformed state must not be
+    /// silently accepted while retaining the previous application contents.
     fn restore(&self, _snapshot_data: &[u8]) {}
 
     /// If this state machine also implements `QueryableStateMachine`, returns
@@ -80,7 +81,8 @@ pub trait ResultStateMachine: StateMachine {
 /// locally-consistent state.
 ///
 /// Queries are only dispatched after the runtime has established read
-/// safety for the leader (via a read lease or contact-majority barrier).
+/// safety for the leader through a newly committed and applied read fence
+/// (or the current-term single-voter fast path).
 /// Implementations should answer from local domain state and should
 /// not contact Raft peers.
 pub trait QueryableStateMachine: StateMachine {

@@ -82,7 +82,7 @@ namespace graft {
         }
 
         bool granted = false;
-        if (!decommissioned_ &&
+        if (!decommissioned_ && is_known_voting_member_locked(peer_id_) &&
             is_known_voting_member_locked(request.candidate_id()) &&
             request.term() == current_term_ &&
             candidate_log_is_up_to_date_locked(request)) {
@@ -114,8 +114,8 @@ namespace graft {
         bool success = false;
         std::int64_t match_index = 0;
         if (!decommissioned_ &&
-            is_known_voting_member_locked(request.leader_id()) &&
-            request.term() == current_term_ && prev_log_matches_locked(request.prev_log_index(),
+            accepts_leader_locked(request.leader_id()) &&
+            request.term() == current_term_ && request.prev_log_index() >= snapshot_index_ && prev_log_matches_locked(request.prev_log_index(),
                                                                        request.prev_log_term())) {
             // A valid AppendEntries request is also the leader heartbeat. It refreshes
             // leader identity and suppresses local elections.
@@ -124,27 +124,27 @@ namespace graft {
             last_activity_ = std::chrono::steady_clock::now();
             success = true;
 
-            if (request.entries_size() > 0) {
-                // Raft conflict handling: once the leader proves the previous entry, any local suffix after it
-                // is replaced by the leader's entries.
-                truncate_log_from_locked(request.prev_log_index() + 1);
-                for (int i = 0; i < request.entries_size(); ++i) {
-                    const auto &entry = request.entries(i);
-                    log_entries_.push_back(LogEntryRecord{
-                        .index = request.prev_log_index() + 1 + i,
-                        .term = entry.term(),
-                        .data = entry.data(),
-                    });
+            for (int i = 0; i < request.entries_size(); ++i) {
+                const auto index = request.prev_log_index() + 1 + i;
+                if (index <= last_log_index_ && log_term_at_locked(index) == request.entries(i).term()) continue;
+                if (index <= commit_index_) {
+                    raft::AppendEntriesResponse rejected;
+                    rejected.set_term(current_term_); rejected.set_peer_id(peer_id_); rejected.set_success(false); rejected.set_match_index(commit_index_);
+                    return rejected;
                 }
+                truncate_log_from_locked(index);
+                for (int j = i; j < request.entries_size(); ++j) {
+                    const auto &entry = request.entries(j);
+                    log_entries_.push_back(LogEntryRecord{.index=request.prev_log_index()+1+j, .term=entry.term(), .data=entry.data()});
+                }
+                break;
+            }
+            if (!log_entries_.empty()) {
                 last_log_index_ = log_entries_.back().index;
                 last_log_term_ = log_entries_.back().term;
-                previous_log_index_ = request.prev_log_index();
-                previous_log_term_ = request.prev_log_term();
                 last_entry_data_ = log_entries_.back().data;
-                match_index = last_log_index_;
-            } else {
-                match_index = request.prev_log_index();
             }
+            match_index = request.prev_log_index() + request.entries_size();
 
             commit_index_ = std::max(commit_index_, std::min(request.leader_commit(), match_index));
             apply_committed_entries_locked();
@@ -167,16 +167,25 @@ namespace graft {
 
         bool success = false;
         if (!decommissioned_ &&
-            is_known_voting_member_locked(request.leader_id()) &&
+            accepts_leader_locked(request.leader_id()) &&
             request.term() == current_term_) {
             role_ = Role::follower;
             leader_id_ = request.leader_id();
             last_activity_ = std::chrono::steady_clock::now();
+            if (request.last_included_index() <= commit_index_) {
+                raft::InstallSnapshotResponse response;
+                response.set_term(current_term_); response.set_peer_id(peer_id_); response.set_success(true);
+                response.set_last_included_index(request.last_included_index());
+                return response;
+            }
             // Snapshot chunks are accepted only in strict offset order. A new index/term or offset zero restarts
             // the pending transfer, which matches the Java side's chunked InstallSnapshot behavior.
             if (request.offset() == 0 ||
                 pending_snapshot_index_ != request.last_included_index() ||
-                pending_snapshot_term_ != request.last_included_term()) {
+                pending_snapshot_term_ != request.last_included_term() ||
+                pending_snapshot_leader_ != request.leader_id() || pending_snapshot_leader_term_ != request.term()) {
+                pending_snapshot_leader_ = request.leader_id();
+                pending_snapshot_leader_term_ = request.term();
                 pending_snapshot_index_ = request.last_included_index();
                 pending_snapshot_term_ = request.last_included_term();
                 pending_snapshot_data_.clear();
@@ -188,6 +197,16 @@ namespace graft {
             }
 
             if (success && request.done()) {
+                const auto decoded = graft::SnapshotCodec::decode_payload(pending_snapshot_data_);
+                try { application_->restore(decoded->state_machine_snapshot); }
+                catch (...) { decommissioned_ = true; role_ = Role::follower; throw; }
+                const bool matching_suffix = request.last_included_index() <= last_log_index_ &&
+                    log_term_at_locked(request.last_included_index()) == request.last_included_term();
+                if (!matching_suffix) {
+                    log_entries_.clear();
+                    last_log_index_ = request.last_included_index();
+                    last_log_term_ = request.last_included_term();
+                }
                 snapshot_index_ = request.last_included_index();
                 snapshot_term_ = request.last_included_term();
                 snapshot_data_ = pending_snapshot_data_;
@@ -206,35 +225,18 @@ namespace graft {
 
                 // Restore membership from the snapshot envelope so this follower
                 // has the correct cluster configuration at the compaction boundary.
-                if (auto decoded = graft::SnapshotCodec::decode_payload(snapshot_data_); decoded.has_value()) {
-                    if (!decoded->current_members.empty()) {
-                        std::vector<raft::PeerSpec> members;
-                        members.reserve(decoded->current_members.size());
-                        for (const auto &id: decoded->current_members) {
-                            auto *spec = &members.emplace_back();
-                            spec->set_id(id);
-                            spec->set_role("VOTER");
-                        }
-                        current_members_ = ClusterMembership::normalize_member_specs(std::move(members));
-                    }
-                    if (!decoded->next_members.empty()) {
-                        std::vector<raft::PeerSpec> members;
-                        members.reserve(decoded->next_members.size());
-                        for (const auto &id: decoded->next_members) {
-                            auto *spec = &members.emplace_back();
-                            spec->set_id(id);
-                            spec->set_role("VOTER");
-                        }
-                        next_members_ = ClusterMembership::normalize_member_specs(std::move(members));
+                if (decoded.has_value()) {
+                    if (!decoded->current_member_specs.empty()) {
+                        membership_authoritative_ = true;
+                        current_members_ = ClusterMembership::normalize_member_specs(decoded->current_member_specs);
+                        next_members_ = ClusterMembership::normalize_member_specs(decoded->next_member_specs);
                         joint_consensus_ = !next_members_.empty();
-                    } else {
-                        next_members_.clear();
-                        joint_consensus_ = false;
                     }
+                    decommissioned_ = std::none_of(current_members_.begin(), current_members_.end(), [this](const auto &p){return p.id()==peer_id_;})
+                        && std::none_of(next_members_.begin(), next_members_.end(), [this](const auto &p){return p.id()==peer_id_;});
                     refresh_voting_peers_from_members_locked();
                 }
 
-                apply_snapshot_to_state_machine_locked();
                 last_applied_ = std::max(last_applied_, snapshot_index_);
             }
         }
@@ -249,7 +251,7 @@ namespace graft {
 
     bool RaftNode::compact_snapshot_to(std::int64_t index, std::string) {
         std::scoped_lock lock(mu_);
-        if (index <= snapshot_index_ || index > commit_index_) {
+        if (index <= snapshot_index_ || index != commit_index_ || index != last_applied_) {
             return false;
         }
 
@@ -293,7 +295,9 @@ namespace graft {
 
     std::vector<std::string> RaftNode::voting_peers() const {
         std::scoped_lock lock(mu_);
-        return voting_peers_;
+        auto peers = active_voting_members_locked();
+        std::erase(peers, peer_id_);
+        return peers;
     }
 
     std::vector<std::string> RaftNode::current_voting_members() const {
@@ -317,12 +321,12 @@ namespace graft {
 
     std::vector<raft::PeerSpec> RaftNode::current_member_specs() const {
         std::scoped_lock lock(mu_);
-        return current_members_;
+        return configuration_at_locked(last_log_index_).first;
     }
 
     std::vector<raft::PeerSpec> RaftNode::next_member_specs() const {
         std::scoped_lock lock(mu_);
-        return next_members_;
+        return configuration_at_locked(last_log_index_).second;
     }
 
     bool RaftNode::joint_consensus() const {
@@ -483,7 +487,8 @@ namespace graft {
             step_down_locked(response.term(), std::nullopt);
             return false;
         }
-        if (role_ != Role::leader || response.term() != current_term_) {
+        if (role_ != Role::leader || response.term() != current_term_ || response.peer_id() != peer_id ||
+            !peer_progress_.contains(peer_id) || peer_id == peer_id_ || response.match_index() > last_log_index_) {
             return false;
         }
 
@@ -504,40 +509,18 @@ namespace graft {
         // heartbeat will send InstallSnapshot instead of AppendEntries.
         const auto rejected_match = response.match_index();
         if (rejected_match <= snapshot_index_) {
-            progress.next_index = snapshot_index_;
+            progress.next_index = std::max(snapshot_index_, progress.match_index + 1);
         } else {
-            progress.next_index = std::max(snapshot_index_ + 1, progress.next_index - 1);
+            progress.next_index = std::max({snapshot_index_ + 1, progress.next_index - 1, progress.match_index + 1});
         }
         return false;
     }
 
-    bool RaftNode::can_serve_linearizable_read(std::int64_t lease_millis) const {
+    bool RaftNode::can_serve_linearizable_read(std::int64_t) const {
         std::scoped_lock lock(mu_);
-        if (role_ != Role::leader || decommissioned_) {
-            return false;
-        }
-        if (last_applied_ < commit_index_) {
-            // A leader with unapplied committed entries could answer from stale local
-            // application state even if its lease is fresh.
-            return false;
-        }
-        std::unordered_set<std::string> fresh_voters;
-        fresh_voters.insert(peer_id_);
-        if (has_joint_majority_locked(fresh_voters)) {
-            // Single-voter clusters have a quorum with the leader alone.
-            return true;
-        }
-
-        // The lease is derived from recent successful contact, not from wall-clock
-        // promises made by other nodes. Runtime refreshes this by sending heartbeats.
-        const auto freshness_cutoff = std::max<std::int64_t>(0, current_time_millis() - std::max<std::int64_t>(1, lease_millis));
-        for (const auto &peer_id: voting_peers_) {
-            const auto found = peer_progress_.find(peer_id);
-            if (found != peer_progress_.end() && found->second.last_successful_contact_millis >= freshness_cutoff) {
-                fresh_voters.insert(peer_id);
-            }
-        }
-        return has_joint_majority_locked(fresh_voters);
+        return role_ == Role::leader && !decommissioned_ && is_known_voting_member_locked(peer_id_)
+            && commit_index_ > 0 && last_applied_ == commit_index_ && log_term_at_locked(commit_index_) == current_term_
+            && has_joint_majority_locked(std::unordered_set<std::string>{peer_id_});
     }
 
     raft::InstallSnapshotRequest RaftNode::make_install_snapshot_request_for(const std::string &peer_id) const {
@@ -563,7 +546,8 @@ namespace graft {
             step_down_locked(response.term(), std::nullopt);
             return false;
         }
-        if (role_ != Role::leader || response.term() != current_term_) {
+        if (role_ != Role::leader || response.term() != current_term_ || response.peer_id() != peer_id ||
+            !peer_progress_.contains(peer_id) || peer_id == peer_id_ || response.last_included_index() > last_log_index_) {
             return false;
         }
 
@@ -590,6 +574,7 @@ namespace graft {
 
     std::int64_t RaftNode::append_local_entry(std::string data) {
         std::scoped_lock lock(mu_);
+        if (role_ != Role::leader || decommissioned_ || !is_known_voting_member_locked(peer_id_)) return 0;
         // Appending locally is only the first half of a write. Client-facing success is
         // reported later, after replication has advanced commit_index_ and the state
         // machine has applied the entry.
@@ -607,6 +592,11 @@ namespace graft {
         peer_progress_[peer_id_].next_index = last_log_index_ + 1;
         peer_progress_[peer_id_].reachable = true;
         peer_progress_[peer_id_].consecutive_failures = 0;
+        for (const auto &member: active_voting_members_locked()) {
+            if (member != peer_id_) peer_progress_.try_emplace(member, PeerProgress{.next_index=last_log_index_ + 1});
+        }
+        update_commit_index_locked();
+        apply_committed_entries_locked();
         return last_log_index_;
     }
 
@@ -724,6 +714,16 @@ namespace graft {
         return applied_command_result_at_locked(index);
     }
 
+    std::optional<std::string> RaftNode::committed_command_result(std::int64_t index, std::int64_t term) const {
+        std::scoped_lock lock(mu_);
+        // Committing this leader's removal can step it down in the same term.
+        // Commitment/application still prove completion; a later term cannot
+        // complete this handle merely by committing a replacement at its index.
+        if (index <= 0 || current_term_ != term ||
+            commit_index_ < index || last_applied_ < index) return std::nullopt;
+        return applied_command_result_at_locked(index);
+    }
+
     std::optional<RaftNode::CommandCommitResult> RaftNode::append_and_commit_local_command(const std::string &data) {
         std::scoped_lock lock(mu_);
         if (role_ != Role::leader || quorum_size_locked() != 1) {
@@ -797,6 +797,7 @@ namespace graft {
 
     void RaftNode::apply_persistent_state(const PersistentState &state) {
         std::scoped_lock lock(mu_);
+        membership_authoritative_ = true;
         // Restore the exact durable Raft state first. The role is derived afterward so
         // stale volatile leadership does not accidentally survive a restart.
         peer_id_ = state.peer_id;
@@ -840,7 +841,8 @@ namespace graft {
             // synthetic log suffix so consistency checks have deterministic terms.
             seed_bootstrap_log_locked();
         }
-        role_ = !decommissioned_ && leader_id_.has_value() && *leader_id_ == peer_id_ ? Role::leader : Role::follower;
+        role_ = Role::follower;
+        leader_id_.reset();
         last_activity_ = std::chrono::steady_clock::now();
         normalize_voting_peers_locked();
         if (current_members_.empty()) {
@@ -870,15 +872,6 @@ namespace graft {
         }
         normalize_voting_peers_locked();
         reset_peer_progress_locked();
-        for (const auto &[peer_id, progress]: state.peer_progress) {
-            if (!peer_progress_.contains(peer_id)) {
-                continue;
-            }
-            auto restored = progress;
-            restored.last_successful_contact_millis = 0;
-            restored.last_failed_contact_millis = 0;
-            peer_progress_[peer_id] = restored;
-        }
         apply_committed_entries_locked();
     }
 
@@ -888,20 +881,7 @@ namespace graft {
     }
 
     std::string RaftNode::wrap_snapshot_payload_locked(const std::string &state_machine_snapshot) const {
-        auto current_members = current_voting_members_locked();
-
-        // During joint consensus the snapshot must carry both the old and new
-        // voter sets so a follower or restarted node can reconstruct the correct
-        // membership at the compaction boundary.
-        std::vector<std::string> next_members;
-        if (joint_consensus_) {
-            next_members = next_voting_members_locked();
-        }
-
-        return SnapshotCodec::wrap_payload(
-            current_members,
-            next_members,
-            state_machine_snapshot);
+        return SnapshotCodec::wrap_member_specs(current_members_, joint_consensus_ ? next_members_ : std::vector<raft::PeerSpec>{}, state_machine_snapshot);
     }
 
     void RaftNode::apply_snapshot_to_state_machine_locked() {
@@ -939,6 +919,7 @@ namespace graft {
         const auto &command = *parsed;
         switch (command.command_case()) {
             case raft::InternalRaftCommand::kJoin:
+                membership_authoritative_ = true;
                 // Join records a pending peer and initializes progress so the leader
                 // can catch it up before voter promotion.
                 if (!command.join().member().id().empty() && command.join().member().id() != peer_id_) {
@@ -948,6 +929,7 @@ namespace graft {
                 }
                 return true;
             case raft::InternalRaftCommand::kJoint: {
+                membership_authoritative_ = true;
                 // Joint consensus activates both current and next configurations. The
                 // node may discover here that it is being removed, but final removal is
                 // delayed until the finalize entry commits.
@@ -977,6 +959,7 @@ namespace graft {
                 return true;
             }
             case raft::InternalRaftCommand::kFinalize:
+                membership_authoritative_ = true;
                 // Finalize collapses the next configuration into the stable current
                 // configuration. If this node was removed, it steps down permanently.
                 joint_consensus_ = false;
@@ -986,11 +969,14 @@ namespace graft {
                 }
                 next_members_.clear();
                 refresh_voting_peers_from_members_locked();
+                if (!is_known_voting_member_locked(peer_id_)) {
+                    role_ = Role::follower;
+                    leader_id_.reset();
+                }
                 if (pending_decommission_) {
                     decommissioned_ = true;
                     role_ = Role::follower;
                     leader_id_.reset();
-                    voted_for_.reset();
                     votes_granted_.clear();
                     votes_responded_.clear();
                 }
@@ -1088,6 +1074,9 @@ namespace graft {
     }
 
     void RaftNode::reconfigure_voting_peers_locked(std::vector<std::string> voting_peers) {
+        // Endpoint discovery may be refreshed from stale startup arguments.
+        // Recovered or replicated membership changes only through the log.
+        if (membership_authoritative_) return;
         voting_peers_ = std::move(voting_peers);
         normalize_voting_peers_locked();
         if (!joint_consensus_) {
@@ -1116,7 +1105,9 @@ namespace graft {
     }
 
     std::vector<std::string> RaftNode::active_voting_members_locked() const {
-        return ClusterMembership::active_voting_members(current_voting_members_locked(), next_voting_members_locked());
+        const auto [current, next] = configuration_at_locked(last_log_index_);
+        const auto old_voters = ClusterMembership::current_voting_members(peer_id_, decommissioned_, voting_peers_, current);
+        return ClusterMembership::active_voting_members(old_voters, ClusterMembership::next_voting_members(!next.empty(), old_voters, next));
     }
 
     void RaftNode::refresh_voting_peers_from_members_locked() {
@@ -1142,7 +1133,12 @@ namespace graft {
         next_progress[peer_id_].reachable = true;
         next_progress[peer_id_].consecutive_failures = 0;
 
-        for (const auto &peer_id: voting_peers_) {
+        auto replicated_peers = voting_peers_;
+        const auto [current, next] = configuration_at_locked(last_log_index_);
+        for (const auto &member: current) if (member.id() != peer_id_) replicated_peers.push_back(member.id());
+        for (const auto &member: next) if (member.id() != peer_id_) replicated_peers.push_back(member.id());
+        for (const auto &id: pending_join_ids_) replicated_peers.push_back(id);
+        for (const auto &peer_id: replicated_peers) {
             const auto found = peer_progress_.find(peer_id);
             if (found != peer_progress_.end()) {
                 next_progress.emplace(peer_id, found->second);
@@ -1156,12 +1152,24 @@ namespace graft {
         peer_progress_ = std::move(next_progress);
     }
 
+    std::pair<std::vector<raft::PeerSpec>, std::vector<raft::PeerSpec>> RaftNode::configuration_at_locked(std::int64_t index) const {
+        auto current = current_members_;
+        auto next = next_members_;
+        for (const auto &entry: log_entries_) {
+            if (entry.index <= commit_index_ || entry.index > index) continue;
+            const auto cmd = parse_internal_command_locked(entry.data);
+            if (!cmd) continue;
+            if (cmd->has_joint()) next.assign(cmd->joint().members().begin(), cmd->joint().members().end());
+            else if (cmd->has_finalize() && !next.empty()) { current = next; next.clear(); }
+        }
+        return {current, next};
+    }
+
     bool RaftNode::has_joint_majority_locked(const std::unordered_set<std::string> &peer_ids) const {
-        return ClusterMembership::has_joint_majority(
-            peer_ids,
-            current_voting_members_locked(),
-            next_voting_members_locked(),
-            joint_consensus_);
+        const auto [current, next] = configuration_at_locked(last_log_index_);
+        const auto old_voters = ClusterMembership::current_voting_members(peer_id_, decommissioned_, voting_peers_, current);
+        const auto new_voters = ClusterMembership::next_voting_members(!next.empty(), old_voters, next);
+        return ClusterMembership::has_joint_majority(peer_ids, old_voters, new_voters, !next.empty());
     }
 
     std::size_t RaftNode::cluster_size_locked() const {
@@ -1189,6 +1197,10 @@ namespace graft {
             voting_peers_.push_back(peer_id);
             progress.emplace(peer_id, PeerProgress{.next_index = last_log_index_ + 1, .match_index = 0});
         }
+        const auto [current, next] = configuration_at_locked(last_log_index_);
+        for (const auto &member: current) if (member.id() != peer_id_) progress.try_emplace(member.id(), PeerProgress{.next_index=last_log_index_ + 1});
+        for (const auto &member: next) if (member.id() != peer_id_) progress.try_emplace(member.id(), PeerProgress{.next_index=last_log_index_ + 1});
+        for (const auto &id: pending_join_ids_) progress.try_emplace(id, PeerProgress{.next_index=last_log_index_ + 1});
         peer_progress_ = std::move(progress);
     }
 
@@ -1243,7 +1255,10 @@ namespace graft {
                     replicated.insert(peer_id);
                 }
             }
-            if (has_joint_majority_locked(replicated)) {
+            const auto [current, next] = configuration_at_locked(index);
+            const auto old_voters = ClusterMembership::current_voting_members(peer_id_, decommissioned_, voting_peers_, current);
+            const auto new_voters = ClusterMembership::next_voting_members(!next.empty(), old_voters, next);
+            if (ClusterMembership::has_joint_majority(replicated, old_voters, new_voters, !next.empty())) {
                 candidate_commit = index;
             }
         }
@@ -1262,6 +1277,14 @@ namespace graft {
             return true;
         }
         return log_term_at_locked(prev_log_index) == prev_log_term;
+    }
+
+    bool RaftNode::accepts_leader_locked(const std::string &id) const {
+        if (id == peer_id_) return false;
+        const auto current = current_voting_members_locked();
+        const auto next = next_voting_members_locked();
+        return is_known_voting_member_locked(id) || std::find(current.begin(), current.end(), id) != current.end()
+            || std::find(next.begin(), next.end(), id) != next.end();
     }
 
     bool RaftNode::is_known_voting_member_locked(const std::string &peer_id) const {
@@ -1336,7 +1359,7 @@ namespace graft {
             return;
         }
         for (auto it = applied_command_results_.begin(); it != applied_command_results_.end();) {
-            if (it->first <= index) {
+            if (it->first <= index - 1024) {
                 it = applied_command_results_.erase(it);
             } else {
                 ++it;
@@ -1368,9 +1391,10 @@ namespace graft {
     }
 
     void RaftNode::step_down_locked(std::int64_t new_term, std::optional<std::string> leader_id) {
+        if (new_term > current_term_) voted_for_.reset();
         current_term_ = new_term;
+        pending_snapshot_data_.clear();
         role_ = Role::follower;
-        voted_for_.reset();
         leader_id_ = std::move(leader_id);
         last_activity_ = std::chrono::steady_clock::now();
         votes_granted_.clear();

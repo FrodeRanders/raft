@@ -22,8 +22,61 @@
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
+#include <sstream>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/locale/encoding_utf.hpp>
 
 namespace graft {
+    namespace {
+        std::string modified_utf8(const std::string &text) {
+            const auto units = boost::locale::conv::utf_to_utf<char16_t>(text, boost::locale::conv::stop);
+            std::string out;
+            for (const auto unit: units) {
+                if (unit > 0 && unit <= 0x7f) out.push_back(static_cast<char>(unit));
+                else if (unit <= 0x7ff) {
+                    out.push_back(static_cast<char>(0xc0 | (unit >> 6)));
+                    out.push_back(static_cast<char>(0x80 | (unit & 0x3f)));
+                } else {
+                    out.push_back(static_cast<char>(0xe0 | (unit >> 12)));
+                    out.push_back(static_cast<char>(0x80 | ((unit >> 6) & 0x3f)));
+                    out.push_back(static_cast<char>(0x80 | (unit & 0x3f)));
+                }
+            }
+            return out;
+        }
+
+        std::optional<std::string> decode_modified_utf8(const std::string &bytes) {
+            try {
+                // Older native binary helpers used ordinary UTF-8. Java writeUTF
+                // cannot produce a four-byte lead, so that form is unambiguous.
+                if (std::any_of(bytes.begin(), bytes.end(), [](unsigned char byte) { return (byte & 0xf8) == 0xf0; })) {
+                    return boost::locale::conv::utf_to_utf<char>(bytes, boost::locale::conv::stop);
+                }
+                std::u16string units;
+                for (std::size_t offset = 0; offset < bytes.size();) {
+                    const auto first = static_cast<unsigned char>(bytes[offset++]);
+                    std::uint16_t unit = first;
+                    if (first >= 0x80) {
+                        const int width = (first & 0xe0) == 0xc0 ? 2 : (first & 0xf0) == 0xe0 ? 3 : 0;
+                        if (width == 0) return std::nullopt;
+                        unit = first & (width == 2 ? 0x1f : 0x0f);
+                        for (int i = 1; i < width; ++i) {
+                            if (offset == bytes.size()) return std::nullopt;
+                            const auto next = static_cast<unsigned char>(bytes[offset++]);
+                            if ((next & 0xc0) != 0x80) return std::nullopt;
+                            unit = (unit << 6) | (next & 0x3f);
+                        }
+                        if ((width == 2 && unit != 0 && unit < 0x80) || (width == 3 && unit < 0x800)) return std::nullopt;
+                    }
+                    units.push_back(static_cast<char16_t>(unit));
+                }
+                return boost::locale::conv::utf_to_utf<char>(units, boost::locale::conv::stop);
+            } catch (const boost::locale::conv::conversion_error &) {
+                return std::nullopt;
+            }
+        }
+    }
+
     std::string SnapshotCodec::wrap_payload(const std::vector<std::string> &current_members,
                                             const std::vector<std::string> &next_members,
                                             const std::string &state_machine_snapshot) {
@@ -75,42 +128,52 @@ namespace graft {
         return decoded.value_or(payload);
     }
 
-    static std::vector<std::string> extract_member_ids(const std::string &payload, const std::string &member_key) {
-        std::vector<std::string> ids;
-        const auto key = "\"" + member_key + "\":[";
-        const auto start = payload.find(key);
-        if (start == std::string::npos) {
-            return ids;
-        }
-        auto pos = start + key.size();
-        const auto end = payload.find(']', pos);
-        if (end == std::string::npos) {
-            return ids;
-        }
-        while (pos < end) {
-            const auto id_start = payload.find("\"id\":\"", pos);
-            if (id_start == std::string::npos || id_start >= end) {
-                break;
+    std::string SnapshotCodec::wrap_member_specs(const std::vector<raft::PeerSpec> &current,
+                                                const std::vector<raft::PeerSpec> &next,
+                                                const std::string &application) {
+        const auto members = [](const std::vector<raft::PeerSpec> &peers) {
+            std::string out = "[";
+            for (const auto &peer: peers) {
+                if (out.size() > 1) out += ",";
+                out += "{\"id\":" + quote_json(peer.id()) + ",\"role\":" + quote_json(peer.role().empty() ? "VOTER" : peer.role()) + ",\"address\":";
+                if (peer.host().empty()) out += "null";
+                else out += "{\"host\":" + quote_json(peer.host()) + ",\"port\":" + std::to_string(peer.port()) + "}";
+                out += "}";
             }
-            const auto val_start = id_start + 6;
-            const auto val_end = payload.find('"', val_start);
-            if (val_end == std::string::npos || val_end >= end) {
-                break;
-            }
-            ids.push_back(payload.substr(val_start, val_end - val_start));
-            pos = val_end + 1;
-        }
-        return ids;
+            return out + "]";
+        };
+        return "{\"version\":1,\"currentMembers\":" + members(current) + ",\"nextMembers\":" + members(next) +
+            ",\"stateMachineSnapshot\":" + quote_json(base64_encode(application)) + "}";
     }
 
     std::optional<SnapshotCodec::DecodedSnapshot> SnapshotCodec::decode_payload(const std::string &payload) {
-        if (payload.empty() || payload.front() != '{') {
-            return DecodedSnapshot{payload, {}, {}};
-        }
+        if (payload.empty() || payload.front() != '{') return DecodedSnapshot{payload, {}, {}, {}, {}};
+        boost::property_tree::ptree root;
+        std::istringstream input(payload);
+        boost::property_tree::read_json(input, root);
+        if (root.get<int>("version") != 1) throw std::runtime_error("unsupported Raft snapshot version");
         DecodedSnapshot result;
-        result.state_machine_snapshot = unwrap_payload(payload);
-        result.current_members = extract_member_ids(payload, "currentMembers");
-        result.next_members = extract_member_ids(payload, "nextMembers");
+        auto application = base64_decode(root.get<std::string>("stateMachineSnapshot"));
+        if (!application) throw std::runtime_error("invalid Raft snapshot bytes");
+        result.state_machine_snapshot = *application;
+        const auto members = [&root](const char *key, std::vector<std::string> &ids, std::vector<raft::PeerSpec> &specs) {
+            for (const auto &item: root.get_child(key)) {
+                const auto &member = item.second;
+                raft::PeerSpec spec;
+                spec.set_id(member.get<std::string>("id"));
+                spec.set_role(member.get<std::string>("role"));
+                if (spec.id().empty() || (spec.role() != "VOTER" && spec.role() != "LEARNER")) throw std::runtime_error("invalid snapshot member");
+                const auto &address = member.get_child("address");
+                if (address.data() != "null") {
+                    spec.set_host(address.get<std::string>("host"));
+                    spec.set_port(address.get<int>("port"));
+                }
+                ids.push_back(spec.id()); specs.push_back(std::move(spec));
+            }
+        };
+        members("currentMembers", result.current_members, result.current_member_specs);
+        members("nextMembers", result.next_members, result.next_member_specs);
+        if (result.current_members.empty()) throw std::runtime_error("empty snapshot membership");
         return result;
     }
 
@@ -124,15 +187,18 @@ namespace graft {
 
         append_u32_be(out, static_cast<std::uint32_t>(ordered.size()));
         for (const auto &[key, value]: ordered) {
-            if (key.size() > std::numeric_limits<std::uint16_t>::max() ||
-                value.size() > std::numeric_limits<std::uint16_t>::max()) {
+            const auto encoded_key = modified_utf8(key);
+            const auto encoded_value = modified_utf8(value);
+            if (encoded_key.size() > std::numeric_limits<std::uint16_t>::max() ||
+                encoded_value.size() > std::numeric_limits<std::uint16_t>::max()) {
                 throw std::runtime_error("snapshot key or value exceeds Java UTF length limit");
             }
-            // Java DataOutput.writeUTF uses big-endian unsigned 16-bit lengths.
-            append_u16_be(out, static_cast<std::uint16_t>(key.size()));
-            out.append(key);
-            append_u16_be(out, static_cast<std::uint16_t>(value.size()));
-            out.append(value);
+            // DataOutput.writeUTF encodes UTF-16 code units, including NUL and
+            // supplementary characters, with unsigned 16-bit byte lengths.
+            append_u16_be(out, static_cast<std::uint16_t>(encoded_key.size()));
+            out.append(encoded_key);
+            append_u16_be(out, static_cast<std::uint16_t>(encoded_value.size()));
+            out.append(encoded_value);
         }
         return out;
     }
@@ -153,15 +219,16 @@ namespace graft {
             if (!read_u16_be(snapshot, offset, key_length) || offset + key_length > snapshot.size()) {
                 return std::nullopt;
             }
-            auto key = snapshot.substr(offset, key_length);
+            auto key = decode_modified_utf8(snapshot.substr(offset, key_length));
             offset += key_length;
             if (!read_u16_be(snapshot, offset, value_length) || offset + value_length > snapshot.size()) {
                 return std::nullopt;
             }
-            auto value = snapshot.substr(offset, value_length);
+            auto value = decode_modified_utf8(snapshot.substr(offset, value_length));
             offset += value_length;
-            restored[std::move(key)] = std::move(value);
+            if (!key || !value || !restored.emplace(std::move(*key), std::move(*value)).second) return std::nullopt;
         }
+        if (offset != snapshot.size()) return std::nullopt;
         return restored;
     }
 
@@ -238,6 +305,12 @@ namespace graft {
     }
 
     std::optional<std::string> SnapshotCodec::base64_decode(std::string_view input) {
+        // Earlier Rust checkpoints omitted padding. Accept that representation
+        // while rejecting invalid characters, placement and noncanonical bits.
+        if (input.size() % 4 == 1) return std::nullopt;
+        std::string normalized(input);
+        while (normalized.size() % 4 != 0) normalized.push_back('=');
+        input = normalized;
         static constexpr unsigned char invalid = 0xFF;
         static constexpr std::array<unsigned char, 256> decode_table = [] {
             std::array<unsigned char, 256> table{};
@@ -285,6 +358,7 @@ namespace graft {
                 out.push_back(static_cast<char>((values[2] << 6) | values[3]));
             }
         }
+        if (base64_encode(out) != normalized) return std::nullopt;
         return out;
     }
 

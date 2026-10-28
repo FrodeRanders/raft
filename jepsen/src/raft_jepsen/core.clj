@@ -343,6 +343,13 @@
                                  (checker/linearizable {:model (model/cas-register)})
                                  #(not= :nemesis (:process %))))
                 :nemesis-errors (nemesis-error-checker)
+                :progress (reify checker/Checker
+                            (check [_ _ history _]
+                              (let [ok (filter #(and (not= :nemesis (:process %)) (= :ok (:type %))) history)
+                                    reads (count (filter #(= :read (:f %)) ok))
+                                    mutations (count (filter #(#{:write :cas} (:f %)) ok))]
+                                {:valid? (and (pos? reads) (pos? mutations))
+                                 :successful-reads reads :successful-mutations mutations})))
                 :timeline (timeline/html)})
      :generator (->> (gen/mix [(partial write-op opts)
                                (partial read-op opts)
