@@ -24,3 +24,4 @@ jepsen/store/
 jepsen/work/
 graft-cpp/build/
 .DS_Store
+tmp/
