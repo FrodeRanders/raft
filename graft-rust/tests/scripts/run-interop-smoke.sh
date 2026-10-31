@@ -40,7 +40,15 @@ java_log="${tmp_root}/java-peer.log"
 rm -rf "${tmp_root}"
 mkdir -p "${java_data_dir}"
 
-cleanup() { kill "${java_pid:-}" >/dev/null 2>&1 || true; wait "${java_pid:-}" >/dev/null 2>&1 || true; }
+cleanup() {
+  local status=$?
+  if [[ "${status}" -ne 0 ]]; then
+    echo "==> Java log" >&2
+    cat "${java_log}" >&2 || true
+  fi
+  kill "${java_pid:-}" >/dev/null 2>&1 || true
+  wait "${java_pid:-}" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 
 # Start a Java peer (single node cluster — bootstrap so it becomes leader)
@@ -48,7 +56,28 @@ run_java_peer \
   "${JAVA_PEER_ID}" "${HOST}" "${JAVA_PORT}" 10000 "${java_data_dir}" \
   >"${java_log}" 2>&1 &
 java_pid=$!
-sleep 3
+
+# Maven/JVM startup can take longer on CI runners. Wait for an actual RPC
+# response before sending the raw protocol probes.
+echo "==> Waiting for Java peer..."
+java_ready=false
+for _ in $(seq 1 60); do
+  if ! kill -0 "${java_pid}" >/dev/null 2>&1; then
+    echo "ERROR: Java peer exited before becoming ready at ${HOST}:${JAVA_PORT}" >&2
+    exit 1
+  fi
+  if telemetry_output="$("${rust_bin}" telemetry "${HOST}" "${JAVA_PORT}" 2>/dev/null)"; then
+    if grep -q "success: true" <<<"${telemetry_output}"; then
+      java_ready=true
+      break
+    fi
+  fi
+  sleep 0.5
+done
+if [[ "${java_ready}" != "true" ]]; then
+  echo "ERROR: Java peer did not become ready at ${HOST}:${JAVA_PORT}" >&2
+  exit 1
+fi
 
 echo "==> Rust -> Java VoteRequest"
 v_output="$("${rust_bin}" vote-request "${HOST}" "${JAVA_PORT}" "${RUST_CLIENT_ID}" 0 0 1)"
