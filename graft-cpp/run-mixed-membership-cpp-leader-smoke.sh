@@ -112,7 +112,9 @@ grep -Eq "lastApplied: ([89]|[1-9][0-9]+)" <<<"${learner_telemetry}"
 
 echo
 echo "==> Promote Java learner through C++ joint configuration"
+# JOINT replaces the complete member set, so retain the leader as a voter.
 joint_output="$("${cpp_bin}" reconfigure "${HOST}" "${CPP_PORT}" joint \
+  "${CPP_PEER_ID}@${HOST}:${CPP_PORT}" \
   "${CPP_VOTER_ID}@${HOST}:${CPP_VOTER_PORT}" \
   "${JAVA_LEARNER_ID}@${HOST}:${JAVA_LEARNER_PORT}")"
 echo "${joint_output}"
@@ -179,6 +181,8 @@ echo
 echo "==> C++ leader summary after Java learner promotion"
 leader_summary="$("${cpp_bin}" cluster-summary "${HOST}" "${CPP_PORT}")"
 echo "${leader_summary}"
+grep -q "member\\[${CPP_PEER_ID}\\].*voting=true" <<<"${leader_summary}"
+grep -q "member\\[${CPP_VOTER_ID}\\].*voting=true" <<<"${leader_summary}"
 grep -q "member\\[${JAVA_LEARNER_ID}\\].*voting=true" <<<"${leader_summary}"
 grep -q "joint_consensus: false" <<<"${leader_summary}"
 
